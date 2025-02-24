@@ -1,4 +1,4 @@
-# Fiber Processing
+# MRISynth
 
 ## Overview
 This repository is part of the **LINC project**, funded by the **NIH**, and focuses on the synthetic generation of tracer data for fiber tracking in MRI scans. The goal is to develop tools that can process, transform, and resample fiber tractography data efficiently for research applications.
