@@ -1,12 +1,13 @@
 import argparse
 import nibabel as nib
+import cupy as cp  # GPU-accelerated NumPy
+from numba import cuda
 import numpy as np
 import os
-from nifti_preprocessing import resample_nifti
+from nifti_preprocessing import resample_nifti_gpu
 from transform import build_new_affine
-from streamline_processing import transform_and_densify_streamlines
+from streamline_processing import transform_and_densify_streamlines_gpu
 from nibabel.streamlines import Tractogram, save as save_trk
-
 
 def process_and_save(
         old_nifti_path,
@@ -18,28 +19,6 @@ def process_and_save(
         patch_center=None,
         reduction_method=None
 ):
-    """
-    Main pipeline for processing MRI NIfTI and tractography data.
-
-    Parameters
-    ----------
-    old_nifti_path : str
-        Path to the original .nii or .nii.gz file.
-    old_trk_path : str
-        Path to the original .trk file.
-    new_voxel_size : float or tuple
-        Desired voxel size in mm.
-    new_dim : tuple(int)
-        Desired shape (x, y, z).
-    output_prefix : str
-        Prefix for output filenames.
-    n_jobs : int
-        Number of CPU cores to use in parallel.
-    patch_center : tuple, optional
-        Center of the patch in mm.
-    reduction_method : str, optional
-        Reduction method along the z-axis ('mip', 'mean').
-    """
     print("\n=== Loading NIfTI ===")
     old_img = nib.load(old_nifti_path, mmap=True)
     old_affine = old_img.affine
@@ -54,25 +33,23 @@ def process_and_save(
     print(f"New affine:\n{A_new}")
     print(f"New dimensions: {new_dim}")
 
-    print("\n=== Resampling NIfTI in parallel ===")
-    new_data, tmp_mmap = resample_nifti(old_img, A_new, new_dim, chunk_size=(64, 64, 64), n_jobs=n_jobs)
+    print("\n=== Resampling NIfTI using GPU ===")
+    new_data, tmp_mmap = resample_nifti_gpu(old_img, A_new, new_dim, chunk_size=(64, 64, 64), n_jobs=n_jobs)
 
-    # Apply reduction if needed
     if reduction_method:
         print(f"\n=== Applying Reduction: {reduction_method} ===")
         if reduction_method == 'mip':
-            reduced_data = np.max(new_data, axis=1)
+            reduced_data = cp.max(new_data, axis=1)
         elif reduction_method == 'mean':
-            reduced_data = np.mean(new_data, axis=1)
+            reduced_data = cp.mean(new_data, axis=1)
         else:
             raise ValueError(f"Unsupported reduction method: {reduction_method}")
 
-        reduced_data = reduced_data[..., np.newaxis]  # Keep z-axis size 1
+        reduced_data = reduced_data[..., cp.newaxis]  # Keep z-axis size 1
         new_data = reduced_data
         new_dim = (new_dim[0], 1, new_dim[2])
 
-    # Save the new NIfTI file
-    new_img = nib.Nifti1Image(new_data, A_new)
+    new_img = nib.Nifti1Image(cp.asnumpy(new_data), A_new)
     out_nifti_path = output_prefix + ".nii.gz"
     nib.save(new_img, out_nifti_path)
 
@@ -86,12 +63,11 @@ def process_and_save(
     old_streams_mm = trk_obj.tractogram.streamlines
     print(f"Loaded {len(old_streams_mm)} streamlines.")
 
-    print("\n=== Transforming, Densifying, and Clipping Streamlines ===")
-    densified_vox = transform_and_densify_streamlines(
+    print("\n=== Transforming, Densifying, and Clipping Streamlines Using GPU ===")
+    densified_vox = transform_and_densify_streamlines_gpu(
         old_streams_mm, A_new, new_dim, step_size=0.5, n_jobs=n_jobs
     )
 
-    # Prepare new .trk header
     new_trk_header = trk_obj.header.copy()
     new_trk_header["dimensions"] = np.array(new_dim, dtype=np.int16)
     new_voxsize = np.sqrt(np.sum(A_new[:3, :3] ** 2, axis=0))
@@ -105,7 +81,6 @@ def process_and_save(
 
     print(f"Saved new .trk => {out_trk_path}")
     print("\n==== Process Completed Successfully! ====")
-
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process and resample NIfTI and streamline tractography data.")
