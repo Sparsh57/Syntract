@@ -2,7 +2,6 @@ import os
 import pytest
 from main import process_and_save
 
-@pytest.mark.slow
 def test_process_pipeline(tmpdir):
     # Setup test inputs
     test_nifti_path = "examples/example_data/dtifit_S0.nii.gz"
