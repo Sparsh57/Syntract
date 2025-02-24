@@ -1,4 +1,4 @@
--e git+https://github.com/Sparsh57/MRISynth.git@4e0ead5c174be9d1cbd67da5b7de12c4e4c4648d#egg=MRISynth
+-e .
 importlib_resources==6.5.2
 joblib==1.4.2
 nibabel==5.3.2
