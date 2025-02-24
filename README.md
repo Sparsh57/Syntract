@@ -1,7 +1,7 @@
 # Fiber Processing
 
 ## Overview
-This repository provides tools for processing fiber tracking data from MRI scans, including streamline densification, affine transformations, NIfTI resampling, and streamline clipping.
+This repository is part of the **LINC project**, funded by the **NIH**, and focuses on the synthetic generation of tracer data for fiber tracking in MRI scans. The goal is to develop tools that can process, transform, and resample fiber tractography data efficiently for research applications.
 
 ## Features
 - Densify streamlines for sub-voxel resolution.
@@ -38,3 +38,7 @@ fiber_processing/
 
 ## Contributing
 Contributions are welcome! Please open an issue or submit a pull request with improvements.
+
+## Project Link
+For more information about the **LINC project**, visit the official **LINC GitHub Organization**:
+[GitHub - LINC BRAIN](https://github.com/lincbrain)
