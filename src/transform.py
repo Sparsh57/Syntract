@@ -1,32 +1,11 @@
 import cupy as cp
-
-
 def build_new_affine(old_affine, old_shape, new_voxel_size, new_shape, patch_center_mm=None):
-    """
-    Builds a new affine matrix for resampling while maintaining the center using GPU acceleration.
-
-    Parameters
-    ----------
-    old_affine : np.ndarray
-        Original affine matrix.
-    old_shape : tuple
-        Shape of the original volume.
-    new_voxel_size : float or tuple
-        Desired voxel size.
-    new_shape : tuple
-        New volume shape.
-    patch_center_mm : tuple, optional
-        Center point in mm for resampling, by default None.
-
-    Returns
-    -------
-    np.ndarray
-        New affine matrix.
-    """
     if isinstance(new_voxel_size, (int, float)):
         new_voxel_size = (new_voxel_size,) * 3
 
-    R_in = cp.asarray(old_affine[:3, :3])
+    # Convert old_affine to a CuPy array
+    old_affine_cp = cp.asarray(old_affine)
+    R_in = old_affine_cp[:3, :3]
     old_scales = cp.sqrt(cp.sum(R_in ** 2, axis=0))
     sf = cp.array(new_voxel_size) / old_scales
     S = cp.diag(sf)
@@ -34,7 +13,9 @@ def build_new_affine(old_affine, old_shape, new_voxel_size, new_shape, patch_cen
 
     if patch_center_mm is None:
         old_center_vox = (cp.array(old_shape) - 1) / 2.0
-        old_center_mm = old_affine @ cp.hstack([old_center_vox, 1])
+        # Ensure the homogeneous coordinate is a CuPy array
+        old_center_hom = cp.hstack([old_center_vox, cp.array([1], dtype=old_center_vox.dtype)])
+        old_center_mm = old_affine_cp @ old_center_hom
         old_center_mm = old_center_mm[:3]
     else:
         old_center_mm = cp.array(patch_center_mm)
@@ -47,3 +28,4 @@ def build_new_affine(old_affine, old_shape, new_voxel_size, new_shape, patch_cen
     A_new[:3, 3] = t_new
 
     return cp.asnumpy(A_new)
+
