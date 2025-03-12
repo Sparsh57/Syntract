@@ -42,13 +42,27 @@ def resample_nifti(old_img, new_affine, new_shape, chunk_size=(64, 64, 64), n_jo
             def resample_kernel(new_data, data_in, new_affine, old_affine_inv, new_shape):
                 x, y, z = cuda.grid(3)
                 if x < new_shape[0] and y < new_shape[1] and z < new_shape[2]:
-                    out_vox = xp.array([x, y, z, 1], dtype=xp.float32)
-                    xyz_mm = new_affine @ out_vox
-                    xyz_old_vox = old_affine_inv @ xyz_mm
-                    i, j, k = int(xyz_old_vox[0]), int(xyz_old_vox[1]), int(xyz_old_vox[2])
-                    if 0 <= i < data_in.shape[0] and 0 <= j < data_in.shape[1] and 0 <= k < data_in.shape[2]:
-                        new_data[x, y, z] = data_in[i, j, k]
-                        
+                    # In Numba CUDA kernels, we can't use CuPy functions like xp.array
+                    # Instead, we need to perform the operations manually
+                    # Create the output voxel coordinates
+                    x_mm = new_affine[0, 0] * x + new_affine[0, 1] * y + new_affine[0, 2] * z + new_affine[0, 3]
+                    y_mm = new_affine[1, 0] * x + new_affine[1, 1] * y + new_affine[1, 2] * z + new_affine[1, 3]
+                    z_mm = new_affine[2, 0] * x + new_affine[2, 1] * y + new_affine[2, 2] * z + new_affine[2, 3]
+                    
+                    # Transform to input voxel space
+                    i = old_affine_inv[0, 0] * x_mm + old_affine_inv[0, 1] * y_mm + old_affine_inv[0, 2] * z_mm + old_affine_inv[0, 3]
+                    j = old_affine_inv[1, 0] * x_mm + old_affine_inv[1, 1] * y_mm + old_affine_inv[1, 2] * z_mm + old_affine_inv[1, 3]
+                    k = old_affine_inv[2, 0] * x_mm + old_affine_inv[2, 1] * y_mm + old_affine_inv[2, 2] * z_mm + old_affine_inv[2, 3]
+                    
+                    # Round to nearest integer
+                    i_int = int(i)
+                    j_int = int(j)
+                    k_int = int(k)
+                    
+                    # Check if the indices are within the input volume bounds
+                    if 0 <= i_int < data_in.shape[0] and 0 <= j_int < data_in.shape[1] and 0 <= k_int < data_in.shape[2]:
+                        new_data[x, y, z] = data_in[i_int, j_int, k_int]
+            
             # Convert data to GPU
             data_in = xp.asarray(old_img.get_fdata(), dtype=xp.float32)
             old_affine_inv = xp.linalg.inv(xp.asarray(old_img.affine))
