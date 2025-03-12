@@ -192,6 +192,9 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
     list of arrays
         Densified streamlines.
     """
+    # Import numpy here to ensure it's available in both code paths
+    import numpy as np
+    
     if not streamlines:
         return []
     
@@ -204,6 +207,10 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
             if i % 1000 == 0:
                 print(f"Processing streamline {i}/{total}...")
             try:
+                # Ensure we're passing a numpy array
+                if isinstance(streamline, list):
+                    streamline = np.array(streamline, dtype=np.float32)
+                
                 d = densify_streamline_subvoxel(streamline, step_size, use_gpu, interp_method, high_res_mode=high_res_mode)
                 if len(d) >= 2:  # Only keep if at least 2 points
                     densified.append(d)
@@ -216,6 +223,10 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
             if idx % 1000 == 0:
                 print(f"Processing streamline {idx}/{total}...")
             try:
+                # Ensure we're passing a numpy array
+                if isinstance(streamline, list):
+                    streamline = np.array(streamline, dtype=np.float32)
+                
                 return densify_streamline_subvoxel(streamline, step_size, use_gpu, interp_method, high_res_mode=high_res_mode)
             except Exception as e:
                 print(f"Error densifying streamline {idx}: {e}")
@@ -264,6 +275,14 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     array-like
         Densified streamline.
     """
+    # Ensure we have a numpy array, not a list
+    if isinstance(streamline, list):
+        try:
+            import numpy as np
+            streamline = np.array(streamline, dtype=np.float32)
+        except Exception as e:
+            raise TypeError(f"Failed to convert list to numpy array: {e}")
+
     # Check if streamline is valid
     if len(streamline) < 2:
         print(f"Warning: Cannot densify streamline with less than 2 points (has {len(streamline)})")

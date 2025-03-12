@@ -323,6 +323,12 @@ def transform_and_densify_streamlines(
             print(f"[HIGH-RES MODE] Step size ({step_size}mm) is smaller than voxel size ({min(voxel_size):.4f}mm)")
             print("This will result in very dense streamlines - consider increasing step size.")
             
+    # Ensure all streamlines are numpy arrays, not Python lists
+    # This can happen in certain cases with clipping operations
+    for i in range(len(clipped_streams)):
+        if isinstance(clipped_streams[i], list):
+            clipped_streams[i] = np.array(clipped_streams[i], dtype=np.float32)
+            
     # Apply densification in voxel space
     densified_streams = densify_streamlines_parallel(
         clipped_streams, step_size, n_jobs=n_jobs, use_gpu=use_gpu,
