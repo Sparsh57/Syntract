@@ -40,6 +40,9 @@ def build_new_affine(old_affine, old_shape, new_voxel_size, new_shape, patch_cen
     if isinstance(new_voxel_size, (int, float)):
         new_voxel_size = (new_voxel_size,) * 3
 
+    # Convert old_affine to the appropriate array type (CuPy or NumPy)
+    old_affine_device = xp.asarray(old_affine)
+    
     R_in = xp.asarray(old_affine[:3, :3])
     old_scales = xp.sqrt(xp.sum(R_in ** 2, axis=0))
     sf = xp.array(new_voxel_size) / old_scales
@@ -48,7 +51,8 @@ def build_new_affine(old_affine, old_shape, new_voxel_size, new_shape, patch_cen
 
     if patch_center_mm is None:
         old_center_vox = (xp.array(old_shape) - 1) / 2.0
-        old_center_mm = old_affine @ xp.hstack([old_center_vox, 1])
+        # Use the converted affine matrix
+        old_center_mm = old_affine_device @ xp.hstack([old_center_vox, 1])
         old_center_mm = old_center_mm[:3]
     else:
         old_center_mm = xp.array(patch_center_mm)
