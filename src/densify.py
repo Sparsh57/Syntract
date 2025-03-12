@@ -301,11 +301,11 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     import numpy as np
     
     # Ensure we have a numpy array, not a list
-    if not isinstance(streamline, np.ndarray):
+    if isinstance(streamline, list):
         try:
             streamline = np.array(streamline, dtype=np.float32)
         except Exception as e:
-            raise TypeError(f"Failed to convert input to numpy array: {e}")
+            raise TypeError(f"Failed to convert list to numpy array: {e}")
 
     # Check if streamline is valid
     if len(streamline) < 2:
@@ -324,22 +324,38 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     if use_gpu:
         try:
             import cupy as xp
-            # Convert to cupy array
+            print(f"[DEBUG] GPU processing with CuPy - streamline type: {type(streamline)}, shape: {streamline.shape if hasattr(streamline, 'shape') else 'unknown'}")
+            
+            # First ensure we have a proper numpy array before sending to cupy
+            if not isinstance(streamline, np.ndarray):
+                print(f"[DEBUG] Converting streamline from {type(streamline)} to numpy array")
+                streamline = np.array(streamline, dtype=np.float32)
+            
+            # Then convert to cupy - this is where type errors can occur
             try:
                 streamline_device = xp.asarray(streamline)
+                print(f"[DEBUG] CuPy conversion successful - device array shape: {streamline_device.shape}")
             except Exception as e:
                 print(f"CuPy conversion error: {e}")
-                print("Falling back to CPU")
-                xp = np
+                print(f"Streamline type: {type(streamline)}, shape: {np.shape(streamline)}")
+                if isinstance(streamline, list):
+                    print(f"List contents: {[type(x) for x in streamline]}")
+                # Fall back to CPU if cupy conversion fails
+                print("[DEBUG] Falling back to CPU due to CuPy conversion error")
+                import numpy as xp
                 streamline_device = xp.asarray(streamline)
                 use_gpu = False
         except ImportError:
             print("Warning: Could not import cupy. Falling back to CPU.")
-            xp = np
+            import numpy as xp
             streamline_device = xp.asarray(streamline)
             use_gpu = False
     else:
+        # Always use numpy for CPU mode
         xp = np
+        # Still ensure numpy array format even in CPU mode
+        if not isinstance(streamline, np.ndarray):
+            streamline = np.array(streamline, dtype=np.float32)
         streamline_device = xp.asarray(streamline)
 
     # Calculate the total length of the streamline
@@ -358,16 +374,21 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
         return streamline
 
     # Calculate the number of steps needed
+    # We use ceil to ensure points are at most step_size apart
+    # Adding 1 ensures the segments are shorter than step_size, not just equal to step_size
     n_steps = int(xp.ceil(total_length / step_size)) + 1
-    
-    # For high-res mode, limit maximum steps per streamline
+
+    # For high-res mode, limit maximum steps per streamline to prevent extreme memory usage
     if high_res_mode and n_steps > 10000:
         old_n_steps = n_steps
         n_steps = min(10000, n_steps)
-        print(f"[HIGH-RES DENSIFY] Limiting steps from {old_n_steps} to {n_steps}")
+        print(f"[HIGH-RES DENSIFY] Limiting steps from {old_n_steps} to {n_steps} to prevent memory issues")
     
     # Ensure at least one interpolation step
     n_steps = max(len(streamline), n_steps)
+    
+    if debug_tangents:
+        print(f"[DENSIFY] Using {n_steps} steps for densification")
     
     # Calculate cumulative distance along the streamline
     cumulative_lengths = xp.concatenate(([0], xp.cumsum(segment_lengths)))
@@ -376,33 +397,83 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     # Create evenly spaced points along the streamline
     xi = xp.linspace(0, 1, n_steps)
     
-    # Check for NaN values
+    # Check for NaN values that could cause issues
     if xp.any(xp.isnan(normalized_distances)) or xp.any(xp.isnan(xi)):
-        print("Warning: NaN values detected. Using original streamline.")
+        print("Warning: NaN values detected in distance calculation. Using original streamline.")
         return streamline
     
     # Calculate tangents for Hermite interpolation
     if interp_method == 'hermite':
+        # Initialize tangents
         tangents = xp.zeros_like(streamline_device)
         
-        # Calculate tangent scaling
-        base_scale = 1.2 if high_res_mode else 1.0
-        voxel_scale = min(5.0, 1.0 / max(0.01, voxel_size))
+        # Determine tangent scaling based on voxel size
+        base_scale = 1.0
+        if high_res_mode:
+            # Enhanced tangent scaling for high-resolution mode
+            base_scale = 1.2
+        
+        # Calculate voxel-based scaling factor - higher for smaller voxels
+        voxel_scale = (1.0 / max(0.01, voxel_size))
+        # Cap the scaling to avoid extreme values
+        voxel_scale = min(5.0, voxel_scale)
+        
+        # Final scaling factor is a combination of the base scale and voxel scale
         final_scale = base_scale * voxel_scale
         
-        # Calculate tangents for interior points
-        tangents[1:-1] = (streamline_device[2:] - streamline_device[:-2]) * 0.5 * final_scale
+        if debug_tangents:
+            print(f"[TANGENT] Voxel size: {voxel_size:.4f}mm")
+            print(f"[TANGENT] Base scale: {base_scale:.4f}")
+            print(f"[TANGENT] Voxel scale: {voxel_scale:.4f}")
+            print(f"[TANGENT] Final scale factor: {final_scale:.4f}")
         
-        # Calculate endpoint tangents
+        # Calculate tangents for interior points using finite differences
+        for i in range(1, len(streamline_device) - 1):
+            # Use finite differences with scaling for better curvature
+            pt_prev = streamline_device[i-1]
+            pt_next = streamline_device[i+1]
+            tangent = (pt_next - pt_prev) * 0.5
+            
+            # Apply scaling
+            tangents[i] = tangent * final_scale
+            
+            # Debug: print first tangent
+            if i == 1 and debug_tangents:
+                tangent_magnitude = xp.linalg.norm(tangent)
+                scaled_magnitude = xp.linalg.norm(tangents[i])
+                print(f"[TANGENT] Example - Point {i}:")
+                print(f"  Original tangent: {tangent}, magnitude: {tangent_magnitude:.4f}")
+                print(f"  Scaled tangent: {tangents[i]}, magnitude: {scaled_magnitude:.4f}")
+        
+        # Calculate tangents for endpoints using same scaling
         tangents[0] = (streamline_device[1] - streamline_device[0]) * final_scale
         tangents[-1] = (streamline_device[-1] - streamline_device[-2]) * final_scale
         
+        # For high-res mode, we intentionally don't normalize tangents to allow for more curvature
         if not high_res_mode:
-            # Normalize tangents but preserve some curvature
+            # Save original magnitudes for reference
+            if debug_tangents:
+                orig_magnitudes = xp.sqrt(xp.sum(tangents**2, axis=1))
+                print(f"[TANGENT] Original magnitudes: mean={xp.mean(orig_magnitudes):.4f}, max={xp.max(orig_magnitudes):.4f}")
+            
+            # Normalize tangents for standard mode, but with less aggressive normalization
+            # This allows for more distinctive curvature differences between methods
             tangent_norms = xp.sqrt(xp.sum(tangents**2, axis=1, keepdims=True))
+            # Avoid division by zero
             tangent_norms = xp.where(tangent_norms > 1e-10, tangent_norms, 1e-10)
+            
+            # Scale normalization based on voxel size to maintain some of the curvature effect
             normalization_factor = max(0.5, min(1.0, voxel_size))
+            
+            if debug_tangents:
+                print(f"[TANGENT] Normalization factor: {normalization_factor:.4f}")
+            
             tangents = tangents / (tangent_norms * normalization_factor)
+            
+            # Debug: print normalized magnitudes
+            if debug_tangents:
+                normalized_magnitudes = xp.sqrt(xp.sum(tangents**2, axis=1))
+                print(f"[TANGENT] Normalized magnitudes: mean={xp.mean(normalized_magnitudes):.4f}, max={xp.max(normalized_magnitudes):.4f}")
 
     # Interpolate each coordinate
     result = []
@@ -410,42 +481,86 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
         y = streamline_device[:, dim]
         
         if interp_method == 'hermite':
-            try:
-                # Always use numpy/scipy for Hermite interpolation
-                from scipy.interpolate import CubicHermiteSpline
-                t_values = xp.asnumpy(normalized_distances) if use_gpu else normalized_distances
-                y_values = xp.asnumpy(y) if use_gpu else y
-                tangent_values = xp.asnumpy(tangents[:, dim]) if use_gpu else tangents[:, dim]
-                interp_points = xp.asnumpy(xi) if use_gpu else xi
+            # Use Hermite cubic interpolation
+            if use_gpu:
+                # Use numpy for tangent import
+                import numpy as np
+                t_values = np.array(normalized_distances)
+                interp_points = np.array(xi)
+                y_values = np.array(y)
+                tangent_values = np.array(tangents[:, dim])
                 
+                # Use scipy on CPU for Hermite interpolation
+                from scipy.interpolate import CubicHermiteSpline
                 interpolator = CubicHermiteSpline(t_values, y_values, tangent_values)
                 interpolated = interpolator(interp_points)
                 
-                # Convert back to device array if needed
-                interpolated = xp.asarray(interpolated) if use_gpu else interpolated
-            except Exception as e:
-                print(f"Hermite interpolation failed: {e}. Falling back to linear.")
-                interpolated = xp.interp(xi, normalized_distances, y)
+                # Convert back to device if needed
+                interpolated = xp.asarray(interpolated)
+            else:
+                try:
+                    from scipy.interpolate import CubicHermiteSpline
+                    interpolator = CubicHermiteSpline(normalized_distances, y, tangents[:, dim])
+                    interpolated = interpolator(xi)
+                except Exception as e:
+                    print(f"Hermite interpolation failed: {e}. Falling back to linear interpolation.")
+                    interpolated = xp.interp(xi, normalized_distances, y)
         else:
+            # Use linear interpolation
             interpolated = xp.interp(xi, normalized_distances, y)
             
         result.append(interpolated)
     
     # Combine the interpolated coordinates
-    densified_streamline = xp.stack(result, axis=1)
+    densified_streamline = xp.column_stack(result)
     
     # Convert back to numpy if on GPU
     if use_gpu:
-        try:
-            densified_streamline = xp.asnumpy(densified_streamline)
-        except Exception as e:
-            print(f"Error converting back to numpy: {e}")
-            # If conversion fails, ensure we're returning a numpy array
-            densified_streamline = np.array(densified_streamline, dtype=np.float32)
+        densified_streamline = xp.asnumpy(densified_streamline)
     
-    # Final check to ensure we're returning a numpy array
-    if not isinstance(densified_streamline, np.ndarray):
-        densified_streamline = np.array(densified_streamline, dtype=np.float32)
+    # Debug: info about the densified streamline
+    if debug_tangents:
+        print(f"[DENSIFY] Original points: {len(streamline)}, Densified points: {len(densified_streamline)}")
+        
+        if interp_method == 'hermite':
+            # Compare curvature between original and densified
+            if len(streamline) > 2 and len(densified_streamline) > 2:
+                # Simple curvature calculation for comparison
+                def calc_curvature(points):
+                    import numpy as np  # Import numpy here for use in this function
+                    if len(points) < 3:
+                        return 0
+                    
+                    # Calculate first derivatives (tangents)
+                    tangents = np.zeros_like(points)
+                    tangents[1:-1] = (points[2:] - points[:-2]) / 2.0
+                    tangents[0] = points[1] - points[0]
+                    tangents[-1] = points[-1] - points[-2]
+                    
+                    # Normalize tangents
+                    norms = np.linalg.norm(tangents, axis=1, keepdims=True)
+                    norms = np.where(norms > 1e-10, norms, 1e-10)
+                    tangents = tangents / norms
+                    
+                    # Calculate second derivatives
+                    second_derivs = np.zeros_like(points)
+                    second_derivs[1:-1] = (tangents[2:] - tangents[:-2]) / 2.0
+                    
+                    # Curvature is the magnitude of the second derivative
+                    curvatures = np.linalg.norm(second_derivs, axis=1)
+                    return np.mean(curvatures)
+                
+                orig_curvature = calc_curvature(streamline)
+                new_curvature = calc_curvature(densified_streamline)
+                
+                print(f"[CURVATURE] Original streamline: {orig_curvature:.6f}")
+                print(f"[CURVATURE] Densified streamline: {new_curvature:.6f}")
+                
+                # Avoid division by zero for percentage change calculation
+                if orig_curvature > 0:
+                    print(f"[CURVATURE] Change: {(new_curvature-orig_curvature)/orig_curvature*100:.2f}%")
+                else:
+                    print(f"[CURVATURE] Change: N/A (original curvature was zero)")
     
     return densified_streamline
 
