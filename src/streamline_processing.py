@@ -78,7 +78,28 @@ def clip_streamline_to_fov(stream, new_shape, use_gpu=True, epsilon=1e-6):
     if len(current_segment) >= 2:
         segments.append(xp.array(current_segment, dtype=xp.float32))
 
-    return segments
+    # Convert segments back to numpy arrays if they were created on GPU
+    # This ensures consistency in return type across all code paths
+    if use_gpu:
+        try:
+            import numpy as np
+            numpy_segments = []
+            for segment in segments:
+                # Convert from GPU to CPU if needed
+                if hasattr(xp, 'asnumpy'):  # cupy has asnumpy, numpy doesn't
+                    numpy_segments.append(np.array(xp.asnumpy(segment), dtype=np.float32))
+                else:
+                    numpy_segments.append(np.array(segment, dtype=np.float32))
+            return numpy_segments
+        except Exception as e:
+            print(f"Warning: Error converting segments to numpy: {e}")
+            # Fall back to returning as is
+            return segments
+    else:
+        # If we used numpy, ensure all segments are numpy arrays (not lists)
+        import numpy as np
+        return [np.array(segment, dtype=np.float32) if not isinstance(segment, np.ndarray) else segment 
+                for segment in segments]
 
 
 def interpolate_to_fov(p1, p2, new_shape, use_gpu=True):
@@ -330,9 +351,11 @@ def transform_and_densify_streamlines(
             clipped_streams[i] = np.array(clipped_streams[i], dtype=np.float32)
             
     # Apply densification in voxel space
+    min_voxel_size = min(voxel_size)
     densified_streams = densify_streamlines_parallel(
         clipped_streams, step_size, n_jobs=n_jobs, use_gpu=use_gpu,
-        interp_method=interp_method, high_res_mode=high_res_mode
+        interp_method=interp_method, high_res_mode=high_res_mode,
+        voxel_size=min_voxel_size
     )
     
     # Report final streamline count
