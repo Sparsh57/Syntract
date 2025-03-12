@@ -168,7 +168,7 @@ def calculate_streamline_metrics(streamlines, metrics=None):
     
     return results
 
-def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True, interp_method='hermite', high_res_mode=False):
+def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True, interp_method='hermite', high_res_mode=False, voxel_size=1.0):
     """
     Densify a list of streamlines in parallel.
 
@@ -186,6 +186,8 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
         Interpolation method ('hermite' or 'linear'), by default 'hermite'.
     high_res_mode : bool, optional
         Special high-resolution processing mode, by default False.
+    voxel_size : float, optional
+        Size of the voxels, affects tangent scaling in Hermite interpolation, by default 1.0.
 
     Returns
     -------
@@ -211,7 +213,8 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
                 if isinstance(streamline, list):
                     streamline = np.array(streamline, dtype=np.float32)
                 
-                d = densify_streamline_subvoxel(streamline, step_size, use_gpu, interp_method, high_res_mode=high_res_mode)
+                d = densify_streamline_subvoxel(streamline, step_size, use_gpu, interp_method, 
+                                               high_res_mode=high_res_mode, voxel_size=voxel_size)
                 if len(d) >= 2:  # Only keep if at least 2 points
                     densified.append(d)
             except Exception as e:
@@ -227,7 +230,8 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
                 if isinstance(streamline, list):
                     streamline = np.array(streamline, dtype=np.float32)
                 
-                return densify_streamline_subvoxel(streamline, step_size, use_gpu, interp_method, high_res_mode=high_res_mode)
+                return densify_streamline_subvoxel(streamline, step_size, use_gpu, interp_method, 
+                                                 high_res_mode=high_res_mode, voxel_size=voxel_size)
             except Exception as e:
                 print(f"Error densifying streamline {idx}: {e}")
                 return None
@@ -275,10 +279,12 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     array-like
         Densified streamline.
     """
+    # First import numpy to ensure it's available in all code paths
+    import numpy as np
+    
     # Ensure we have a numpy array, not a list
     if isinstance(streamline, list):
         try:
-            import numpy as np
             streamline = np.array(streamline, dtype=np.float32)
         except Exception as e:
             raise TypeError(f"Failed to convert list to numpy array: {e}")
@@ -300,14 +306,31 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     if use_gpu:
         try:
             import cupy as xp
-            streamline_device = xp.asarray(streamline)
+            # First ensure we have a proper numpy array before sending to cupy
+            if not isinstance(streamline, np.ndarray):
+                streamline = np.array(streamline, dtype=np.float32)
+            
+            # Then convert to cupy - this is where type errors can occur
+            try:
+                streamline_device = xp.asarray(streamline)
+            except Exception as e:
+                print(f"CuPy conversion error: {e}")
+                print(f"Streamline type: {type(streamline)}, shape: {np.shape(streamline)}")
+                # Fall back to CPU if cupy conversion fails
+                import numpy as xp
+                streamline_device = xp.asarray(streamline)
+                use_gpu = False
         except ImportError:
             print("Warning: Could not import cupy. Falling back to CPU.")
             import numpy as xp
             streamline_device = xp.asarray(streamline)
             use_gpu = False
     else:
-        import numpy as xp
+        # Always use numpy for CPU mode
+        xp = np
+        # Still ensure numpy array format even in CPU mode
+        if not isinstance(streamline, np.ndarray):
+            streamline = np.array(streamline, dtype=np.float32)
         streamline_device = xp.asarray(streamline)
 
     # Calculate the total length of the streamline
