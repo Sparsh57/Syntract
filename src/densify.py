@@ -26,7 +26,7 @@ def linear_interpolate(p0, p1, t, xp=np):
 def hermite_interpolate(p0, p1, m0, m1, t, xp=np):
     """
     Perform cubic Hermite interpolation between two points.
-    
+
     Parameters
     ----------
     p0, p1 : array-like
@@ -37,7 +37,7 @@ def hermite_interpolate(p0, p1, m0, m1, t, xp=np):
         Interpolation parameter between 0 and 1.
     xp : module, optional
         Array library to use (numpy or cupy), by default numpy.
-        
+
     Returns
     -------
     array-like
@@ -57,14 +57,14 @@ def hermite_interpolate(p0, p1, m0, m1, t, xp=np):
 def calculate_streamline_metrics(streamlines, metrics=None):
     """
     Calculate various metrics for a set of streamlines.
-    
+
     Parameters
     ----------
     streamlines : list
         List of streamlines, where each streamline is an array of shape (N, 3).
     metrics : list, optional
         List of metrics to calculate, by default ['curvature', 'length', 'torsion'].
-        
+
     Returns
     -------
     dict
@@ -476,7 +476,14 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                 print(f"[TANGENT] Normalized magnitudes: mean={xp.mean(normalized_magnitudes):.4f}, max={xp.max(normalized_magnitudes):.4f}")
 
     # Interpolate each coordinate
-    result = []
+    # Pre-allocate result array
+    result_shape = (len(xi), streamline_device.shape[1])
+    if use_gpu and hasattr(xp, 'zeros'):
+        result_array = xp.zeros(result_shape, dtype=xp.float32)
+    else:
+        result_array = np.zeros(result_shape, dtype=np.float32)
+    
+    # Interpolate each coordinate
     for dim in range(streamline_device.shape[1]):
         y = streamline_device[:, dim]
         
@@ -485,19 +492,32 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
             if use_gpu:
                 # Use numpy for tangent import
                 import numpy as np
-                t_values = np.array(normalized_distances)
-                interp_points = np.array(xi)
-                y_values = np.array(y)
-                tangent_values = np.array(tangents[:, dim])
+                # We need to convert the data back to CPU for scipy
+                if hasattr(xp, 'asnumpy'):  # If we're using CuPy
+                    t_values = xp.asnumpy(normalized_distances)
+                    interp_points = xp.asnumpy(xi)
+                    y_values = xp.asnumpy(y)
+                    tangent_values = xp.asnumpy(tangents[:, dim])
+                else:  # Using NumPy already
+                    t_values = np.array(normalized_distances)
+                    interp_points = np.array(xi)
+                    y_values = np.array(y)
+                    tangent_values = np.array(tangents[:, dim])
                 
                 # Use scipy on CPU for Hermite interpolation
-                from scipy.interpolate import CubicHermiteSpline
-                interpolator = CubicHermiteSpline(t_values, y_values, tangent_values)
-                interpolated = interpolator(interp_points)
-                
-                # Convert back to device if needed
-                interpolated = xp.asarray(interpolated)
+                try:
+                    from scipy.interpolate import CubicHermiteSpline
+                    interpolator = CubicHermiteSpline(t_values, y_values, tangent_values)
+                    interpolated_cpu = interpolator(interp_points)
+                    
+                    # Convert back to device 
+                    interpolated = xp.asarray(interpolated_cpu)
+                except Exception as e:
+                    print(f"Hermite interpolation failed in GPU path: {e}. Falling back to linear interpolation.")
+                    # Use linear interpolation as fallback
+                    interpolated = xp.interp(xi, normalized_distances, y)
             else:
+                # CPU path
                 try:
                     from scipy.interpolate import CubicHermiteSpline
                     interpolator = CubicHermiteSpline(normalized_distances, y, tangents[:, dim])
@@ -509,13 +529,14 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
             # Use linear interpolation
             interpolated = xp.interp(xi, normalized_distances, y)
             
-        result.append(interpolated)
+        # Store the interpolated values in the result array
+        result_array[:, dim] = interpolated
     
-    # Combine the interpolated coordinates
-    densified_streamline = xp.column_stack(result)
+    # No need for column_stack since we've built the array directly
+    densified_streamline = result_array
     
     # Convert back to numpy if on GPU
-    if use_gpu:
+    if use_gpu and hasattr(xp, 'asnumpy'):
         densified_streamline = xp.asnumpy(densified_streamline)
     
     # Debug: info about the densified streamline
