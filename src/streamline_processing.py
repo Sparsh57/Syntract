@@ -317,8 +317,17 @@ def transform_and_densify_streamlines(
             # For 3D volumes, check if streamline points are within the volume
             mask = np.all((s >= 0) & (s < np.array(new_shape)), axis=1)
             if np.any(mask):
-                clipped_streams.append(s)
-    
+                # Create a new streamline with just the points inside the volume
+                filtered_points = []
+                for i, in_volume in enumerate(mask):
+                    if in_volume:
+                        filtered_points.append(s[i])
+                        
+                # Convert to numpy array and append
+                if len(filtered_points) >= 2:  # Only keep if 2+ points
+                    filtered_array = np.array(filtered_points, dtype=np.float32)
+                    clipped_streams.append(filtered_array)
+                
     # Counts after clipping
     clipped_count = len(clipped_streams)
     

@@ -226,14 +226,32 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
             if idx % 1000 == 0:
                 print(f"Processing streamline {idx}/{total}...")
             try:
-                # Ensure we're passing a numpy array
-                if isinstance(streamline, list):
-                    streamline = np.array(streamline, dtype=np.float32)
+                # Import numpy locally within the processing function
+                import numpy as np
                 
+                # First check the type of streamline
+                streamline_type = type(streamline)
+                
+                # Ensure we're passing a numpy array
+                if not isinstance(streamline, np.ndarray):
+                    try:
+                        # Convert the streamline to a numpy array
+                        streamline = np.array(streamline, dtype=np.float32)
+                        
+                        # Additional check to make sure conversion worked 
+                        if not isinstance(streamline, np.ndarray):
+                            print(f"Error densifying streamline {idx}: Failed to convert to numpy array, type is still {type(streamline)}")
+                            return None
+                    except Exception as conversion_error:
+                        print(f"Error densifying streamline {idx}: Could not convert to numpy array - {conversion_error}")
+                        return None
+                
+                # Now pass numpy array to the densify function
                 return densify_streamline_subvoxel(streamline, step_size, use_gpu, interp_method, 
                                                  high_res_mode=high_res_mode, voxel_size=voxel_size)
             except Exception as e:
                 print(f"Error densifying streamline {idx}: {e}")
+                print(f"Streamline type was: {streamline_type if 'streamline_type' in locals() else 'unknown'}")
                 return None
         
         total = len(streamlines)
@@ -306,17 +324,24 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     if use_gpu:
         try:
             import cupy as xp
+            print(f"[DEBUG] GPU processing with CuPy - streamline type: {type(streamline)}, shape: {streamline.shape if hasattr(streamline, 'shape') else 'unknown'}")
+            
             # First ensure we have a proper numpy array before sending to cupy
             if not isinstance(streamline, np.ndarray):
+                print(f"[DEBUG] Converting streamline from {type(streamline)} to numpy array")
                 streamline = np.array(streamline, dtype=np.float32)
             
             # Then convert to cupy - this is where type errors can occur
             try:
                 streamline_device = xp.asarray(streamline)
+                print(f"[DEBUG] CuPy conversion successful - device array shape: {streamline_device.shape}")
             except Exception as e:
                 print(f"CuPy conversion error: {e}")
                 print(f"Streamline type: {type(streamline)}, shape: {np.shape(streamline)}")
+                if isinstance(streamline, list):
+                    print(f"List contents: {[type(x) for x in streamline]}")
                 # Fall back to CPU if cupy conversion fails
+                print("[DEBUG] Falling back to CPU due to CuPy conversion error")
                 import numpy as xp
                 streamline_device = xp.asarray(streamline)
                 use_gpu = False
