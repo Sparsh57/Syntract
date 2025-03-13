@@ -304,7 +304,7 @@ if __name__ == "__main__":
     parser.add_argument("--patch_center", type=float, nargs=3, default=None, help="Optional patch center in mm.")
     parser.add_argument("--reduction", type=str, choices=["mip", "mean"], default=None,
                         help="Optional reduction along z-axis.")
-    parser.add_argument("--use_gpu", action="store_true", default=True, 
+    parser.add_argument("--use_gpu", type=lambda x: (str(x).lower() == 'true'), nargs='?', const=True, default=True,
                         help="Use GPU acceleration (default: True). Set to false with --use_gpu=False.")
     parser.add_argument("--interp_method", type=str, choices=["hermite", "linear"], default="hermite",
                         help="Interpolation method for streamlines (default: hermite).")
