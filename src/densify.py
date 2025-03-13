@@ -222,6 +222,10 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
         return densified
     else:
         # Parallel processing with shared memory
+        # Note: When using parallelism, we force CPU mode to avoid GPU-related issues
+        print(f"Using parallel processing with {n_jobs} jobs (forcing CPU mode for stability)")
+        use_gpu_parallel = False
+        
         def _process_one(streamline, idx, total):
             if idx % 1000 == 0:
                 print(f"Processing streamline {idx}/{total}...")
@@ -246,8 +250,8 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
                         print(f"Error densifying streamline {idx}: Could not convert to numpy array - {conversion_error}")
                         return None
                 
-                # Now pass numpy array to the densify function
-                return densify_streamline_subvoxel(streamline, step_size, use_gpu, interp_method, 
+                # Now pass numpy array to the densify function - Note we force CPU mode in parallel
+                return densify_streamline_subvoxel(streamline, step_size, use_gpu=use_gpu_parallel, interp_method=interp_method, 
                                                  high_res_mode=high_res_mode, voxel_size=voxel_size)
             except Exception as e:
                 print(f"Error densifying streamline {idx}: {e}")
@@ -401,6 +405,20 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     if xp.any(xp.isnan(normalized_distances)) or xp.any(xp.isnan(xi)):
         print("Warning: NaN values detected in distance calculation. Using original streamline.")
         return streamline
+        
+    # Safety check - ensure all arrays are correct type
+    if use_gpu and hasattr(xp, 'ndarray'):
+        # Check if arrays are proper CuPy arrays when in GPU mode
+        if not isinstance(normalized_distances, xp.ndarray):
+            normalized_distances = xp.asarray(normalized_distances)
+        if not isinstance(xi, xp.ndarray):
+            xi = xp.asarray(xi)
+    else:
+        # Check if arrays are proper NumPy arrays when in CPU mode
+        if not isinstance(normalized_distances, np.ndarray):
+            normalized_distances = np.asarray(normalized_distances)
+        if not isinstance(xi, np.ndarray):
+            xi = np.asarray(xi)
     
     # Calculate tangents for Hermite interpolation
     if interp_method == 'hermite':
