@@ -2,12 +2,11 @@ import numpy as np
 import nibabel as nib
 import os
 import tempfile
-from scipy.ndimage import map_coordinates
 from joblib import Parallel, delayed
 
-def resample_nifti(old_img, new_affine, new_shape, chunk_size=(64, 64, 64), n_jobs=-1):
+def resample_nifti(old_img, new_affine, new_shape, chunk_size=(64, 64, 64), n_jobs=-1, use_gpu=True):
     """
-    Resamples a NIfTI image to a new resolution and shape in parallel.
+    Resamples a NIfTI image to a new resolution and shape using either GPU or CPU.
 
     Parameters
     ----------
@@ -21,39 +20,130 @@ def resample_nifti(old_img, new_affine, new_shape, chunk_size=(64, 64, 64), n_jo
         Processing chunk size, by default (64, 64, 64).
     n_jobs : int, optional
         Number of CPU cores for parallel processing, by default -1 (all cores).
+    use_gpu : bool, optional
+        Whether to use GPU acceleration, by default True.
 
     Returns
     -------
-    np.memmap
+    np.ndarray
         Resampled image data.
+    str
+        Path to temporary memory-mapped file.
     """
-    data_in = np.asarray(old_img.dataobj, dtype=np.float32)
-    old_affine_inv = np.linalg.inv(old_img.affine)
+    # Choose the appropriate array library
+    if use_gpu:
+        try:
+            import cupy as xp
+            from numba import cuda
+            print("Using GPU for nifti resampling")
+            
+            # GPU-accelerated resampling function
+            @cuda.jit
+            def resample_kernel(new_data, data_in, new_affine, old_affine_inv, new_shape):
+                x, y, z = cuda.grid(3)
+                if x < new_shape[0] and y < new_shape[1] and z < new_shape[2]:
+                    # In Numba CUDA kernels, we can't use CuPy functions like xp.array
+                    # Instead, we need to perform the operations manually
+                    # Create the output voxel coordinates
+                    x_mm = new_affine[0, 0] * x + new_affine[0, 1] * y + new_affine[0, 2] * z + new_affine[0, 3]
+                    y_mm = new_affine[1, 0] * x + new_affine[1, 1] * y + new_affine[1, 2] * z + new_affine[1, 3]
+                    z_mm = new_affine[2, 0] * x + new_affine[2, 1] * y + new_affine[2, 2] * z + new_affine[2, 3]
+                    
+                    # Transform to input voxel space
+                    i = old_affine_inv[0, 0] * x_mm + old_affine_inv[0, 1] * y_mm + old_affine_inv[0, 2] * z_mm + old_affine_inv[0, 3]
+                    j = old_affine_inv[1, 0] * x_mm + old_affine_inv[1, 1] * y_mm + old_affine_inv[1, 2] * z_mm + old_affine_inv[1, 3]
+                    k = old_affine_inv[2, 0] * x_mm + old_affine_inv[2, 1] * y_mm + old_affine_inv[2, 2] * z_mm + old_affine_inv[2, 3]
+                    
+                    # Round to nearest integer
+                    i_int = int(i)
+                    j_int = int(j)
+                    k_int = int(k)
+                    
+                    # Check if the indices are within the input volume bounds
+                    if 0 <= i_int < data_in.shape[0] and 0 <= j_int < data_in.shape[1] and 0 <= k_int < data_in.shape[2]:
+                        new_data[x, y, z] = data_in[i_int, j_int, k_int]
+            
+            # Convert data to GPU
+            data_in = xp.asarray(old_img.get_fdata(), dtype=xp.float32)
+            old_affine_inv = xp.linalg.inv(xp.asarray(old_img.affine))
+            
+            # Create output array on GPU
+            new_data = xp.zeros(new_shape, dtype=xp.float32)
+            
+            # Set up CUDA grid
+            threads_per_block = (8, 8, 8)
+            blocks_per_grid = tuple((dim + threads_per_block[i] - 1) // threads_per_block[i] 
+                                  for i, dim in enumerate(new_shape))
+            
+            # Execute kernel
+            resample_kernel[blocks_per_grid, threads_per_block](
+                new_data, data_in, xp.asarray(new_affine), old_affine_inv, new_shape
+            )
+            
+        except ImportError:
+            print("Warning: Could not import GPU libraries. Falling back to CPU for nifti resampling.")
+            import numpy as xp
+            use_gpu = False
+    
+    if not use_gpu:
+        # CPU implementation
+        print("Using CPU for nifti resampling")
+        import numpy as xp
+        
+        # Get input data
+        data_in = old_img.get_fdata().astype(np.float32)
+        old_affine_inv = np.linalg.inv(old_img.affine)
+        
+        # Create output array
+        new_data = np.zeros(new_shape, dtype=np.float32)
+        
+        # Define CPU resampling function for parallel processing
+        def resample_chunk(start_x, end_x, start_y, end_y, start_z, end_z):
+            chunk_data = np.zeros((end_x - start_x, end_y - start_y, end_z - start_z), dtype=np.float32)
+            for x in range(start_x, end_x):
+                for y in range(start_y, end_y):
+                    for z in range(start_z, end_z):
+                        out_vox = np.array([x, y, z, 1], dtype=np.float32)
+                        xyz_mm = new_affine @ out_vox
+                        xyz_old_vox = old_affine_inv @ xyz_mm
+                        i, j, k = int(xyz_old_vox[0]), int(xyz_old_vox[1]), int(xyz_old_vox[2])
+                        if 0 <= i < data_in.shape[0] and 0 <= j < data_in.shape[1] and 0 <= k < data_in.shape[2]:
+                            chunk_data[x - start_x, y - start_y, z - start_z] = data_in[i, j, k]
+            return start_x, start_y, start_z, chunk_data
+        
+        # Process in chunks for better memory usage
+        chunks = []
+        for x_start in range(0, new_shape[0], chunk_size[0]):
+            for y_start in range(0, new_shape[1], chunk_size[1]):
+                for z_start in range(0, new_shape[2], chunk_size[2]):
+                    x_end = min(x_start + chunk_size[0], new_shape[0])
+                    y_end = min(y_start + chunk_size[1], new_shape[1])
+                    z_end = min(z_start + chunk_size[2], new_shape[2])
+                    chunks.append((x_start, x_end, y_start, y_end, z_start, z_end))
+        
+        # Process chunks in parallel
+        results = Parallel(n_jobs=n_jobs)(
+            delayed(resample_chunk)(x_s, x_e, y_s, y_e, z_s, z_e) for x_s, x_e, y_s, y_e, z_s, z_e in chunks
+        )
+        
+        # Combine results
+        for x_s, y_s, z_s, chunk_data in results:
+            x_e, y_e, z_e = x_s + chunk_data.shape[0], y_s + chunk_data.shape[1], z_s + chunk_data.shape[2]
+            new_data[x_s:x_e, y_s:y_e, z_s:z_e] = chunk_data
+
+    # Create memory-mapped file
     temp_fd, temp_path = tempfile.mkstemp(suffix=".dat")
     os.close(temp_fd)
-    new_data = np.memmap(temp_path, dtype=np.float32, mode='w+', shape=new_shape)
-
-    def _resample_chunk(i0, i1, j0, j1, k0, k1):
-        I, J, K = np.mgrid[i0:i1, j0:j1, k0:k1]
-        out_vox = np.vstack([I.ravel(), J.ravel(), K.ravel(), np.ones(I.size)])
-        xyz_mm = new_affine @ out_vox
-        xyz_old_vox = old_affine_inv @ xyz_mm
-        chunk_values = map_coordinates(data_in, xyz_old_vox[:3], order=1, mode='nearest')
-        return (i0, i1, j0, j1, k0, k1, chunk_values)
-
-    chunk_list = [
-        (i0, min(i0 + chunk_size[0], new_shape[0]),
-         j0, min(j0 + chunk_size[1], new_shape[1]),
-         k0, min(k0 + chunk_size[2], new_shape[2]))
-        for i0 in range(0, new_shape[0], chunk_size[0])
-        for j0 in range(0, new_shape[1], chunk_size[1])
-        for k0 in range(0, new_shape[2], chunk_size[2])
-    ]
-
-    results = Parallel(n_jobs=n_jobs)(delayed(_resample_chunk)(*chunk) for chunk in chunk_list)
-
-    for (i0, i1, j0, j1, k0, k1, chunk_values) in results:
-        new_data[i0:i1, j0:j1, k0:k1] = chunk_values.reshape((i1 - i0, j1 - j0, k1 - k0))
-
-    new_data.flush()
+    
+    # Convert back to numpy if using GPU
+    if use_gpu:
+        new_data_np = xp.asnumpy(new_data)
+    else:
+        new_data_np = new_data
+    
+    # Save to memmap
+    new_data_memmap = np.memmap(temp_path, dtype=np.float32, mode='w+', shape=new_shape)
+    new_data_memmap[:] = new_data_np[:]
+    new_data_memmap.flush()
+    
     return new_data, temp_path
