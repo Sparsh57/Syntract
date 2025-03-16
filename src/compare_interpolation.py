@@ -43,8 +43,11 @@ def process_streamlines_with_method(streamlines, step_size, method, voxel_size=1
         if idx % 50 == 0:
             print(f"  Processing streamline {idx}/{len(streamlines)}...")
         try:
-            # Use much higher debug verbosity for the first few streamlines
-            high_res_debug = idx < 5
+            # Only enable detailed debugging for the first few streamlines
+            if idx < 5:
+                os.environ["DEBUG_TANGENTS"] = "1"
+            else:
+                os.environ["DEBUG_TANGENTS"] = "0"
             
             # Scale the step size based on voxel size
             # For smaller voxels, we need proportionally smaller steps
@@ -59,7 +62,6 @@ def process_streamlines_with_method(streamlines, step_size, method, voxel_size=1
                 scaled_step_size, 
                 use_gpu=use_gpu, 
                 interp_method=method, 
-                high_res_mode=high_res_debug,
                 voxel_size=voxel_size
             )
             processed.append(densified)
@@ -554,7 +556,8 @@ def main():
                             'This affects tangent scaling in Hermite interpolation. '
                             'Smaller voxel sizes result in stronger curvature effects.')
     parser.add_argument('--num_streamlines', type=int, default=None, help='Number of streamlines to process (default: all).')
-    parser.add_argument('--use_gpu', action='store_true', default=False, help='Use GPU acceleration.')
+    parser.add_argument('--use_gpu', type=lambda x: str(x).lower() != 'false', nargs='?', const=True, default=False,
+                       help='Use GPU acceleration (default: False). Set to False with --use_gpu=False')
     parser.add_argument('--debug_tangents', action='store_true', default=False, 
                        help='Enable detailed debugging of tangent calculations (default: False).')
     

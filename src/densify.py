@@ -168,10 +168,10 @@ def calculate_streamline_metrics(streamlines, metrics=None):
     
     return results
 
-def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True, interp_method='hermite', high_res_mode=False, voxel_size=1.0):
+def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True, interp_method='hermite', voxel_size=1.0):
     """
-    Densify a list of streamlines in parallel.
-
+    Densify multiple streamlines in parallel.
+    
     Parameters
     ----------
     streamlines : list of arrays
@@ -184,22 +184,17 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
         Whether to use GPU acceleration, by default True.
     interp_method : str, optional
         Interpolation method ('hermite' or 'linear'), by default 'hermite'.
-    high_res_mode : bool, optional
-        Special high-resolution processing mode, by default False.
     voxel_size : float, optional
-        Size of the voxels, affects tangent scaling in Hermite interpolation, by default 1.0.
-
+        Size of the voxels, by default 1.0.
+        
     Returns
     -------
     list of arrays
         Densified streamlines.
     """
-    # Import numpy here to ensure it's available in both code paths
-    import numpy as np
-    
-    if not streamlines:
+    if len(streamlines) == 0:
         return []
-    
+
     # Process streamlines in parallel
     if n_jobs == 1:
         # Sequential processing
@@ -213,46 +208,47 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
                 if isinstance(streamline, list):
                     streamline = np.array(streamline, dtype=np.float32)
                 
-                d = densify_streamline_subvoxel(streamline, step_size, use_gpu, interp_method, 
-                                               high_res_mode=high_res_mode, voxel_size=voxel_size)
+                d = densify_streamline_subvoxel(streamline, step_size, use_gpu, interp_method, voxel_size=voxel_size)
                 if len(d) >= 2:  # Only keep if at least 2 points
                     densified.append(d)
             except Exception as e:
                 print(f"Error densifying streamline {i}: {e}")
         return densified
     else:
-        # Parallel processing with shared memory
-        # Note: When using parallelism, we force CPU mode to avoid GPU-related issues
-        print(f"Using parallel processing with {n_jobs} jobs (forcing CPU mode for stability)")
-        use_gpu_parallel = False
+        # Import numpy here to ensure it's available in both code paths
+        import numpy as np
+        
+        # Parallel processing
+        from joblib import Parallel, delayed
         
         def _process_one(streamline, idx, total):
             if idx % 1000 == 0:
                 print(f"Processing streamline {idx}/{total}...")
+            
+            # Track input type for better error reporting
+            streamline_type = type(streamline).__name__
+            
             try:
-                # Import numpy locally within the processing function
-                import numpy as np
+                # Ensure we have a numpy array, not a list
+                if isinstance(streamline, list):
+                    streamline = np.array(streamline, dtype=np.float32)
+
+                # Check that we have enough points to densify
+                if len(streamline) < 2:
+                    print(f"Warning: Streamline {idx} had {len(streamline)} points, skipping.")
+                    return None
                 
-                # First check the type of streamline
-                streamline_type = type(streamline)
+                # Perform densification
+                d = densify_streamline_subvoxel(
+                    streamline, step_size, use_gpu=use_gpu, 
+                    interp_method=interp_method, voxel_size=voxel_size
+                )
                 
-                # Ensure we're passing a numpy array
-                if not isinstance(streamline, np.ndarray):
-                    try:
-                        # Convert the streamline to a numpy array
-                        streamline = np.array(streamline, dtype=np.float32)
-                        
-                        # Additional check to make sure conversion worked 
-                        if not isinstance(streamline, np.ndarray):
-                            print(f"Error densifying streamline {idx}: Failed to convert to numpy array, type is still {type(streamline)}")
-                            return None
-                    except Exception as conversion_error:
-                        print(f"Error densifying streamline {idx}: Could not convert to numpy array - {conversion_error}")
-                        return None
-                
-                # Now pass numpy array to the densify function - Note we force CPU mode in parallel
-                return densify_streamline_subvoxel(streamline, step_size, use_gpu=use_gpu_parallel, interp_method=interp_method, 
-                                                 high_res_mode=high_res_mode, voxel_size=voxel_size)
+                # Ensure we return a numpy array
+                if isinstance(d, list):
+                    d = np.array(d, dtype=np.float32)
+                    
+                return d
             except Exception as e:
                 print(f"Error densifying streamline {idx}: {e}")
                 print(f"Streamline type was: {streamline_type if 'streamline_type' in locals() else 'unknown'}")
@@ -268,16 +264,11 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
         densified = [r for r in results if r is not None and len(r) >= 2]
         
         # Report on densification results
-        if high_res_mode:
-            print(f"\n[HIGH-RES DENSIFY] Processed {len(densified)}/{total} streamlines successfully")
-            if len(densified) < total:
-                print(f"[HIGH-RES DENSIFY] {total - len(densified)} streamlines were filtered out")
-        else:
-            print(f"Densified {len(densified)}/{total} streamlines successfully")
+        print(f"Densified {len(densified)}/{total} streamlines successfully")
         
         return densified
 
-def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_method='hermite', high_res_mode=False, voxel_size=1.0):
+def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_method='hermite', voxel_size=1.0):
     """
     Densify a streamline with sub-voxel precision.
 
@@ -291,8 +282,6 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
         Whether to use GPU acceleration, by default True.
     interp_method : str, optional
         Interpolation method ('hermite' or 'linear'), by default 'hermite'.
-    high_res_mode : bool, optional
-        Special high-resolution processing mode, by default False.
     voxel_size : float, optional
         Size of the voxels, affects tangent scaling in Hermite interpolation, by default 1.0.
 
@@ -317,7 +306,7 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
         return streamline
 
     # Check for debug flags
-    debug_tangents = os.environ.get("DEBUG_TANGENTS") == "1" or high_res_mode
+    debug_tangents = os.environ.get("DEBUG_TANGENTS") == "1"
 
     # Debug: Print interpolation method being used
     if debug_tangents:
@@ -382,18 +371,6 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     # Adding 1 ensures the segments are shorter than step_size, not just equal to step_size
     n_steps = int(xp.ceil(total_length / step_size)) + 1
 
-    # For high-res mode, limit maximum steps per streamline to prevent extreme memory usage
-    if high_res_mode and n_steps > 10000:
-        old_n_steps = n_steps
-        n_steps = min(10000, n_steps)
-        print(f"[HIGH-RES DENSIFY] Limiting steps from {old_n_steps} to {n_steps} to prevent memory issues")
-    
-    # Ensure at least one interpolation step
-    n_steps = max(len(streamline), n_steps)
-    
-    if debug_tangents:
-        print(f"[DENSIFY] Using {n_steps} steps for densification")
-    
     # Calculate cumulative distance along the streamline
     cumulative_lengths = xp.concatenate(([0], xp.cumsum(segment_lengths)))
     normalized_distances = cumulative_lengths / total_length
@@ -427,9 +404,6 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
         
         # Determine tangent scaling based on voxel size
         base_scale = 1.0
-        if high_res_mode:
-            # Enhanced tangent scaling for high-resolution mode
-            base_scale = 1.2
         
         # Calculate voxel-based scaling factor - higher for smaller voxels
         voxel_scale = (1.0 / max(0.01, voxel_size))
@@ -467,31 +441,29 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
         tangents[0] = (streamline_device[1] - streamline_device[0]) * final_scale
         tangents[-1] = (streamline_device[-1] - streamline_device[-2]) * final_scale
         
-        # For high-res mode, we intentionally don't normalize tangents to allow for more curvature
-        if not high_res_mode:
-            # Save original magnitudes for reference
-            if debug_tangents:
-                orig_magnitudes = xp.sqrt(xp.sum(tangents**2, axis=1))
-                print(f"[TANGENT] Original magnitudes: mean={xp.mean(orig_magnitudes):.4f}, max={xp.max(orig_magnitudes):.4f}")
-            
-            # Normalize tangents for standard mode, but with less aggressive normalization
-            # This allows for more distinctive curvature differences between methods
-            tangent_norms = xp.sqrt(xp.sum(tangents**2, axis=1, keepdims=True))
-            # Avoid division by zero
-            tangent_norms = xp.where(tangent_norms > 1e-10, tangent_norms, 1e-10)
-            
-            # Scale normalization based on voxel size to maintain some of the curvature effect
-            normalization_factor = max(0.5, min(1.0, voxel_size))
-            
-            if debug_tangents:
-                print(f"[TANGENT] Normalization factor: {normalization_factor:.4f}")
-            
-            tangents = tangents / (tangent_norms * normalization_factor)
-            
-            # Debug: print normalized magnitudes
-            if debug_tangents:
-                normalized_magnitudes = xp.sqrt(xp.sum(tangents**2, axis=1))
-                print(f"[TANGENT] Normalized magnitudes: mean={xp.mean(normalized_magnitudes):.4f}, max={xp.max(normalized_magnitudes):.4f}")
+        # Save original magnitudes for reference
+        if debug_tangents:
+            orig_magnitudes = xp.sqrt(xp.sum(tangents**2, axis=1))
+            print(f"[TANGENT] Original magnitudes: mean={xp.mean(orig_magnitudes):.4f}, max={xp.max(orig_magnitudes):.4f}")
+        
+        # Normalize tangents for standard mode, but with less aggressive normalization
+        # This allows for more distinctive curvature differences between methods
+        tangent_norms = xp.sqrt(xp.sum(tangents**2, axis=1, keepdims=True))
+        # Avoid division by zero
+        tangent_norms = xp.where(tangent_norms > 1e-10, tangent_norms, 1e-10)
+        
+        # Scale normalization based on voxel size to maintain some of the curvature effect
+        normalization_factor = max(0.5, min(1.0, voxel_size))
+        
+        if debug_tangents:
+            print(f"[TANGENT] Normalization factor: {normalization_factor:.4f}")
+        
+        tangents = tangents / (tangent_norms * normalization_factor)
+        
+        # Debug: print normalized magnitudes
+        if debug_tangents:
+            normalized_magnitudes = xp.sqrt(xp.sum(tangents**2, axis=1))
+            print(f"[TANGENT] Normalized magnitudes: mean={xp.mean(normalized_magnitudes):.4f}, max={xp.max(normalized_magnitudes):.4f}")
 
     # Interpolate each coordinate
     # Pre-allocate result array
