@@ -233,8 +233,7 @@ def transform_streamline(s_mm, A_new_inv, use_gpu=True):
 
 def transform_and_densify_streamlines(
     streamlines_mm, new_affine, new_shape, step_size=0.5,
-    n_jobs=8, use_gpu=True, interp_method='hermite', disable_clipping=False,
-    high_res_mode=False
+    n_jobs=8, use_gpu=True, interp_method='hermite'
 ):
     """
     Transform streamlines from mm space to voxel space and apply densification.
@@ -255,10 +254,6 @@ def transform_and_densify_streamlines(
         Whether to use GPU acceleration, by default True.
     interp_method : str, optional
         Interpolation method ('hermite' or 'linear'), by default 'hermite'.
-    disable_clipping : bool, optional
-        Whether to disable FOV clipping for high-resolution data, by default False.
-    high_res_mode : bool, optional
-        Special high-resolution processing mode for extreme resolution changes, by default False.
 
     Returns
     -------
@@ -278,19 +273,12 @@ def transform_and_densify_streamlines(
     voxel_size = np.sqrt(np.sum(new_affine[:3, :3] ** 2, axis=0))
     
     # Diagnostic info about voxel scaling
-    if high_res_mode or os.environ.get("DEBUG_STREAMLINE_BYPASS") == "1":
-        print(f"\n[STREAMLINE DEBUG] Transform diagnostics:")
-        print(f"Voxel size from affine: {voxel_size}")
-        print(f"New shape: {new_shape}")
-        print(f"Step size: {step_size}")
-        print(f"High-res mode: {'ON' if high_res_mode else 'OFF'}")
-        print(f"FOV clipping: {'DISABLED' if disable_clipping else 'ENABLED'}")
+    print(f"\n[STREAMLINE DEBUG] Transform diagnostics:")
+    print(f"Voxel size from affine: {voxel_size}")
+    print(f"New shape: {new_shape}")
+    print(f"Step size: {step_size}")
+    print(f"FOV clipping: ENABLED")
         
-        # Special handling for very small voxel sizes
-        min_voxel = min(voxel_size)
-        if min_voxel < 0.05:  # Sub-50 micron data
-            print(f"[STREAMLINE DEBUG] EXTREME RESOLUTION DETECTED: {min_voxel:.4f}mm voxels")
-            
     # Transform from mm space to voxel space
     transformed_streams = []
     for s in streamlines_mm:
@@ -304,55 +292,35 @@ def transform_and_densify_streamlines(
     # Counts for clipping diagnostics
     total_streamlines = len(transformed_streams)
     
-    # Skip clipping for high-resolution data if specified
-    if disable_clipping:
-        clipped_streams = transformed_streams
-        if high_res_mode:
-            print("[STREAMLINE DEBUG] HIGH-RES BYPASS: Skipping FOV clipping to preserve all streamlines")
-    else:
-        # Apply clipping only if not disabled
-        # Clip streamlines to the field of view (new_shape)
-        clipped_streams = []
-        for s in transformed_streams:
-            # For 3D volumes, check if streamline points are within the volume
-            mask = np.all((s >= 0) & (s < np.array(new_shape)), axis=1)
-            if np.any(mask):
-                # Create a new streamline with just the points inside the volume
-                filtered_points = []
-                for i, in_volume in enumerate(mask):
-                    if in_volume:
-                        filtered_points.append(s[i])
-                        
-                # Convert to numpy array and append
-                if len(filtered_points) >= 2:  # Only keep if 2+ points
-                    filtered_array = np.array(filtered_points, dtype=np.float32)
-                    clipped_streams.append(filtered_array)
+    # Apply clipping (always enabled)
+    # Clip streamlines to the field of view (new_shape)
+    clipped_streams = []
+    for s in transformed_streams:
+        # For 3D volumes, check if streamline points are within the volume
+        mask = np.all((s >= 0) & (s < np.array(new_shape)), axis=1)
+        if np.any(mask):
+            # Create a new streamline with just the points inside the volume
+            filtered_points = []
+            for i, in_volume in enumerate(mask):
+                if in_volume:
+                    filtered_points.append(s[i])
+                    
+            # Convert to numpy array and append
+            if len(filtered_points) >= 2:  # Only keep if 2+ points
+                filtered_array = np.array(filtered_points, dtype=np.float32)
+                clipped_streams.append(filtered_array)
                 
     # Counts after clipping
     clipped_count = len(clipped_streams)
     
-    # Only show clipping stats if clipping is enabled
-    if not disable_clipping:
-        print(f"Clipping Stats: {clipped_count}/{total_streamlines} streamlines retained after FOV clipping ({clipped_count/total_streamlines*100:.1f}%)")
-        if clipped_count < total_streamlines * 0.5:
-            print(f"WARNING: Over 50% of streamlines were clipped! Consider using --disable_clipping")
-        if clipped_count == 0:
-            print("ERROR: All streamlines were clipped! Use --disable_clipping to retain streamlines.")
-            # Return at least some streamlines even if all were clipped
-            if high_res_mode or os.environ.get("DEBUG_STREAMLINE_BYPASS") == "1":
-                print("[STREAMLINE DEBUG] EMERGENCY BYPASS: Restoring all streamlines despite clipping")
-                clipped_streams = transformed_streams
-            else:
-                print("No streamlines remain after clipping. Try using --disable_clipping option.")
-                return []
+    # Show clipping stats
+    print(f"Clipping Stats: {clipped_count}/{total_streamlines} streamlines retained after FOV clipping ({clipped_count/total_streamlines*100:.1f}%)")
+    if clipped_count < total_streamlines * 0.5:
+        print(f"WARNING: Over 50% of streamlines were clipped!")
+    if clipped_count == 0:
+        print("ERROR: All streamlines were clipped!")
+        return []
     
-    if high_res_mode:
-        print(f"\n[HIGH-RES MODE] Processing {len(clipped_streams)} streamlines with {interp_method} interpolation")
-        print(f"Step size: {step_size}mm, Target voxel size from affine: {min(voxel_size):.4f}mm")
-        if step_size < min(voxel_size):
-            print(f"[HIGH-RES MODE] Step size ({step_size}mm) is smaller than voxel size ({min(voxel_size):.4f}mm)")
-            print("This will result in very dense streamlines - consider increasing step size.")
-            
     # Ensure all streamlines are numpy arrays, not Python lists
     # This can happen in certain cases with clipping operations
     for i in range(len(clipped_streams)):
@@ -363,8 +331,7 @@ def transform_and_densify_streamlines(
     min_voxel_size = min(voxel_size)
     densified_streams = densify_streamlines_parallel(
         clipped_streams, step_size, n_jobs=n_jobs, use_gpu=use_gpu,
-        interp_method=interp_method, high_res_mode=high_res_mode,
-        voxel_size=min_voxel_size
+        interp_method=interp_method, voxel_size=min_voxel_size
     )
     
     # Report final streamline count
