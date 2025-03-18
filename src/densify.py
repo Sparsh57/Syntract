@@ -244,10 +244,9 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
         Densified streamline.
     """
     import numpy as np
-    if isinstance(streamline, list):
-        try:
-            streamline = np.array(streamline, dtype=np.float32)
-        except Exception as e:
+    try:
+            streamline = np.array([np.array(pt, dtype=np.float32) for pt in streamline])
+    except Exception as e:
             raise TypeError(f"Failed to convert list to numpy array: {e}")
     if len(streamline) < 2:
         print(f"Warning: Cannot densify streamline with less than 2 points (has {len(streamline)})")
@@ -299,7 +298,7 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
         return streamline
 
     n_steps = int(xp.ceil(total_length / step_size)) + 1
-    cumulative_lengths = xp.concatenate(([0], xp.cumsum(segment_lengths)))
+    cumulative_lengths = xp.concatenate((xp.array([0], dtype=xp.float32), xp.cumsum(segment_lengths)))
     normalized_distances = cumulative_lengths / total_length
     xi = xp.linspace(0, 1, n_steps)
 
