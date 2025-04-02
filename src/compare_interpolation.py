@@ -2,13 +2,13 @@
 """
 compare_interpolation.py
 
-Compare linear and Hermite interpolation methods for streamlines.
+Compare original (no interpolation), linear, Hermite, and RBF interpolation methods for streamlines.
 
 Features:
 1. Load streamlines from a TRK file.
-2. Process them (densify) with both linear and Hermite interpolation.
+2. Process them (densify) with multiple interpolation methods.
 3. Compute metrics (length, curvature, torsion).
-4. Compare metrics numerically.
+4. Compare metrics numerically (pairwise comparisons).
 5. Visualize:
    - 3D overlay of streamlines
    - Point-by-point differences
@@ -24,8 +24,8 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 from joblib import Parallel, delayed
 
-# Import your local densify functions and metrics
-# Make sure these are in your Python path or same folder
+# Import your local densify functions and metrics.
+# Make sure these are in your Python path or same folder.
 from densify import (
     densify_streamline_subvoxel,
     calculate_streamline_metrics,
@@ -38,7 +38,12 @@ from densify import (
 def process_streamlines_with_method(streamlines, step_size, method, voxel_size=1.0, use_gpu=False):
     """
     Densify a set of streamlines using a specified interpolation method.
+    If method is "original", return the raw streamlines without any interpolation.
     """
+    if method == "original":
+        print(f"Using original streamlines (no interpolation).")
+        return [np.asarray(stream) for stream in streamlines]
+
     print(f"Processing {len(streamlines)} streamlines with {method} interpolation (voxel size: {voxel_size}mm)...")
     processed = []
     for idx, stream in enumerate(streamlines):
@@ -68,23 +73,19 @@ def process_streamlines_with_method(streamlines, step_size, method, voxel_size=1
 #                              METRICS & COMPARISON                           #
 ###############################################################################
 
-def calculate_metrics_for_all_methods(streamlines, methods, step_size, voxel_size, use_gpu):
+def calculate_metrics_from_processed(processed_streams, methods):
     """
-    Calculate streamline metrics for all specified interpolation methods.
+    Calculate streamline metrics for each interpolation method from the already processed streamlines.
     """
     metrics = {}
     for method in methods:
-        print(f"Processing streamlines with {method} interpolation...")
-        processed_streams = process_streamlines_with_method(
-            streamlines, step_size, method, voxel_size=voxel_size, use_gpu=use_gpu
-        )
         print(f"Calculating metrics for {method} interpolation...")
-        metrics[method] = calculate_streamline_metrics(processed_streams)
+        metrics[method] = calculate_streamline_metrics(processed_streams[method])
     return metrics
 
 def compare_metrics_for_methods(metrics, methods):
     """
-    Compare metrics across multiple interpolation methods.
+    Compare metrics across multiple interpolation methods, including all pairwise comparisons.
     """
     print("\n================== Metrics Comparison ==================")
     for metric in ['mean_curvature', 'max_curvature', 'mean_length', 'total_length', 'mean_torsion']:
@@ -93,14 +94,19 @@ def compare_metrics_for_methods(metrics, methods):
             value = metrics[method].get(metric, 0)
             print(f"  {method.capitalize()}: {value:.6f}")
         if len(methods) > 1:
-            base_method = methods[0]
-            for method in methods[1:]:
-                base_value = metrics[base_method].get(metric, 0)
-                method_value = metrics[method].get(metric, 0)
-                if base_value:
-                    diff = method_value - base_value
-                    pct_diff = (diff / base_value) * 100
-                    print(f"  Difference ({method.capitalize()} vs {base_method.capitalize()}): {diff:.6f} ({pct_diff:+.2f}%)")
+            # Compute pairwise differences for every combination
+            for i in range(len(methods)):
+                for j in range(i + 1, len(methods)):
+                    method1 = methods[i]
+                    method2 = methods[j]
+                    base_value = metrics[method1].get(metric, 0)
+                    comp_value = metrics[method2].get(metric, 0)
+                    if base_value:
+                        diff = comp_value - base_value
+                        pct_diff = (diff / base_value) * 100
+                        print(f"  Difference ({method2.capitalize()} vs {method1.capitalize()}): {diff:.6f} ({pct_diff:+.2f}%)")
+                    else:
+                        print(f"  Cannot compute percentage difference for {method2.capitalize()} vs {method1.capitalize()} as base value is zero.")
     print("========================================================\n")
 
 ###############################################################################
@@ -162,7 +168,7 @@ def plot_metrics_comparison_for_all_methods(metrics, methods):
             fig, ax = plt.subplots(figsize=(8, 5))
             for method in methods:
                 data = metrics[method].get(metric, [])
-                if metric == 'curvature' or metric == 'torsion':
+                if metric in ['curvature', 'torsion']:
                     flat_data = [item for sublist in data for item in sublist]
                 else:
                     flat_data = data
@@ -180,7 +186,8 @@ def plot_metrics_comparison_for_all_methods(metrics, methods):
             for method1 in methods:
                 for method2 in methods:
                     if method1 != method2:
-                        ax.scatter(metrics[method1]['length'], metrics[method2]['length'], alpha=0.6, label=f"{method1.capitalize()} vs {method2.capitalize()}")
+                        ax.scatter(metrics[method1]['length'], metrics[method2]['length'], alpha=0.6,
+                                   label=f"{method1.capitalize()} vs {method2.capitalize()}")
             mn = min(min(metrics[method]['length']) for method in methods)
             mx = max(max(metrics[method]['length']) for method in methods)
             ax.plot([mn, mx], [mn, mx], 'k--')
@@ -196,55 +203,55 @@ def plot_metrics_comparison_for_all_methods(metrics, methods):
 #                   COLOR-CODED DIFFERENCES IN 3D (PER STREAMLINE)            #
 ###############################################################################
 
-def color_code_difference_3d(linear_stream, hermite_stream, ax=None, title=""):
+def color_code_difference_3d(reference_stream, compared_stream, ax=None, title=""):
     """
-    Plot Hermite streamline color-coded by its distance to the Linear streamline
-    at each point. The Linear streamline is shown in solid blue for reference.
+    Plot a streamline (e.g., Hermite or RBF) color-coded by its distance to a reference streamline.
+    The reference streamline is shown in solid blue.
     """
-    min_len = min(len(linear_stream), len(hermite_stream))
+    min_len = min(len(reference_stream), len(compared_stream))
     if min_len < 2:
         return
 
-    linear_trim = linear_stream[:min_len]
-    hermite_trim = hermite_stream[:min_len]
+    ref_trim = reference_stream[:min_len]
+    comp_trim = compared_stream[:min_len]
 
-    distances = np.linalg.norm(hermite_trim - linear_trim, axis=1)
+    distances = np.linalg.norm(comp_trim - ref_trim, axis=1)
 
     if ax is None:
         fig = plt.figure()
         ax = fig.add_subplot(111, projection='3d')
 
-    ax.set_title(title if title else "Hermite color-coded by distance to Linear")
+    ax.set_title(title if title else "Color-coded by distance")
     ax.set_xlabel("X")
     ax.set_ylabel("Y")
     ax.set_zlabel("Z")
 
-    # Plot the linear streamline in solid blue
-    ax.plot(linear_trim[:, 0], linear_trim[:, 1], linear_trim[:, 2],
-            color='blue', label='Linear')
+    # Plot the reference streamline in solid blue
+    ax.plot(ref_trim[:, 0], ref_trim[:, 1], ref_trim[:, 2],
+            color='blue', label='Reference')
 
-    # Plot the hermite streamline as a scatter
+    # Plot the compared streamline as a scatter with color coding
     scatter = ax.scatter(
-        hermite_trim[:, 0],
-        hermite_trim[:, 1],
-        hermite_trim[:, 2],
+        comp_trim[:, 0],
+        comp_trim[:, 1],
+        comp_trim[:, 2],
         c=distances,
         cmap='hot',
         marker='o',
         s=20,
-        label='Hermite'
+        label='Compared'
     )
     # Add colorbar
     if hasattr(ax, 'get_figure'):
         fig = ax.get_figure()
         cbar = fig.colorbar(scatter, ax=ax, shrink=0.6, pad=0.1)
-        cbar.set_label("Distance to Linear")
+        cbar.set_label("Distance to Reference")
 
     ax.legend()
 
 def visualize_color_coded_differences_for_all_methods(processed_streams, methods, top_n=5):
     """
-    Identify the top N streamline pairs with the largest mean difference for all methods,
+    Identify the top N streamline pairs with the largest mean difference for all method pairs,
     then show each pair in 3D with color-coded differences.
     """
     for method1 in methods:
@@ -267,7 +274,10 @@ def visualize_color_coded_differences_for_all_methods(processed_streams, methods
                 for i, idx in enumerate(top_indices):
                     ax = fig.add_subplot(top_n, 1, i + 1, projection='3d')
                     title = f"Streamline {idx} (Mean Diff={differences[idx]:.4f})"
-                    color_code_difference_3d(processed_streams[method1][idx], processed_streams[method2][idx], ax=ax, title=title)
+                    color_code_difference_3d(processed_streams[method1][idx],
+                                             processed_streams[method2][idx],
+                                             ax=ax,
+                                             title=title)
                 plt.tight_layout()
                 plt.show()
 
@@ -279,7 +289,7 @@ def compare_interpolations(trk_file, step_size=0.5, voxel_size=None, num_streaml
     """
     High-level function to:
       1) Load TRK streamlines
-      2) Process them with specified interpolation methods
+      2) Process them with specified interpolation methods (including "original" for no interpolation)
       3) Compute metrics, compare, and visualize
     """
     print(f"Comparing interpolation methods on {trk_file}")
@@ -304,13 +314,16 @@ def compare_interpolations(trk_file, step_size=0.5, voxel_size=None, num_streaml
         print(f"Limiting to {num_streamlines} streamlines.")
         streamlines = streamlines[:num_streamlines]
 
-    # Process streamlines for all methods
-    processed_streams = {method: process_streamlines_with_method(streamlines, step_size, method, voxel_size=voxel_size, use_gpu=use_gpu) for method in methods}
+    # Process streamlines for all methods (only done once)
+    processed_streams = {
+        method: process_streamlines_with_method(streamlines, step_size, method, voxel_size=voxel_size, use_gpu=use_gpu)
+        for method in methods
+    }
 
-    # Calculate metrics for all methods
-    metrics = calculate_metrics_for_all_methods(streamlines, methods, step_size, voxel_size, use_gpu)
+    # Calculate metrics using the already processed streamlines
+    metrics = calculate_metrics_from_processed(processed_streams, methods)
 
-    # Compare metrics
+    # Compare metrics (with all pairwise differences)
     compare_metrics_for_methods(metrics, methods)
 
     # Visual comparisons
@@ -337,10 +350,10 @@ def main():
                         help='Number of streamlines to process (default: all).')
     parser.add_argument('--use_gpu', action='store_true',
                         help='Use GPU acceleration if available.')
-    parser.add_argument('--methods', type=str, nargs='+', 
-                        choices=['linear', 'hermite', 'rbf'], 
-                        default=['linear', 'hermite', 'rbf'],
-                        help='Interpolation methods to compare (default: linear hermite rbf)')
+    parser.add_argument('--methods', type=str, nargs='+',
+                        choices=['original', 'linear', 'hermite', 'rbf'],
+                        default=['original', 'linear', 'hermite', 'rbf'],
+                        help='Interpolation methods to compare (default: original linear hermite rbf)')
     args = parser.parse_args()
 
     compare_interpolations(
