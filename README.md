@@ -7,6 +7,7 @@ This repository is part of the **LINC project**, funded by the **NIH**, and focu
 - Densify streamlines for sub-voxel resolution with multiple interpolation methods:
   - Linear interpolation (fast, basic)
   - Hermite interpolation (smooth, accurate)
+  - RBF interpolation (very smooth, accurate, slow)
 - Transform and clip streamlines to fit a new field of view (FOV)
 - Resample NIfTI images in parallel for efficiency
 - Process streamline data in a scalable and modular manner
@@ -51,7 +52,7 @@ python src/main.py --input <input_nifti> --trk <input_trk> [options]
 - `--reduction`: Optional reduction along z-axis (choices: "mip", "mean") (default: None)
 - `--use_gpu`: Use GPU acceleration (default: True)
 - `--cpu`: Force CPU processing (disables GPU) (default: False)
-- `--interp`: Interpolation method for streamlines (choices: "hermite", "linear") (default: "hermite")
+- `--interp`: Interpolation method for streamlines (choices: "hermite", "linear", "rbf") (default: "hermite")
 - `--step_size`: Step size for streamline densification (default: 0.5)
 - `--max_gb`: Maximum output size in GB (default: 64.0)
 
