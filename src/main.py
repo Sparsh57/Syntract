@@ -6,6 +6,7 @@ from nifti_preprocessing import resample_nifti
 from transform import build_new_affine
 from streamline_processing import transform_and_densify_streamlines
 from nibabel.streamlines import Tractogram, save as save_trk
+from scipy.io import loadmat
 
 def process_and_save(
         old_nifti_path,
@@ -19,7 +20,9 @@ def process_and_save(
         use_gpu=True,
         interp_method='hermite',
         step_size=0.5,
-        max_output_gb=64.0
+        max_output_gb=64.0,
+        mat_file_path=None,
+        disable_fov_clipping=False
 ):
     """
     Processing and saving NIfTI and streamline data with new parameters.
@@ -50,6 +53,10 @@ def process_and_save(
         Step size for streamline densification, by default 0.5.
     max_output_gb : float, optional
         Maximum output size in GB, by default 64 GB.
+    mat_file_path : str, optional
+        Path to .mat file containing an affine transformation, default is None.
+    disable_fov_clipping : bool, optional
+        Whether to disable FOV clipping, default is False.
     """
     # Import appropriate array library based on use_gpu setting
     if use_gpu:
@@ -74,6 +81,118 @@ def process_and_save(
     print(f"Old shape: {old_shape}")
     print(f"Old voxel sizes: {old_voxel_sizes}")
     print(f"Old affine:\n{old_affine}")
+    
+    # Load and apply .mat affine transformation if provided
+    if mat_file_path and os.path.exists(mat_file_path):
+        print(f"\n=== Loading .mat affine transformation from {mat_file_path} ===")
+        try:
+            mat_data = loadmat(mat_file_path)
+            
+            # Look for common variable names for transformation matrices
+            common_names = ["AffineTransform_double_3_3", "transform", "affine", "matrix"]
+            transform_found = False
+            mat_transform = None
+            
+            for name in common_names:
+                if name in mat_data:
+                    mat_transform_data = mat_data[name]
+                    print(f"Found transformation data '{name}' with shape {mat_transform_data.shape}")
+                    
+                    # Handle 12x1 array format
+                    if mat_transform_data.shape == (12, 1) or mat_transform_data.shape == (1, 12) or mat_transform_data.size == 12:
+                        # Reshape to flat array if necessary
+                        flat_data = mat_transform_data.flatten()
+                        
+                        # First 9 elements are 3x3 rotation + scaling matrix, last 3 are translation
+                        rotation = flat_data[:9].reshape(3, 3)
+                        translation = flat_data[9:12]
+                        
+                        # Create 4x4 affine matrix
+                        mat_transform = np.eye(4)
+                        mat_transform[:3, :3] = rotation
+                        mat_transform[:3, 3] = translation
+                        
+                        transform_found = True
+                        print(f"Constructed 4x4 matrix from array format")
+                        break
+                    elif mat_transform_data.shape == (4, 4):
+                        # Standard 4x4 affine matrix
+                        mat_transform = mat_transform_data
+                        transform_found = True
+                        break
+            
+            if not transform_found:
+                # Try to find any matrix in the .mat file
+                transform_candidates = []
+                for key, value in mat_data.items():
+                    if not key.startswith('__') and isinstance(value, np.ndarray):
+                        if value.shape == (4, 4):
+                            transform_candidates.append((key, value, "4x4 matrix"))
+                        elif value.size == 12:
+                            transform_candidates.append((key, value, "12-element array"))
+                
+                if transform_candidates:
+                    key_name, mat_transform_data, type_str = transform_candidates[0]
+                    print(f"Found transformation data '{key_name}' ({type_str})")
+                    
+                    if type_str == "12-element array":
+                        # Handle 12x1 array format
+                        flat_data = mat_transform_data.flatten()
+                        
+                        # First 9 elements are 3x3 rotation + scaling matrix, last 3 are translation
+                        rotation = flat_data[:9].reshape(3, 3)
+                        translation = flat_data[9:12]
+                        
+                        # Create 4x4 affine matrix
+                        mat_transform = np.eye(4)
+                        mat_transform[:3, :3] = rotation
+                        mat_transform[:3, 3] = translation
+                        print(f"Constructed 4x4 matrix from 12-element array")
+                    else:
+                        # Standard 4x4 affine matrix
+                        mat_transform = mat_transform_data
+                else:
+                    raise ValueError("No suitable transformation matrix found in .mat file")
+            
+            if mat_transform is not None:
+                print(f"Transformation matrix:\n{mat_transform}")
+                
+                # Find fixed point if available
+                fixed_point = None
+                if "fixed" in mat_data and isinstance(mat_data["fixed"], np.ndarray) and mat_data["fixed"].size == 3:
+                    fixed_point = mat_data["fixed"].flatten()
+                    print(f"Found fixed point: {fixed_point}")
+                
+                # Apply the transformation to the affine
+                print("Applying transformation to the original affine")
+                
+                # If we have a fixed point, use it to adjust the transformation
+                if fixed_point is not None:
+                    print(f"Using fixed point for transformation: {fixed_point}")
+                    
+                    # Create a transformation matrix that applies rotation around the fixed point
+                    fixed_transform = np.eye(4)
+                    fixed_transform[:3, :3] = mat_transform[:3, :3]
+                    
+                    # Calculate new translation to maintain the fixed point's position
+                    # For point p and fixed point f, we want: f = R*(p-f) + t + f
+                    # This gives: t = f - R*f
+                    R = mat_transform[:3, :3]
+                    t = fixed_point - R @ fixed_point + mat_transform[:3, 3]
+                    fixed_transform[:3, 3] = t
+                    
+                    # Use this adjusted transformation
+                    print("Applied fixed-point transformation")
+                    old_affine = fixed_transform @ old_affine
+                else:
+                    # Direct matrix multiplication
+                    old_affine = mat_transform @ old_affine
+                
+                print(f"Transformed affine:\n{old_affine}")
+            
+        except Exception as e:
+            print(f"Error loading/applying .mat file: {e}")
+            print("Continuing with original affine matrix")
     
     print("\n=== Building new affine ===")
     print(f"Using dimensions for affine: {new_dim}")
@@ -139,6 +258,8 @@ def process_and_save(
     print("\n=== Loading Tractography Data ===")
     trk_obj = nib.streamlines.load(old_trk_path)
     old_streams_mm = trk_obj.tractogram.streamlines
+    old_trk_affine = trk_obj.affine
+    
     print(f"Loaded {len(old_streams_mm)} streamlines.")
     
     # Get statistics on the original streamlines
@@ -149,13 +270,59 @@ def process_and_save(
     
     print(f"\n=== Transforming, Densifying, and Clipping Streamlines Using {'GPU' if use_gpu else 'CPU'} with {interp_method} interpolation ===")
     print(f"Step size: {step_size}, Voxel size: {new_voxel_size}")
-    print(f"FOV clipping: Enabled")
+    print(f"FOV clipping: {'Disabled' if disable_fov_clipping else 'Enabled'}")
     print(f"Using dimensions: {new_dim}")
+    print("Preserving original TRK coordinate space")
     
-    # Process streamlines with clipping always enabled
+    # For TRK files, we need to maintain the right coordinate system
+    # consistently between the affine matrix and the streamlines
+    
+    # 1. Get the original voxel size from the TRK affine
+    original_voxel_size = np.abs(np.diag(old_trk_affine)[:3])
+    print(f"Original TRK voxel size: {original_voxel_size}")
+
+    # 2. Calculate the scaling ratio
+    if isinstance(new_voxel_size, (int, float)):
+        scale_ratio = original_voxel_size / new_voxel_size
+    else:
+        scale_ratio = original_voxel_size / np.array(new_voxel_size)
+    
+    print(f"Scale ratio (original/new): {scale_ratio}")
+    
+    # 3. Create an identity affine matrix for the new space
+    new_trk_affine = np.eye(4)
+    
+    # 4. Copy the direction (sign) from the original affine
+    # This ensures proper orientation of the streamlines
+    for i in range(3):
+        if old_trk_affine[i, i] < 0:
+            new_trk_affine[i, i] = -new_voxel_size if isinstance(new_voxel_size, (int, float)) else -new_voxel_size[i]
+        else:
+            new_trk_affine[i, i] = new_voxel_size if isinstance(new_voxel_size, (int, float)) else new_voxel_size[i]
+    
+    # 5. Adjust translation to maintain positioning with the new dimensions
+    # Calculate proper translation to align centers
+    old_center_vox = (np.array(trk_obj.header['dimensions']) - 1) / 2.0
+    old_center_mm = old_trk_affine @ np.append(old_center_vox, 1)
+    old_center_mm = old_center_mm[:3]
+    
+    new_center_vox = (np.array(new_dim) - 1) / 2.0
+    new_center_mm = new_trk_affine @ np.append(new_center_vox, 1)
+    new_center_mm = new_center_mm[:3]
+    
+    # Set translation to maintain the same center point
+    new_trk_affine[:3, 3] = old_center_mm - new_trk_affine[:3, :3] @ new_center_vox
+    
+    print(f"Original TRK affine:\n{old_trk_affine}")
+    print(f"New TRK affine:\n{new_trk_affine}")
+    
+    # 6. Use the new affine for processing
+    processing_affine = new_trk_affine
+    
+    # Process streamlines with clipping enabled
     densified_vox = transform_and_densify_streamlines(
-        old_streams_mm, A_new, new_dim, step_size=step_size, n_jobs=n_jobs, 
-        use_gpu=use_gpu, interp_method=interp_method
+        old_streams_mm, processing_affine, new_dim, step_size=step_size, n_jobs=n_jobs, 
+        use_gpu=use_gpu, interp_method=interp_method, disable_fov_clipping=disable_fov_clipping
     )
     
     # Report statistics on the processed streamlines
@@ -174,12 +341,12 @@ def process_and_save(
 
     new_trk_header = trk_obj.header.copy()
     new_trk_header["dimensions"] = np.array(new_dim, dtype=np.int16)
-    new_voxsize = np.sqrt(np.sum(A_new[:3, :3] ** 2, axis=0))
+    new_voxsize = np.array([new_voxel_size] * 3) if isinstance(new_voxel_size, (int, float)) else np.array(new_voxel_size)
     new_trk_header["voxel_sizes"] = new_voxsize.astype(np.float32)
-    new_trk_header["voxel_to_rasmm"] = A_new.astype(np.float32)
+    new_trk_header["voxel_to_rasmm"] = processing_affine.astype(np.float32)
 
     print("\n=== Saving New .trk File ===")
-    new_tractogram = Tractogram(densified_vox, affine_to_rasmm=A_new)
+    new_tractogram = Tractogram(densified_vox, affine_to_rasmm=processing_affine)
     out_trk_path = output_prefix + ".trk"
     save_trk(new_tractogram, out_trk_path, header=new_trk_header)
 
@@ -206,7 +373,11 @@ if __name__ == "__main__":
     parser.add_argument("--step_size", type=float, default=0.5, 
                         help="Step size for streamline densification (default: 0.5).")
     parser.add_argument("--max_gb", type=float, default=64.0,
-                        help="Maximum output size in GB (default: 64.0). Dimensions will be automatically reduced if exceeded.")
+                        help="Maximum output size in GB (default: 64.0).")
+    parser.add_argument("--mat_file", type=str, default=None,
+                        help="Path to .mat file containing an affine transformation matrix.")
+    parser.add_argument("--disable_fov_clipping", action="store_true",
+                        help="Disable FOV clipping for streamlines.")
 
     args = parser.parse_args()
 
@@ -238,5 +409,7 @@ if __name__ == "__main__":
         use_gpu=use_gpu,
         interp_method=args.interp,
         step_size=args.step_size,
-        max_output_gb=args.max_gb
+        max_output_gb=args.max_gb,
+        mat_file_path=args.mat_file,
+        disable_fov_clipping=args.disable_fov_clipping
     )
