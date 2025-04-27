@@ -402,16 +402,16 @@ def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', eps
         return streamline
 
     # Create parameterization (cumulative distance)
-    t = xp.concatenate(([0], xp.cumsum(segment_lengths)))
+    cumulative_lengths = xp.concatenate((xp.array([0], dtype=segment_lengths.dtype), xp.cumsum(segment_lengths)))
 
     # Calculate new sampling points
     n_steps = max(int(xp.ceil(total_length / step_size)), 2)
-    t_new = xp.linspace(0, t[-1], n_steps)
+    t_new = xp.linspace(0, cumulative_lengths[-1], n_steps)
 
     # RBF interpolation requires scipy - convert to CPU if necessary
     if hasattr(xp, 'asnumpy'):  # Check if using CuPy
         import numpy as np
-        t_cpu = xp.asnumpy(t)
+        t_cpu = xp.asnumpy(cumulative_lengths)
         streamline_cpu = xp.asnumpy(streamline)
         t_new_cpu = xp.asnumpy(t_new)
         from scipy.interpolate import Rbf
@@ -424,7 +424,7 @@ def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', eps
         from scipy.interpolate import Rbf
         result = xp.zeros((len(t_new), streamline.shape[1]), dtype=xp.float32)
         for dim in range(streamline.shape[1]):
-            rbf = Rbf(t, streamline[:, dim], function=function, epsilon=epsilon)
+            rbf = Rbf(cumulative_lengths, streamline[:, dim], function=function, epsilon=epsilon)
             result[:, dim] = rbf(t_new)
         return result
 
@@ -553,7 +553,7 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
 
         n_steps = int(xp.ceil(total_length / step_size)) + 1
         print(f"[DEBUG] n_steps: {n_steps}")
-        cumulative_lengths = xp.concatenate(([0], xp.cumsum(segment_lengths)))
+        cumulative_lengths = xp.concatenate((xp.array([0], dtype=segment_lengths.dtype), xp.cumsum(segment_lengths)))
         print(f"[DEBUG] cumulative_lengths type: {type(cumulative_lengths)}, shape: {getattr(cumulative_lengths, 'shape', None)}")
         normalized_distances = cumulative_lengths / total_length
         print(f"[DEBUG] normalized_distances type: {type(normalized_distances)}, shape: {getattr(normalized_distances, 'shape', None)}")
