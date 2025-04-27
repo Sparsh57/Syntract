@@ -324,8 +324,13 @@ def transform_and_densify_streamlines(
     # Ensure all streamlines are numpy arrays, not Python lists
     # This can happen in certain cases with clipping operations
     for i in range(len(clipped_streams)):
-        if isinstance(clipped_streams[i], list):
-            clipped_streams[i] = np.array(clipped_streams[i], dtype=np.float32)
+        s = clipped_streams[i]
+        if hasattr(s, 'get'):  # Check if it's a CuPy array
+            clipped_streams[i] = s.get()
+        elif isinstance(s, list):
+            clipped_streams[i] = np.array(s, dtype=np.float32)
+        # Ensure dtype is float32
+        clipped_streams[i] = clipped_streams[i].astype(np.float32)
             
     # Apply densification in voxel space
     min_voxel_size = min(voxel_size)
