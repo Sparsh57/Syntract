@@ -225,33 +225,31 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
             if idx % 1000 == 0:
                 print(f"Processing streamline {idx}/{total}...")
             
-            # Track input type for better error reporting
-            streamline_type = type(streamline).__name__
-            
             try:
-                # Ensure we have a numpy array, not a list
+                # Convert to numpy array if needed
                 if isinstance(streamline, list):
                     streamline = np.array(streamline, dtype=np.float32)
-
-                # Check that we have enough points to densify
+                elif hasattr(streamline, 'get'):  # Handle CuPy arrays
+                    streamline = streamline.get()
+                    streamline = np.asarray(streamline, dtype=np.float32)
+                elif not isinstance(streamline, np.ndarray):
+                    streamline = np.asarray(streamline, dtype=np.float32)
+                
                 if len(streamline) < 2:
-                    print(f"Warning: Streamline {idx} had {len(streamline)} points, skipping.")
+                    print(f"Warning: Streamline {idx} has {len(streamline)} points, skipping.")
                     return None
                 
-                # Perform densification
                 d = densify_streamline_subvoxel(
-                    streamline, step_size, use_gpu=use_gpu, 
+                    streamline, step_size, use_gpu=use_gpu,
                     interp_method=interp_method, voxel_size=voxel_size
                 )
                 
-                # Ensure we return a numpy array
-                if isinstance(d, list):
-                    d = np.array(d, dtype=np.float32)
-                    
+                # Ensure output is numpy array
+                if hasattr(d, 'get'):  # Convert CuPy to numpy
+                    d = d.get()
                 return d
             except Exception as e:
                 print(f"Error densifying streamline {idx}: {e}")
-                print(f"Streamline type was: {streamline_type if 'streamline_type' in locals() else 'unknown'}")
                 return None
         
         total = len(streamlines)
