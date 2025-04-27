@@ -306,6 +306,9 @@ def transform_and_densify_streamlines(
                 # This keeps s as a numpy array and avoids creating a list
                 filtered_array = s[mask]
                 clipped_streams.append(filtered_array)
+    # Debug print for clipped_streams
+    for i, s in enumerate(clipped_streams):
+        print(f"[DEBUG] Clipped_streams {i}: type={type(s)}, len={len(s) if hasattr(s, '__len__') else 'N/A'}")
                 
     # Counts after clipping
     clipped_count = len(clipped_streams)

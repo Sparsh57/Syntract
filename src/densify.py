@@ -203,6 +203,9 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
         total_count = len(streamlines)
         total = len(streamlines)
         for i, streamline in enumerate(streamlines):
+            print(f"[DEBUG] Pre-densification: streamline {i} type={type(streamline)}, len={len(streamline) if hasattr(streamline, '__len__') else 'N/A'}")
+            if isinstance(streamline, list):
+                print(f"[DEBUG] streamline {i} is a list. First element type: {type(streamline[0]) if len(streamline) > 0 else 'empty'}")
             if i % 1000 == 0:
                 print(f"Processing streamline {i}/{total}...")
             
