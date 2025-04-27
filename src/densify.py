@@ -251,6 +251,16 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
                     use_gpu=use_gpu, interp_method=interp_method,
                     voxel_size=voxel_size
                 )
+                
+                # Ensure result is a numpy array before appending
+                if not isinstance(result, np.ndarray):
+                    try:
+                        print(f"Converting result for streamline {i} from {type(result)} to numpy array")
+                        result = np.array(result, dtype=np.float32)
+                    except Exception as e:
+                        print(f"Error converting result to numpy array: {e}")
+                        continue
+                        
                 densified.append(result)
                 success_count += 1
             except Exception as e:
@@ -322,6 +332,14 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
                 # Ensure output is numpy array
                 if hasattr(d, 'get'):  # Convert CuPy to numpy
                     d = d.get()
+                    
+                # Make sure we return a numpy array, not a list
+                if not isinstance(d, np.ndarray):
+                    try:
+                        d = np.array(d, dtype=np.float32)
+                    except Exception as e:
+                        print(f"Error converting densified streamline to numpy array: {e}")
+                        return None
                 return d
             except Exception as e:
                 print(f"Error densifying streamline {idx}: {e}")
@@ -334,7 +352,20 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
         )
         
         # Filter out None results and ensure each streamline has at least 2 points
-        densified = [r for r in results if r is not None and len(r) >= 2]
+        densified = []
+        for r in results:
+            if r is None or len(r) < 2:
+                continue
+                
+            # Additional check to ensure numpy array type
+            if not isinstance(r, np.ndarray):
+                try:
+                    r = np.array(r, dtype=np.float32)
+                except Exception as e:
+                    print(f"Error: Skipping invalid result - {e}")
+                    continue
+                    
+            densified.append(r)
         
         # Report on densification results
         print(f"Densified {len(densified)}/{total} streamlines successfully")
@@ -674,6 +705,10 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     # Convert back to numpy if on GPU
     if use_gpu and hasattr(xp, 'asnumpy'):
         densified_streamline = xp.asnumpy(densified_streamline)
+    
+    # Ensure output is numpy array, not a list
+    if not isinstance(densified_streamline, np.ndarray):
+        densified_streamline = np.array(densified_streamline, dtype=np.float32)
     
     # Debug: info about the densified streamline
     if debug_tangents:
