@@ -192,7 +192,8 @@ if __name__ == "__main__":
     parser.add_argument("--input", type=str, required=True, help="Path to input NIfTI (.nii or .nii.gz) file.")
     parser.add_argument("--trk", type=str, required=True, help="Path to input TRK (.trk) file.")
     parser.add_argument("--output", type=str, default="resampled", help="Prefix for output files.")
-    parser.add_argument("--voxel_size", type=float, default=0.5, help="New voxel size (default: 0.5 mm).")
+    parser.add_argument("--voxel_size", type=float, nargs='+', default=[0.5],
+                        help="New voxel size: either a single value for isotropic or three values for anisotropic (e.g., --voxel_size 0.5 0.5 1.0)")
     parser.add_argument("--new_dim", type=int, nargs=3, default=[116, 140, 96], help="New image dimensions (x, y, z).")
     parser.add_argument("--jobs", type=int, default=8, help="Number of parallel jobs (-1 for all CPUs).")
     parser.add_argument("--patch_center", type=float, nargs=3, default=None, help="Optional patch center in mm.")
@@ -226,10 +227,18 @@ if __name__ == "__main__":
     old_trk_path = args.trk
     output_prefix = args.output
     
+    # Handle voxel size: allow either a single float or three floats
+    if len(args.voxel_size) == 1:
+        voxel_size = args.voxel_size[0]
+    elif len(args.voxel_size) == 3:
+        voxel_size = tuple(args.voxel_size)
+    else:
+        raise ValueError("--voxel_size must be either one value (isotropic) or three values (anisotropic)")
+    
     process_and_save(
         old_nifti_path=old_nifti_path,
         old_trk_path=old_trk_path,
-        new_voxel_size=args.voxel_size,
+        new_voxel_size=voxel_size,
         new_dim=tuple(args.new_dim),
         output_prefix=output_prefix,
         n_jobs=args.jobs,
