@@ -381,6 +381,8 @@ def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', eps
     """
     # Skip if too few points
     if len(streamline) < 4:
+        if not isinstance(streamline, np.ndarray):
+            streamline = np.array(streamline, dtype=np.float32)
         return streamline
 
     # Calculate the total length of the streamline
@@ -390,6 +392,8 @@ def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', eps
 
     # Skip densification if streamline is shorter than step_size
     if total_length < step_size:
+        if not isinstance(streamline, np.ndarray):
+            streamline = np.array(streamline, dtype=np.float32)
         return streamline
 
     # Create parameterization (cumulative distance)
@@ -468,6 +472,8 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     # Check if streamline is valid
     if len(streamline) < 2:
         print(f"Warning: Cannot densify streamline with less than 2 points (has {len(streamline)})")
+        if not isinstance(streamline, np.ndarray):
+            streamline = np.array(streamline, dtype=np.float32)
         return streamline
 
     # Check for debug flags
@@ -528,8 +534,8 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     
     # Skip densification if streamline is shorter than step_size
     if total_length < step_size:
-        if debug_tangents:
-            print(f"[DENSIFY] Streamline too short for densification: {total_length:.4f} < {step_size:.4f}")
+        if not isinstance(streamline, np.ndarray):
+            streamline = np.array(streamline, dtype=np.float32)
         return streamline
 
     # Calculate the number of steps needed
@@ -547,6 +553,8 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     # Check for NaN values that could cause issues
     if xp.any(xp.isnan(normalized_distances)) or xp.any(xp.isnan(xi)):
         print("Warning: NaN values detected in distance calculation. Using original streamline.")
+        if not isinstance(streamline, np.ndarray):
+            streamline = np.array(streamline, dtype=np.float32)
         return streamline
         
     # Safety check - ensure all arrays are correct type
