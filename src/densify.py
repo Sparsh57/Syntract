@@ -657,12 +657,9 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                 else:
                     interpolated = xp.interp(xi, normalized_distances, y)
                 print(f"[DEBUG] interpolated (dim {dim}) type: {type(interpolated)}, shape: {getattr(interpolated, 'shape', None)}")
-                if not isinstance(interpolated, np.ndarray):
-                    print(f"[DEBUG] interpolated (dim {dim}) is type {type(interpolated)}; converting to np.ndarray")
-                    # If it's a CuPy array, use .get() to move to CPU
-                    if 'cupy' in str(type(interpolated)):
-                        interpolated = interpolated.get()
-                    interpolated = np.array(interpolated, dtype=np.float32)
+                if not isinstance(interpolated, xp.ndarray):
+                    print(f"[DEBUG] interpolated (dim {dim}) is type {type(interpolated)}; converting to {xp.__name__}.ndarray")
+                    interpolated = xp.array(interpolated, dtype=xp.float32)
                 result_array[:, dim] = interpolated
             except Exception as e:
                 print(f"[DEBUG] Exception during interpolation (dim {dim}): {e}")
