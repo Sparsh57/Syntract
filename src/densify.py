@@ -659,6 +659,9 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                 print(f"[DEBUG] interpolated (dim {dim}) type: {type(interpolated)}, shape: {getattr(interpolated, 'shape', None)}")
                 if not isinstance(interpolated, np.ndarray):
                     print(f"[DEBUG] interpolated (dim {dim}) is type {type(interpolated)}; converting to np.ndarray")
+                    # If it's a CuPy array, use .get() to move to CPU
+                    if 'cupy' in str(type(interpolated)):
+                        interpolated = interpolated.get()
                     interpolated = np.array(interpolated, dtype=np.float32)
                 result_array[:, dim] = interpolated
             except Exception as e:
@@ -667,6 +670,9 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                 raise
         if not isinstance(result_array, np.ndarray):
             print(f"[DEBUG] result_array is type {type(result_array)}; converting to np.ndarray")
+            # If it's a CuPy array, use .get() to move to CPU
+            if 'cupy' in str(type(result_array)):
+                result_array = result_array.get()
             result_array = np.array(result_array, dtype=np.float32)
         densified_streamline = result_array
         if use_gpu and hasattr(xp, 'asnumpy'):
@@ -674,8 +680,9 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
         print(f"[DEBUG] Returning from densify_streamline_subvoxel: type={type(densified_streamline)}, shape={getattr(densified_streamline, 'shape', None)}")
         if not isinstance(densified_streamline, np.ndarray):
             print(f"[DEBUG] densified_streamline is type {type(densified_streamline)}; converting to np.ndarray")
-            densified_streamline = np.array(densified_streamline, dtype=np.float32)
-        if not isinstance(densified_streamline, np.ndarray):
+            # If it's a CuPy array, use .get() to move to CPU
+            if 'cupy' in str(type(densified_streamline)):
+                densified_streamline = densified_streamline.get()
             densified_streamline = np.array(densified_streamline, dtype=np.float32)
         if debug_tangents:
             print(f"[DENSIFY] Original points: {len(streamline)}, Densified points: {len(densified_streamline)}")
