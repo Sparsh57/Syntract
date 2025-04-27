@@ -245,6 +245,7 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
                         print(f"Error densifying streamline {i}: Failed to convert list to array: {e}")
                         continue
                 elif not isinstance(streamline, np.ndarray):
+                    print(f"[DEBUG] Problematic streamline value: {streamline}, type: {type(streamline)}")
                     print(f"Error densifying streamline {i}: Unsupported type {type(streamline)}")
                     continue
                     
@@ -700,6 +701,7 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
         else:
             interpolated = xp.interp(xi, normalized_distances, y)
         # Enforce numpy array after interpolation
+        print(f"[DEBUG] interpolated (dim {dim}) type: {type(interpolated)}")
         if not isinstance(interpolated, np.ndarray):
             print(f"[DEBUG] interpolated (dim {dim}) is type {type(interpolated)}; converting to np.ndarray")
             interpolated = np.array(interpolated, dtype=np.float32)
@@ -713,11 +715,11 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     if use_gpu and hasattr(xp, 'asnumpy'):
         densified_streamline = xp.asnumpy(densified_streamline)
     # Ensure output is numpy array, not a list
+    print(f"[DEBUG] Returning from densify_streamline_subvoxel: type={type(densified_streamline)}, shape={getattr(densified_streamline, 'shape', None)}")
     if not isinstance(densified_streamline, np.ndarray):
         print(f"[DEBUG] densified_streamline is type {type(densified_streamline)}; converting to np.ndarray")
         densified_streamline = np.array(densified_streamline, dtype=np.float32)
     # Debug: info about the densified streamline
-    print(f"[DEBUG] Returning from densify_streamline_subvoxel: type={type(densified_streamline)}, shape={getattr(densified_streamline, 'shape', None)}")
     if debug_tangents:
         print(f"[DENSIFY] Original points: {len(streamline)}, Densified points: {len(densified_streamline)}")
         if interp_method == 'hermite':
