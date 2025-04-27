@@ -318,37 +318,75 @@ def transform_and_densify_streamlines(
         print("ERROR: All streamlines were clipped!")
         return []
     
-    # Ensure all streamlines are numpy arrays, not Python lists
-    # This can happen in certain cases with clipping operations
-    for i in range(len(clipped_streams)):
-        s = clipped_streams[i]
-        if hasattr(s, 'get'):  # Check if it's a CuPy array
-            clipped_streams[i] = s.get()
-        elif isinstance(s, list):
-            # Convert list of points to numpy array with additional validation
-            try:
-                # Verify points
-                if not all(isinstance(p, (list, tuple, np.ndarray)) for p in s):
-                    print(f"Warning: Streamline {i} contains invalid point types. Converting best-effort.")
-                    # Try to filter valid points
-                    valid_points = [p for p in s if isinstance(p, (list, tuple, np.ndarray)) and len(p) == 3]
-                    if len(valid_points) >= 2:
-                        clipped_streams[i] = np.array(valid_points, dtype=np.float32)
-                    else:
-                        print(f"Warning: Removing streamline {i} - insufficient valid points after filtering")
-                        clipped_streams[i] = None
-                else:
-                    clipped_streams[i] = np.array(s, dtype=np.float32)
-            except Exception as e:
-                print(f"Error converting streamline {i} from list to array: {e}")
-                clipped_streams[i] = None
-        # Ensure dtype is float32 for arrays
-        if clipped_streams[i] is not None:
-            clipped_streams[i] = clipped_streams[i].astype(np.float32)
-    
-    # Filter out None values (failed conversions)
-    clipped_streams = [s for s in clipped_streams if s is not None]
+    # Ensure all streamlines are proper numpy arrays, not Python lists or other types
+    # This is CRITICAL for GPU processing with CuPy
+    clean_streams = []
+    for i, s in enumerate(clipped_streams):
+        try:
+            # First handle different types
+            if hasattr(s, 'get'):  # Check if it's a CuPy array
+                s = s.get()
             
+            if isinstance(s, list):
+                # Deep validation for list-type streamlines
+                if not all(isinstance(p, (list, tuple, np.ndarray)) for p in s):
+                    print(f"Warning: Streamline {i} contains invalid point types - filtering")
+                    # Filter to only valid points
+                    valid_points = []
+                    for p in s:
+                        if isinstance(p, (list, tuple)) and len(p) == 3:
+                            valid_points.append(np.array(p, dtype=np.float32))
+                        elif isinstance(p, np.ndarray) and p.shape[-1] == 3:
+                            valid_points.append(p.astype(np.float32))
+                    
+                    if len(valid_points) < 2:
+                        print(f"Warning: Removing streamline {i} - insufficient valid points")
+                        continue  # Skip this streamline
+                    
+                    # Create clean numpy array from valid points
+                    s = np.array(valid_points, dtype=np.float32)
+                else:
+                    # All points are valid, simple conversion
+                    s = np.array(s, dtype=np.float32)
+            elif not isinstance(s, np.ndarray):
+                # Try to convert unknown types to numpy
+                try:
+                    s = np.array(s, dtype=np.float32)
+                except Exception as e:
+                    print(f"Error: Could not convert streamline {i} to numpy array: {e}")
+                    continue  # Skip this streamline
+            
+            # Final validation
+            if not isinstance(s, np.ndarray):
+                print(f"Error: Streamline {i} is not a numpy array after conversion")
+                continue
+            
+            if len(s) < 2:
+                print(f"Warning: Streamline {i} has too few points ({len(s)}) - skipping")
+                continue
+                
+            if s.dtype != np.float32:
+                s = s.astype(np.float32)
+                
+            # Add to clean list
+            clean_streams.append(s)
+        except Exception as e:
+            print(f"Error processing streamline {i}: {e}")
+            continue
+    
+    # Update the streamline list with only the clean streamlines
+    if len(clean_streams) == 0:
+        print("ERROR: No valid streamlines after cleaning! Check your input data.")
+        return []
+        
+    print(f"Cleaned streamlines: {len(clean_streams)}/{len(clipped_streams)} retained after validation")
+    clipped_streams = clean_streams
+            
+    # Perform a final check before densification
+    print(f"Preparing for densification: {len(clipped_streams)} streamlines")
+    for i, s in enumerate(clipped_streams[:5]):  # Show sample of first 5 streamlines
+        print(f"Sample streamline {i}: type={type(s)}, shape={s.shape if hasattr(s, 'shape') else 'unknown'}, dtype={s.dtype if hasattr(s, 'dtype') else 'unknown'}")
+        
     # Apply densification in voxel space
     min_voxel_size = min(voxel_size)
     densified_streams = densify_streamlines_parallel(
@@ -358,5 +396,8 @@ def transform_and_densify_streamlines(
     
     # Report final streamline count
     print(f"Final streamline count after processing: {len(densified_streams)}")
+    if len(densified_streams) == 0:
+        print("WARNING: No streamlines were processed! Check your parameters.")
+        print("Try a larger voxel size or adjust the step size.")
     
     return densified_streams

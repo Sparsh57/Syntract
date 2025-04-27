@@ -214,8 +214,33 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
                 # First ensure streamline is proper numpy array before densification
                 streamline = streamlines[i]
                 if isinstance(streamline, list):
-                    # Convert list of points to numpy array
-                    streamline = np.array(streamline, dtype=np.float32)
+                    try:
+                        # Deep validation of list-type streamlines
+                        # Ensure all points are properly formatted as 3D points
+                        if not all(isinstance(p, (list, tuple, np.ndarray)) for p in streamline):
+                            print(f"Error densifying streamline {i}: Contains invalid point types")
+                            continue
+                        
+                        # Validate each point is a 3D coordinate
+                        valid_points = []
+                        for p in streamline:
+                            if isinstance(p, (list, tuple)) and len(p) == 3:
+                                valid_points.append(np.array(p, dtype=np.float32))
+                            elif isinstance(p, np.ndarray) and p.shape[-1] == 3:
+                                valid_points.append(p.astype(np.float32))
+                            else:
+                                # Skip invalid points
+                                continue
+                        
+                        if len(valid_points) < 2:
+                            print(f"Error densifying streamline {i}: Insufficient valid points after filtering")
+                            continue
+                            
+                        # Create a clean numpy array from validated points
+                        streamline = np.array(valid_points, dtype=np.float32)
+                    except Exception as e:
+                        print(f"Error densifying streamline {i}: Failed to convert list to array: {e}")
+                        continue
                 elif not isinstance(streamline, np.ndarray):
                     print(f"Error densifying streamline {i}: Unsupported type {type(streamline)}")
                     continue
@@ -247,17 +272,48 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
             try:
                 # Convert to numpy array if needed
                 if isinstance(streamline, list):
-                    streamline = np.array(streamline, dtype=np.float32)
+                    try:
+                        # Ensure all points are properly formatted as 3D points
+                        if not all(isinstance(p, (list, tuple, np.ndarray)) for p in streamline):
+                            print(f"Warning: Streamline {idx} contains invalid point types. Skipping.")
+                            return None
+                        
+                        # Validate each point is a 3D coordinate
+                        valid_points = []
+                        for p in streamline:
+                            if isinstance(p, (list, tuple)) and len(p) == 3:
+                                valid_points.append(np.array(p, dtype=np.float32))
+                            elif isinstance(p, np.ndarray) and p.shape[-1] == 3:
+                                valid_points.append(p.astype(np.float32))
+                            else:
+                                # Skip invalid points
+                                continue
+                        
+                        if len(valid_points) < 2:
+                            print(f"Warning: Streamline {idx} has insufficient valid points after filtering. Skipping.")
+                            return None
+                            
+                        # Create a clean numpy array from validated points
+                        streamline = np.array(valid_points, dtype=np.float32)
+                    except Exception as e:
+                        print(f"Error processing list-type streamline {idx}: {e}")
+                        return None
+                        
                 elif hasattr(streamline, 'get'):  # Handle CuPy arrays
                     streamline = streamline.get()
                     streamline = np.asarray(streamline, dtype=np.float32)
                 elif not isinstance(streamline, np.ndarray):
-                    streamline = np.asarray(streamline, dtype=np.float32)
+                    try:
+                        streamline = np.asarray(streamline, dtype=np.float32)
+                    except Exception as e:
+                        print(f"Error converting streamline {idx} to numpy array: {e}")
+                        return None
                 
                 if len(streamline) < 2:
                     print(f"Warning: Streamline {idx} has {len(streamline)} points, skipping.")
                     return None
                 
+                # Directly pass the numpy array to the densification function
                 d = densify_streamline_subvoxel(
                     streamline, step_size, use_gpu=use_gpu,
                     interp_method=interp_method, voxel_size=voxel_size
@@ -408,6 +464,7 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                 print(f"Streamline type: {type(streamline)}, shape: {np.shape(streamline)}")
                 if isinstance(streamline, list):
                     print(f"List contents: {[type(x) for x in streamline]}")
+                    raise TypeError("Cannot convert list directly to CuPy array, must be numpy array first")
                 # Fall back to CPU if cupy conversion fails
                 print("[DEBUG] Falling back to CPU due to CuPy conversion error")
                 import numpy as xp
