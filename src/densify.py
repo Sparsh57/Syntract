@@ -487,6 +487,8 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
         print(f"[DEBUG] Returning (too few points): type={type(streamline)}, value={streamline}")
         if not isinstance(streamline, np.ndarray):
             streamline = np.array(streamline, dtype=np.float32)
+        if not isinstance(streamline, np.ndarray):
+            streamline = np.array(streamline, dtype=np.float32)
         return streamline
 
     # --- After input conversion ---
@@ -543,6 +545,8 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
         print(f"[DEBUG] Returning (total_length < step_size): type={type(streamline)}, value={streamline}")
         if not isinstance(streamline, np.ndarray):
             streamline = np.array(streamline, dtype=np.float32)
+        if not isinstance(streamline, np.ndarray):
+            streamline = np.array(streamline, dtype=np.float32)
         return streamline
 
     n_steps = int(xp.ceil(total_length / step_size)) + 1
@@ -557,6 +561,8 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     if xp.any(xp.isnan(normalized_distances)) or xp.any(xp.isnan(xi)):
         print("Warning: NaN values detected in distance calculation. Using original streamline.")
         print(f"[DEBUG] Returning (NaN in distances): type={type(streamline)}, value={streamline}")
+        if not isinstance(streamline, np.ndarray):
+            streamline = np.array(streamline, dtype=np.float32)
         if not isinstance(streamline, np.ndarray):
             streamline = np.array(streamline, dtype=np.float32)
         return streamline
@@ -604,6 +610,8 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                 xp=xp
             )
             print(f"[DEBUG] Returning (rbf): type={type(densified_streamline)}, shape={getattr(densified_streamline, 'shape', None)}")
+            if not isinstance(densified_streamline, np.ndarray):
+                densified_streamline = np.array(densified_streamline, dtype=np.float32)
             if not isinstance(densified_streamline, np.ndarray):
                 densified_streamline = np.array(densified_streamline, dtype=np.float32)
             return densified_streamline
@@ -667,6 +675,8 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     if not isinstance(densified_streamline, np.ndarray):
         print(f"[DEBUG] densified_streamline is type {type(densified_streamline)}; converting to np.ndarray")
         densified_streamline = np.array(densified_streamline, dtype=np.float32)
+    if not isinstance(densified_streamline, np.ndarray):
+        densified_streamline = np.array(densified_streamline, dtype=np.float32)
     if debug_tangents:
         print(f"[DENSIFY] Original points: {len(streamline)}, Densified points: {len(densified_streamline)}")
         if interp_method == 'hermite':
@@ -694,7 +704,9 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                     print(f"[CURVATURE] Change: {(new_curvature-orig_curvature)/orig_curvature*100:.2f}%")
                 else:
                     print(f"[CURVATURE] Change: N/A (original curvature was zero)")
-    return densified_streamline
+    # Catch-all: if function falls through, print warning and return zeros
+    print("[DEBUG] WARNING: densify_streamline_subvoxel fell through to end without returning! Returning zeros.")
+    return np.zeros((2, 3), dtype=np.float32)
 
 
 # Test the interpolation functions with a simple case when module is run directly
