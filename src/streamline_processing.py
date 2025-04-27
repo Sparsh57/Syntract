@@ -300,14 +300,11 @@ def transform_and_densify_streamlines(
         mask = np.all((s >= 0) & (s < np.array(new_shape)), axis=1)
         if np.any(mask):
             # Create a new streamline with just the points inside the volume
-            filtered_points = []
-            for i, in_volume in enumerate(mask):
-                if in_volume:
-                    filtered_points.append(s[i])
-                    
-            # Convert to numpy array and append
-            if len(filtered_points) >= 2:  # Only keep if 2+ points
-                filtered_array = np.array(filtered_points, dtype=np.float32)
+            # WARNING: This approach creates list-type streamlines that cause problems downstream
+            # Instead, we'll directly use numpy indexing to keep array-type streamlines
+            if np.sum(mask) >= 2:  # Only keep if 2+ points
+                # This keeps s as a numpy array and avoids creating a list
+                filtered_array = s[mask]
                 clipped_streams.append(filtered_array)
                 
     # Counts after clipping
@@ -328,9 +325,29 @@ def transform_and_densify_streamlines(
         if hasattr(s, 'get'):  # Check if it's a CuPy array
             clipped_streams[i] = s.get()
         elif isinstance(s, list):
-            clipped_streams[i] = np.array(s, dtype=np.float32)
-        # Ensure dtype is float32
-        clipped_streams[i] = clipped_streams[i].astype(np.float32)
+            # Convert list of points to numpy array with additional validation
+            try:
+                # Verify points
+                if not all(isinstance(p, (list, tuple, np.ndarray)) for p in s):
+                    print(f"Warning: Streamline {i} contains invalid point types. Converting best-effort.")
+                    # Try to filter valid points
+                    valid_points = [p for p in s if isinstance(p, (list, tuple, np.ndarray)) and len(p) == 3]
+                    if len(valid_points) >= 2:
+                        clipped_streams[i] = np.array(valid_points, dtype=np.float32)
+                    else:
+                        print(f"Warning: Removing streamline {i} - insufficient valid points after filtering")
+                        clipped_streams[i] = None
+                else:
+                    clipped_streams[i] = np.array(s, dtype=np.float32)
+            except Exception as e:
+                print(f"Error converting streamline {i} from list to array: {e}")
+                clipped_streams[i] = None
+        # Ensure dtype is float32 for arrays
+        if clipped_streams[i] is not None:
+            clipped_streams[i] = clipped_streams[i].astype(np.float32)
+    
+    # Filter out None values (failed conversions)
+    clipped_streams = [s for s in clipped_streams if s is not None]
             
     # Apply densification in voxel space
     min_voxel_size = min(voxel_size)

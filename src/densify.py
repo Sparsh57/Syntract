@@ -197,22 +197,39 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
 
     # Process streamlines in parallel
     if n_jobs == 1:
-        # Sequential processing
+        # More efficient with a progress counter
         densified = []
+        success_count = 0
+        total_count = len(streamlines)
         total = len(streamlines)
         for i, streamline in enumerate(streamlines):
             if i % 1000 == 0:
                 print(f"Processing streamline {i}/{total}...")
             try:
-                # Ensure we're passing a numpy array
-                if isinstance(streamline, list):
-                    streamline = np.array(streamline, dtype=np.float32)
-                
-                d = densify_streamline_subvoxel(streamline, step_size, use_gpu, interp_method, voxel_size=voxel_size)
-                if len(d) >= 2:  # Only keep if at least 2 points
-                    densified.append(d)
-            except Exception as e:
-                print(f"Error densifying streamline {i}: {e}")
+                # Skip invalid streamlines
+                if len(streamlines[i]) < 2:
+                    continue
+                try:
+                    # First ensure streamline is proper numpy array before densification
+                    streamline = streamlines[i]
+                    if isinstance(streamline, list):
+                        # Convert list of points to numpy array
+                        streamline = np.array(streamline, dtype=np.float32)
+                    elif not isinstance(streamline, np.ndarray):
+                        print(f"Error densifying streamline {i}: Unsupported type {type(streamline)}")
+                        continue
+                        
+                    # Apply densification
+                    result = densify_streamline_subvoxel(
+                        streamline, step_size, 
+                        use_gpu=use_gpu, interp_method=interp_method,
+                        voxel_size=voxel_size
+                    )
+                    densified.append(result)
+                    success_count += 1
+                except Exception as e:
+                    print(f"Error densifying streamline {i}: {e}")
+        print(f"Densified {success_count}/{total_count} streamlines successfully")
         return densified
     else:
         # Import numpy here to ensure it's available in both code paths
@@ -338,7 +355,21 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     # Ensure we have a numpy array, not a list
     if isinstance(streamline, list):
         try:
-            streamline = np.array(streamline, dtype=np.float32)
+            # More robust conversion with error reporting
+            if not all(isinstance(point, (list, tuple, np.ndarray)) for point in streamline):
+                raise TypeError(f"Streamline contains non-array elements: {[type(x) for x in streamline][:5]}...")
+            # Ensure all points are properly formatted as arrays
+            clean_points = []
+            for point in streamline:
+                if isinstance(point, (list, tuple)):
+                    if len(point) != 3:
+                        raise ValueError(f"Expected 3D point but got {len(point)}D: {point}")
+                    clean_points.append(np.array(point, dtype=np.float32))
+                elif isinstance(point, np.ndarray):
+                    clean_points.append(point.astype(np.float32))
+                else:
+                    raise TypeError(f"Unexpected point type: {type(point)}")
+            streamline = np.array(clean_points, dtype=np.float32)
         except Exception as e:
             raise TypeError(f"Failed to convert list to numpy array: {e}")
 
