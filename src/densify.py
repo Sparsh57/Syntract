@@ -205,30 +205,32 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
         for i, streamline in enumerate(streamlines):
             if i % 1000 == 0:
                 print(f"Processing streamline {i}/{total}...")
+            
+            # Skip invalid streamlines
+            if len(streamlines[i]) < 2:
+                continue
+                
             try:
-                # Skip invalid streamlines
-                if len(streamlines[i]) < 2:
+                # First ensure streamline is proper numpy array before densification
+                streamline = streamlines[i]
+                if isinstance(streamline, list):
+                    # Convert list of points to numpy array
+                    streamline = np.array(streamline, dtype=np.float32)
+                elif not isinstance(streamline, np.ndarray):
+                    print(f"Error densifying streamline {i}: Unsupported type {type(streamline)}")
                     continue
-                try:
-                    # First ensure streamline is proper numpy array before densification
-                    streamline = streamlines[i]
-                    if isinstance(streamline, list):
-                        # Convert list of points to numpy array
-                        streamline = np.array(streamline, dtype=np.float32)
-                    elif not isinstance(streamline, np.ndarray):
-                        print(f"Error densifying streamline {i}: Unsupported type {type(streamline)}")
-                        continue
-                        
-                    # Apply densification
-                    result = densify_streamline_subvoxel(
-                        streamline, step_size, 
-                        use_gpu=use_gpu, interp_method=interp_method,
-                        voxel_size=voxel_size
-                    )
-                    densified.append(result)
-                    success_count += 1
-                except Exception as e:
-                    print(f"Error densifying streamline {i}: {e}")
+                    
+                # Apply densification
+                result = densify_streamline_subvoxel(
+                    streamline, step_size, 
+                    use_gpu=use_gpu, interp_method=interp_method,
+                    voxel_size=voxel_size
+                )
+                densified.append(result)
+                success_count += 1
+            except Exception as e:
+                print(f"Error densifying streamline {i}: {e}")
+                
         print(f"Densified {success_count}/{total_count} streamlines successfully")
         return densified
     else:
