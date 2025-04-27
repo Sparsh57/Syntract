@@ -267,6 +267,8 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
                 print(f"Error densifying streamline {i}: {e}")
                 
         print(f"Densified {success_count}/{total_count} streamlines successfully")
+        # Final unconditional enforcement for all results
+        densified = [np.array(s, dtype=np.float32) if not isinstance(s, np.ndarray) else s for s in densified]
         return densified
     else:
         # Import numpy here to ensure it's available in both code paths
@@ -369,7 +371,8 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
         
         # Report on densification results
         print(f"Densified {len(densified)}/{total} streamlines successfully")
-        
+        # Final unconditional enforcement for all results
+        densified = [np.array(s, dtype=np.float32) if not isinstance(s, np.ndarray) else s for s in densified]
         return densified
 
 def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', epsilon=None, xp=np):
@@ -722,38 +725,33 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                     import numpy as np  # Import numpy here for use in this function
                     if len(points) < 3:
                         return 0
-                    
                     # Calculate first derivatives (tangents)
                     tangents = np.zeros_like(points)
                     tangents[1:-1] = (points[2:] - points[:-2]) / 2.0
                     tangents[0] = points[1] - points[0]
                     tangents[-1] = points[-1] - points[-2]
-                    
                     # Normalize tangents
                     norms = np.linalg.norm(tangents, axis=1, keepdims=True)
                     norms = np.where(norms > 1e-10, norms, 1e-10)
                     tangents = tangents / norms
-                    
                     # Calculate second derivatives
                     second_derivs = np.zeros_like(points)
                     second_derivs[1:-1] = (tangents[2:] - tangents[:-2]) / 2.0
-                    
                     # Curvature is the magnitude of the second derivative
                     curvatures = np.linalg.norm(second_derivs, axis=1)
                     return np.mean(curvatures)
-                
                 orig_curvature = calc_curvature(streamline)
                 new_curvature = calc_curvature(densified_streamline)
-                
                 print(f"[CURVATURE] Original streamline: {orig_curvature:.6f}")
                 print(f"[CURVATURE] Densified streamline: {new_curvature:.6f}")
-                
                 # Avoid division by zero for percentage change calculation
                 if orig_curvature > 0:
                     print(f"[CURVATURE] Change: {(new_curvature-orig_curvature)/orig_curvature*100:.2f}%")
                 else:
                     print(f"[CURVATURE] Change: N/A (original curvature was zero)")
-    
+    # Final unconditional enforcement
+    if not isinstance(densified_streamline, np.ndarray):
+        densified_streamline = np.array(densified_streamline, dtype=np.float32)
     return densified_streamline
 
 
