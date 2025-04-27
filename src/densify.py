@@ -665,21 +665,14 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                 print(f"[DEBUG] Exception during interpolation (dim {dim}): {e}")
                 traceback.print_exc()
                 raise
-        if not isinstance(result_array, np.ndarray):
-            print(f"[DEBUG] result_array is type {type(result_array)}; converting to np.ndarray")
-            # If it's a CuPy array, use .get() to move to CPU
-            if 'cupy' in str(type(result_array)):
-                result_array = result_array.get()
-            result_array = np.array(result_array, dtype=np.float32)
-        densified_streamline = result_array
+        # After the interpolation loop, convert to numpy if needed
         if use_gpu and hasattr(xp, 'asnumpy'):
-            densified_streamline = xp.asnumpy(densified_streamline)
+            densified_streamline = xp.asnumpy(result_array)
+        else:
+            densified_streamline = result_array
         print(f"[DEBUG] Returning from densify_streamline_subvoxel: type={type(densified_streamline)}, shape={getattr(densified_streamline, 'shape', None)}")
         if not isinstance(densified_streamline, np.ndarray):
             print(f"[DEBUG] densified_streamline is type {type(densified_streamline)}; converting to np.ndarray")
-            # If it's a CuPy array, use .get() to move to CPU
-            if 'cupy' in str(type(densified_streamline)):
-                densified_streamline = densified_streamline.get()
             densified_streamline = np.array(densified_streamline, dtype=np.float32)
         if debug_tangents:
             print(f"[DENSIFY] Original points: {len(streamline)}, Densified points: {len(densified_streamline)}")
@@ -708,9 +701,8 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                         print(f"[CURVATURE] Change: {(new_curvature-orig_curvature)/orig_curvature*100:.2f}%")
                     else:
                         print(f"[CURVATURE] Change: N/A (original curvature was zero)")
-        # Catch-all: if function falls through, print warning and return zeros
-        print("[DEBUG] WARNING: densify_streamline_subvoxel fell through to end without returning! Returning zeros.")
-        return np.zeros((2, 3), dtype=np.float32)
+        print(f"[DEBUG] About to return: type={type(densified_streamline)}, shape={getattr(densified_streamline, 'shape', None)}")
+        return densified_streamline
     except Exception as e:
         print(f"[DEBUG] EXCEPTION in densify_streamline_subvoxel: {e}")
         traceback.print_exc()
