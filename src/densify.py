@@ -193,6 +193,7 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
     list of arrays
         Densified streamlines.
     """
+    import numpy as np
     if len(streamlines) == 0:
         return []
 
