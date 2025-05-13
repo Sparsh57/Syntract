@@ -4,13 +4,14 @@ import matplotlib.pyplot as plt
 from dipy.io.streamline import load_trk
 
 
-def visualize_trk_with_nifti(trk_file, nifti_file):
+def visualize_trk_with_nifti(trk_file, nifti_file, save_path=None):
     """
     Visualize streamlines from a .trk file overlaid on a corresponding NIfTI image using MIP views.
 
     Args:
         trk_file (str): Path to the .trk file containing streamlines.
         nifti_file (str): Path to the corresponding NIfTI file.
+        save_path (str, optional): If provided, saves the plot to this path.
     """
     # Load streamlines
     tractogram = load_trk(trk_file, reference=nifti_file, bbox_valid_check=False)
@@ -54,8 +55,13 @@ def visualize_trk_with_nifti(trk_file, nifti_file):
     plt.axis('off')
 
     plt.tight_layout()
-    plt.show()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Figure saved to {save_path}")
+    else:
+        plt.show()
 
 
 # Example usage:
-# visualize_trk_with_nifti("/kaggle/input/sub-mf278/motor.trk", "/kaggle/input/sub-mf278/dtifit_S0.nii")
+visualize_trk_with_nifti("MRISynth/mri_block.trk", "MRISynth/mri_block.nii.gz", save_path="mri_visualization.png")
