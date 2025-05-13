@@ -15,6 +15,7 @@ This repository is part of the **LINC project**, funded by the **NIH**, and focu
 - Implements parallel processing for high-performance data handling
 - GPU acceleration support for faster processing
 - Comprehensive interpolation comparison tools
+- ANTs transformation support for advanced image and streamline registration
 - Modularized code structure for easy extension and customization
 
 ## Installation
@@ -45,7 +46,7 @@ python src/main.py --input <input_nifti> --trk <input_trk> [options]
 
 #### Optional Parameters
 - `--output`: Prefix for output files (default: "resampled")
-- `--voxel_size`: New voxel size in mm (default: 0.5)
+- `--voxel_size`: New voxel size in mm, either a single isotropic value or three anisotropic values (default: 0.5)
 - `--new_dim`: New image dimensions (x, y, z) (default: 116 140 96)
 - `--jobs`: Number of parallel jobs (-1 for all CPUs) (default: 8)
 - `--patch_center`: Optional patch center in mm (x y z) (default: None)
@@ -56,12 +57,28 @@ python src/main.py --input <input_nifti> --trk <input_trk> [options]
 - `--step_size`: Step size for streamline densification (default: 0.5)
 - `--max_gb`: Maximum output size in GB (default: 64.0)
 
+#### ANTs Transform Parameters
+- `--use_ants`: Use ANTs transforms for processing (default: False)
+- `--ants_warp`: Path to ANTs warp file (required if use_ants is True)
+- `--ants_iwarp`: Path to ANTs inverse warp file (required if use_ants is True)
+- `--ants_aff`: Path to ANTs affine file (required if use_ants is True)
+
 #### Example Usage
 ```bash
 # Basic usage with defaults
 python src/main.py --input input.nii.gz --trk input.trk
 
-# Full example with all parameters
+# Using ANTs transforms
+python src/main.py \
+    --input input.nii.gz \
+    --trk input.trk \
+    --output ants_transformed \
+    --use_ants \
+    --ants_warp path/to/warp.nii.gz \
+    --ants_iwarp path/to/inverse_warp.nii.gz \
+    --ants_aff path/to/affine.mat
+
+# Full example with all parameters including ANTs transforms
 python src/main.py \
     --input input.nii.gz \
     --trk input.trk \
@@ -74,7 +91,11 @@ python src/main.py \
     --use_gpu \
     --interp hermite \
     --step_size 0.5 \
-    --max_gb 64.0
+    --max_gb 64.0 \
+    --use_ants \
+    --ants_warp path/to/warp.nii.gz \
+    --ants_iwarp path/to/inverse_warp.nii.gz \
+    --ants_aff path/to/affine.mat
 ```
 
 ### Comparing Interpolation Methods
@@ -98,12 +119,13 @@ pytest tests/
 
 ## File Structure
 ```
-fiber_processing/
+MRISynth/
 │── src/                   # Source code
 │   ├── densify.py         # Densification functions
 │   ├── transform.py       # Affine transformations
 │   ├── streamline_processing.py  # Processing streamlines
-│   ├── nifti_processing.py # Resampling NIfTI files
+│   ├── nifti_preprocessing.py # Resampling NIfTI files
+│   ├── ants_transform.py  # ANTs transformation utilities
 │   ├── compare_interpolation.py  # Interpolation comparison
 │   ├── visualize.py       # Visualization utilities
 │   ├── main.py            # Entry point
@@ -118,7 +140,15 @@ fiber_processing/
 - GPU acceleration is enabled by default for faster processing
 - For systems without GPU, the pipeline automatically falls back to CPU processing
 - Parallel processing is available for both CPU and GPU modes
-- Memory usage can be controlled with the `--max_output_gb` parameter
+- Memory usage can be controlled with the `--max_gb` parameter
+
+## ANTs Transformation Details
+The ANTs (Advanced Normalization Tools) integration allows for:
+- Advanced non-linear registration between different image spaces
+- Transforming both MRI volumes and streamlines data using the same registration
+- Proper handling of orientation flips and coordinate system differences
+- Direct integration with the rest of the MRISynth pipeline
+- Apply transformation without additional resampling by using the `--use_ants` flag
 
 ## Contributing
 Contributions are welcome! Please open an issue or submit a pull request with improvements.
