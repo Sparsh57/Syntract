@@ -1,4 +1,4 @@
-# MRISynth
+# Syntract
 
 ## Overview
 This repository is part of the **LINC project**, funded by the **NIH**, and focuses on the synthetic generation of tracer data for fiber tracking in MRI scans. The goal is to develop tools that can process, transform, and resample fiber tractography data efficiently for research applications.
@@ -28,8 +28,8 @@ pip install -r requirements.txt
 ### Setup
 Clone the repository and install the package:
 ```bash
-git clone https://github.com/Sparsh57/MRISynth.git
-cd MRISynth
+git clone https://github.com/Sparsh57/Syntract.git
+cd Syntract
 pip install -e .
 ```
 
@@ -119,7 +119,7 @@ pytest tests/
 
 ## File Structure
 ```
-MRISynth/
+Syntract/
 │── src/                   # Source code
 │   ├── densify.py         # Densification functions
 │   ├── transform.py       # Affine transformations
@@ -147,7 +147,7 @@ The ANTs (Advanced Normalization Tools) integration allows for:
 - Advanced non-linear registration between different image spaces
 - Transforming both MRI volumes and streamlines data using the same registration
 - Proper handling of orientation flips and coordinate system differences
-- Direct integration with the rest of the MRISynth pipeline
+- Direct integration with the rest of the Syntract pipeline
 - Apply transformation without additional resampling by using the `--use_ants` flag
 
 ## Contributing
