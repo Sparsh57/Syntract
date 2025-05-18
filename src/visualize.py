@@ -64,4 +64,4 @@ def visualize_trk_with_nifti(trk_file, nifti_file, save_path=None):
 
 
 # Example usage:
-visualize_trk_with_nifti("MRISynth/mri_block.trk", "MRISynth/mri_block.nii.gz", save_path="mri_visualization.png")
+visualize_trk_with_nifti("find.trk", "find.nii.gz")

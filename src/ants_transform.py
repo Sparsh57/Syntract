@@ -225,7 +225,14 @@ def apply_ants_transform_to_streamlines(path_iwarp, path_aff, path_trk, output_p
         streamstack[:, 1] = 2 * fixed_center_ras[1] - streamstack[:, 1]
     
     if needs_z_flip:
-        print("Z-flip needed but not implemented in original code")
+        print("Applying z-axis flip to correct orientation")
+        # Implement z-flip similar to x-flip and y-flip
+        fixed_shape = iwarp.shape[:3]
+        fixed_center_vox = (np.array(fixed_shape) - 1) / 2
+        fixed_center_ras = apply_affine(affine_vox2fix, fixed_center_vox)
+        
+        # Flip around center
+        streamstack[:, 2] = 2 * fixed_center_ras[2] - streamstack[:, 2]
 
     # Save the transformed streamlines
     streamlines._data = streamstack
@@ -238,7 +245,57 @@ def apply_ants_transform_to_streamlines(path_iwarp, path_aff, path_trk, output_p
 
     # Move streamlines back to fixed voxel coordinates for synthesis
     streamstack_for_synthesis = streamstack @ affine_fix2vox[:3, :3].T + affine_fix2vox[:3, -1]
-    return streamlines, streamstack_for_synthesis
+    
+    # Check if any coordinate is outside the valid range and clip or warn
+    fixed_shape = iwarp.shape[:3]
+    streamlines_list = []
+    offsets = streamlines._offsets
+    
+    # Process each streamline separately to ensure proper clipping
+    for i in range(len(offsets) - 1):
+        start, end = offsets[i], offsets[i + 1]
+        streamline_segment = streamstack_for_synthesis[start:end]
+        
+        # Skip streamlines with very few points
+        if len(streamline_segment) < 2:
+            continue
+        
+        # Check if any point is outside the valid range (0 to shape-1)
+        inside_mask = np.all((streamline_segment >= 0) & (streamline_segment < fixed_shape), axis=1)
+        
+        # If all points are outside bounds, skip this streamline
+        if not np.any(inside_mask):
+            continue
+        
+        # Only keep streamlines with at least two valid points
+        if np.sum(inside_mask) >= 2:
+            # Extract valid segments
+            valid_segments = []
+            current_segment = []
+            
+            for j, is_inside in enumerate(inside_mask):
+                if is_inside:
+                    current_segment.append(streamline_segment[j])
+                elif len(current_segment) >= 2:
+                    valid_segments.append(np.array(current_segment, dtype=np.float32))
+                    current_segment = []
+            
+            if len(current_segment) >= 2:
+                valid_segments.append(np.array(current_segment, dtype=np.float32))
+            
+            # Add all valid segments to the list
+            streamlines_list.extend(valid_segments)
+    
+    print(f"Original number of streamlines: {len(offsets) - 1}")
+    print(f"Number of valid streamlines after clipping: {len(streamlines_list)}")
+    
+    # If no valid streamlines were found, provide a warning
+    if len(streamlines_list) == 0:
+        print("WARNING: No valid streamlines found after ANTs transformation and clipping!")
+        print("This may indicate that the transformed streamlines are completely outside the image bounds.")
+        print("Check your transformation parameters and image dimensions.")
+    
+    return streamlines, streamlines_list
 
 
 def process_with_ants(
@@ -280,21 +337,51 @@ def process_with_ants(
         - Streamlines in fixed voxel coordinates (for synthesis)
     """
     print("\n=== Applying ANTs Transforms ===")
+    
+    # Get warp dimensions
+    warp_img = nib.load(path_warp)
+    warp_dims = warp_img.shape[:3]
+    warp_affine = warp_img.affine
+    print(f"ANTs warp dimensions: {warp_dims}")
+    print(f"ANTs warp affine:\n{warp_affine}")
 
     # Transform MRI
     print("\n=== Transforming MRI with ANTs ===")
     moved_mri, affine_vox2fix = apply_ants_transform_to_mri(
         path_warp, path_aff, path_mri, output_mri
     )
+    
+    # Verify dimensions are consistent
+    if moved_mri.shape[:3] != warp_dims:
+        print(f"WARNING: Transformed MRI dimensions {moved_mri.shape[:3]} don't match warp dimensions {warp_dims}")
+        print("This may cause alignment issues. Please use the same dimensions as the warp field.")
+    
     if output_mri:
         print(f"Saved transformed MRI => {output_mri}")
 
     # Transform streamlines
     print("\n=== Transforming Streamlines with ANTs ===")
-    transformed_streamlines, streamstack_for_synthesis = apply_ants_transform_to_streamlines(
+    transformed_streamlines, streamlines_list = apply_ants_transform_to_streamlines(
         path_iwarp, path_aff, path_trk, output_trk
     )
     if output_trk:
         print(f"Saved transformed streamlines => {output_trk}")
+    
+    # Verify the transformed streamlines work with the transformed MRI dimensions
+    if len(streamlines_list) > 0:
+        # Check if streamlines are within the MRI bounds
+        all_within_bounds = True
+        for streamline in streamlines_list[:min(5, len(streamlines_list))]:
+            if not np.all((streamline >= 0) & (streamline < moved_mri.shape[:3])):
+                all_within_bounds = False
+                break
+        
+        if not all_within_bounds:
+            print("WARNING: Some transformed streamlines are outside the MRI bounds.")
+            print("This may cause alignment issues in visualization or further processing.")
+    
+    print(f"\nTransformed MRI dimensions: {moved_mri.shape[:3]}")
+    print(f"Transformed streamlines count: {len(streamlines_list)}")
+    print("For proper alignment, use these dimensions in subsequent processing steps.")
 
-    return moved_mri, affine_vox2fix, transformed_streamlines, streamstack_for_synthesis
+    return moved_mri, affine_vox2fix, transformed_streamlines, streamlines_list
