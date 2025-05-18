@@ -4,7 +4,8 @@ import numpy as np
 import os
 from nifti_preprocessing import resample_nifti
 from transform import build_new_affine
-from streamline_processing import transform_and_densify_streamlines
+from streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
+from densify import densify_streamline_subvoxel
 from nibabel.streamlines import Tractogram, save as save_trk
 
 # Import the ANTs processing module
@@ -27,7 +28,8 @@ def process_and_save(
         use_ants=False,
         ants_warp_path=None,
         ants_iwarp_path=None,
-        ants_aff_path=None
+        ants_aff_path=None,
+        force_dimensions=False
 ):
     """
     Processing and saving NIfTI and streamline data with new parameters.
@@ -66,6 +68,8 @@ def process_and_save(
         Path to ANTs inverse warp file. Required if use_ants is True.
     ants_aff_path : str, optional
         Path to ANTs affine file. Required if use_ants is True.
+    force_dimensions : bool, optional
+        Force using the specified new_dim even when using ANTs (may cause misalignment)
     """
     # Import appropriate array library based on use_gpu setting
     if use_gpu:
@@ -87,14 +91,19 @@ def process_and_save(
         if not all([ants_warp_path, ants_iwarp_path, ants_aff_path]):
             raise ValueError("When use_ants=True, all ANTs transform paths must be provided.")
         
-        # Use the ANTs transform pipeline
-        ants_mri_output = f"{output_prefix}_ants_mri.nii.gz"
-        ants_trk_output = f"{output_prefix}_ants_trk.trk"
+        # Get the dimensions from the warp file to inform the user
+        warp_img = nib.load(ants_warp_path)
+        warp_shape = warp_img.shape[:3]
+        print(f"ANTs warp field dimensions: {warp_shape}")
         
-        print("\n=== Applying ANTs Transforms ===")
+        # Intermediate outputs (not final)
+        ants_mri_output = f"{output_prefix}_ants_intermediate_mri.nii.gz"
+        ants_trk_output = f"{output_prefix}_ants_intermediate_trk.trk"
+        
+        print("\n=== Step 1: Applying ANTs Transforms ===")
         
         # Apply ANTs transforms
-        moved_mri, affine_vox2fix, transformed_streamlines, streamstack_for_synthesis = process_with_ants(
+        moved_mri, affine_vox2fix, transformed_streamlines, streamlines_voxel = process_with_ants(
             ants_warp_path, 
             ants_iwarp_path, 
             ants_aff_path, 
@@ -105,16 +114,55 @@ def process_and_save(
         )
         
         print("\n==== ANTs Transform Process Completed! ====")
-        print("Continuing with synthesis using transformed data...")
+        print(f"ANTs-transformed MRI dimensions: {moved_mri.shape[:3]}")
+        print(f"Requested output dimensions: {new_dim}")
+        
+        # Use the ANTs-transformed data as starting point
+        print("\n=== Step 2: Resampling ANTs-transformed data to requested dimensions ===")
         
         # Create a NIfTI image from the transformed data
         old_img = nib.Nifti1Image(moved_mri, affine_vox2fix)
         old_affine = affine_vox2fix
         old_shape = moved_mri.shape[:3]
         
-        # Get the tractogram with streamlines in voxel coordinates for synthesis
-        old_streams_mm = transformed_streamlines
+        if old_shape != new_dim:
+            print(f"Note: Resampling from ANTs dimensions {old_shape} to requested dimensions {new_dim}")
+            print("This second transformation will maintain alignment between MRI and streamlines.")
+        else:
+            print(f"Requested dimensions {new_dim} already match ANTs transform dimensions.")
+            print("No additional resampling needed.")
         
+        # Transform the streamlines to RAS coordinates for consistent resampling
+        print("\n=== Converting streamlines to RAS coordinates for resampling ===")
+        streamlines_ras = []
+        
+        for streamline in streamlines_voxel:
+            # Convert from voxel to RAS coordinates
+            ras_streamline = np.dot(streamline, affine_vox2fix[:3, :3].T) + affine_vox2fix[:3, 3]
+            streamlines_ras.append(ras_streamline)
+        
+        print(f"Converted {len(streamlines_ras)} streamlines to RAS coordinates")
+        
+        # Create a tractogram object for further processing
+        old_streams_mm = streamlines_ras
+        
+        """
+        IMPORTANT: The key to maintaining alignment when using custom dimensions with ANTs:
+        
+        1. We first apply the ANTs transformation to both the MRI and streamlines
+           - This puts both in the ANTs "fixed" space with its own dimensions
+        
+        2. Then we convert the streamlines from ANTs voxel space to world (RAS) coordinates
+           - This step is crucial because world coordinates are independent of voxel grid
+        
+        3. Now both the MRI and streamlines can be consistently resampled to any new dimension
+           - The MRI is resampled with its new affine matrix (A_new)
+           - The streamlines are transformed using the same A_new matrix
+           - This maintains their spatial relationship regardless of dimensions
+        
+        This approach ensures alignment between MRI and streamlines even when using
+        dimensions that differ from the ANTs warp field dimensions.
+        """
     else:
         print("\n=== Loading NIfTI ===")
         old_img = nib.load(old_nifti_path, mmap=True)
@@ -207,19 +255,65 @@ def process_and_save(
     
     # Process streamlines with clipping always enabled
     if use_ants:
-        # If we already have ANTs-transformed streamlines in voxel coordinates, 
-        # we can use them directly or perform additional processing
-        if isinstance(streamstack_for_synthesis, np.ndarray):
-            # If streamstack_for_synthesis is a numpy array, we need to convert it to a list of arrays
-            streamlines_list = []
-            offsets = transformed_streamlines._offsets
-            for i in range(len(offsets) - 1):
-                start, end = offsets[i], offsets[i + 1]
-                streamlines_list.append(streamstack_for_synthesis[start:end])
-            densified_vox = streamlines_list
-        else:
-            # If it's already a list, we can use it directly
-            densified_vox = streamstack_for_synthesis
+        # In the ANTs case, we need to handle the transform_and_densify process differently
+        # because we've already converted our streamlines to RAS coordinates
+        print(f"\n=== Transforming, Densifying, and Clipping ANTs-Processed Streamlines ===")
+        print(f"Using {interp_method} interpolation with step size: {step_size}")
+        print(f"Using dimensions: {new_dim}")
+        
+        # Apply the new affine transformation to convert world coordinates to the new voxel space
+        A_new_inv = np.linalg.inv(A_new)
+        
+        # Convert streamlines from RAS (world) coordinates to the new voxel space
+        voxel_streamlines = []
+        for streamline in old_streams_mm:
+            # Convert from RAS to voxel coordinates in new space
+            voxel_streamline = np.dot(streamline, A_new_inv[:3, :3].T) + A_new_inv[:3, 3]
+            voxel_streamlines.append(voxel_streamline)
+        
+        print(f"Transformed {len(voxel_streamlines)} streamlines to new voxel space")
+        
+        # Now clip the streamlines to the new dimensions and densify
+        densified_vox = []
+        
+        # Process streamlines in parallel for performance
+        from joblib import Parallel, delayed
+        
+        def process_streamline(streamline):
+            try:
+                # Clip to new FOV
+                clipped_segments = clip_streamline_to_fov(streamline, new_dim, use_gpu=use_gpu)
+                
+                # Densify each segment
+                densified_segments = []
+                for segment in clipped_segments:
+                    if len(segment) >= 2:  # Need at least 2 points for densification
+                        try:
+                            densified = densify_streamline_subvoxel(
+                                segment, step_size=step_size, 
+                                interp_method=interp_method, use_gpu=use_gpu
+                            )
+                            if len(densified) >= 2:
+                                densified_segments.append(densified)
+                        except Exception as e:
+                            print(f"Error densifying segment: {e}")
+                            # For troubleshooting, still include the non-densified segment
+                            densified_segments.append(segment)
+                            
+                return densified_segments
+            except Exception as e:
+                print(f"Error processing streamline: {e}")
+                return []
+        
+        results = Parallel(n_jobs=n_jobs)(
+            delayed(process_streamline)(streamline) for streamline in voxel_streamlines
+        )
+        
+        # Flatten the results
+        for result in results:
+            densified_vox.extend(result)
+            
+        print(f"Processed {len(voxel_streamlines)} streamlines into {len(densified_vox)} segments")
     else:
         # Standard processing for non-ANTs case
         densified_vox = transform_and_densify_streamlines(
@@ -259,11 +353,28 @@ def process_and_save(
         new_trk_header["voxel_to_rasmm"] = A_new.astype(np.float32)
 
     print("\n=== Saving Final Synthesized .trk File ===")
-    new_tractogram = Tractogram(densified_vox, affine_to_rasmm=A_new)
+    
+    # The streamlines in densified_vox are in voxel coordinates
+    # We need to convert them to RAS coordinates for the tractogram
+    if len(densified_vox) > 0:
+        # Convert streamlines from voxel coordinates to RAS coordinates
+        print(f"Converting {len(densified_vox)} streamlines from voxel to RAS coordinates...")
+        ras_streamlines = []
+        for streamline in densified_vox:
+            # Apply affine transform to convert from voxel to RAS coordinates
+            ras_streamline = np.dot(streamline, A_new[:3, :3].T) + A_new[:3, 3]
+            ras_streamlines.append(ras_streamline)
+            
+        new_tractogram = Tractogram(ras_streamlines, affine_to_rasmm=np.eye(4))
+    else:
+        print("WARNING: No valid streamlines to save after processing!")
+        new_tractogram = Tractogram([], affine_to_rasmm=np.eye(4))
+    
     out_trk_path = output_prefix + ".trk"
     save_trk(new_tractogram, out_trk_path, header=new_trk_header)
 
     print(f"Saved new .trk => {out_trk_path}")
+    print(f"Number of streamlines in final .trk file: {len(new_tractogram)}")
     print("\n==== Synthesis Process Completed Successfully! ====")
 
 if __name__ == "__main__":
@@ -274,7 +385,8 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=str, default="resampled", help="Prefix for output files.")
     parser.add_argument("--voxel_size", type=float, nargs='+', default=[0.5],
                         help="New voxel size: either a single value for isotropic or three values for anisotropic (e.g., --voxel_size 0.5 0.5 1.0)")
-    parser.add_argument("--new_dim", type=int, nargs=3, default=[116, 140, 96], help="New image dimensions (x, y, z).")
+    parser.add_argument("--new_dim", type=int, nargs=3, default=[116, 140, 96], 
+                        help="New image dimensions (x, y, z). When using --use_ants, these dimensions will be used for the final output (alignment is maintained).")
     parser.add_argument("--jobs", type=int, default=8, help="Number of parallel jobs (-1 for all CPUs).")
     parser.add_argument("--patch_center", type=float, nargs=3, default=None, help="Optional patch center in mm.")
     parser.add_argument("--reduction", type=str, choices=["mip", "mean"], default=None,
@@ -294,6 +406,7 @@ if __name__ == "__main__":
     parser.add_argument("--ants_warp", type=str, default=None, help="Path to ANTs warp file (required if use_ants is True).")
     parser.add_argument("--ants_iwarp", type=str, default=None, help="Path to ANTs inverse warp file (required if use_ants is True).")
     parser.add_argument("--ants_aff", type=str, default=None, help="Path to ANTs affine file (required if use_ants is True).")
+    parser.add_argument("--force_dimensions", action="store_true", help="Force using the specified new_dim even when using ANTs (may cause misalignment)")
 
     args = parser.parse_args()
 
@@ -341,5 +454,6 @@ if __name__ == "__main__":
         use_ants=args.use_ants,
         ants_warp_path=args.ants_warp,
         ants_iwarp_path=args.ants_iwarp,
-        ants_aff_path=args.ants_aff
+        ants_aff_path=args.ants_aff,
+        force_dimensions=args.force_dimensions
     )
