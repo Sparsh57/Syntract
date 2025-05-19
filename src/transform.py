@@ -29,9 +29,11 @@ def build_new_affine(old_affine, old_shape, new_voxel_size, new_shape, patch_cen
     if use_gpu:
         try:
             import cupy as xp
+            # Test if GPU is actually available by doing a simple operation
+            xp.array([1, 2, 3])
             print("Using GPU for affine transformation")
-        except ImportError:
-            print("Warning: Could not import cupy. Falling back to CPU for affine transformation.")
+        except (ImportError, RuntimeError) as e:
+            print(f"Warning: GPU operations not available ({str(e)}). Falling back to CPU for affine transformation.")
             import numpy as xp
             use_gpu = False
     else:
