@@ -1,4 +1,4 @@
-name: MRISynth CI
+name: Syntract CI
 
 on:
   push:
