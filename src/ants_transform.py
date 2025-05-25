@@ -306,6 +306,7 @@ def process_with_ants(
         path_trk,
         output_mri=None,
         output_trk=None,
+        transform_mri=False,
 ):
     """
     Process MRI and streamlines using ANTs transforms.
@@ -326,13 +327,15 @@ def process_with_ants(
         Path to save transformed MRI file.
     output_trk : str, optional
         Path to save transformed TRK file.
+    transform_mri : bool, optional
+        Whether to transform the MRI (default: False). If False, only streamlines are transformed.
 
     Returns
     -------
     tuple
         Tuple containing:
-        - Transformed MRI data
-        - Affine matrix of the transformed MRI
+        - Transformed MRI data (or None if transform_mri=False)
+        - Affine matrix of the transformed MRI (or the original MRI if transform_mri=False)
         - Transformed tractogram
         - Streamlines in fixed voxel coordinates (for synthesis)
     """
@@ -345,19 +348,27 @@ def process_with_ants(
     print(f"ANTs warp dimensions: {warp_dims}")
     print(f"ANTs warp affine:\n{warp_affine}")
 
-    # Transform MRI
-    print("\n=== Transforming MRI with ANTs ===")
-    moved_mri, affine_vox2fix = apply_ants_transform_to_mri(
-        path_warp, path_aff, path_mri, output_mri
-    )
-    
-    # Verify dimensions are consistent
-    if moved_mri.shape[:3] != warp_dims:
-        print(f"WARNING: Transformed MRI dimensions {moved_mri.shape[:3]} don't match warp dimensions {warp_dims}")
-        print("This may cause alignment issues. Please use the same dimensions as the warp field.")
-    
-    if output_mri:
-        print(f"Saved transformed MRI => {output_mri}")
+    # Transform MRI if requested
+    if transform_mri:
+        print("\n=== Transforming MRI with ANTs ===")
+        moved_mri, affine_vox2fix = apply_ants_transform_to_mri(
+            path_warp, path_aff, path_mri, output_mri
+        )
+        
+        # Verify dimensions are consistent
+        if moved_mri.shape[:3] != warp_dims:
+            print(f"WARNING: Transformed MRI dimensions {moved_mri.shape[:3]} don't match warp dimensions {warp_dims}")
+            print("This may cause alignment issues. Please use the same dimensions as the warp field.")
+        
+        if output_mri:
+            print(f"Saved transformed MRI => {output_mri}")
+    else:
+        print("\n=== Skipping MRI transformation===")
+        moved_mri = None
+        # Load original MRI to get its affine for alignment
+        orig_img = nib.load(path_mri)
+        affine_vox2fix = orig_img.affine
+        print(f"Using original MRI affine for streamline alignment")
 
     # Transform streamlines
     print("\n=== Transforming Streamlines with ANTs ===")
@@ -367,21 +378,11 @@ def process_with_ants(
     if output_trk:
         print(f"Saved transformed streamlines => {output_trk}")
     
-    # Verify the transformed streamlines work with the transformed MRI dimensions
-    if len(streamlines_list) > 0:
-        # Check if streamlines are within the MRI bounds
-        all_within_bounds = True
-        for streamline in streamlines_list[:min(5, len(streamlines_list))]:
-            if not np.all((streamline >= 0) & (streamline < moved_mri.shape[:3])):
-                all_within_bounds = False
-                break
-        
-        if not all_within_bounds:
-            print("WARNING: Some transformed streamlines are outside the MRI bounds.")
-            print("This may cause alignment issues in visualization or further processing.")
-    
-    print(f"\nTransformed MRI dimensions: {moved_mri.shape[:3]}")
+    # Report on results
+    if transform_mri:
+        print(f"\nTransformed MRI dimensions: {moved_mri.shape[:3]}")
+    else:
+        print(f"\nOriginal MRI will be used (no transformation)")
     print(f"Transformed streamlines count: {len(streamlines_list)}")
-    print("For proper alignment, use these dimensions in subsequent processing steps.")
 
     return moved_mri, affine_vox2fix, transformed_streamlines, streamlines_list
