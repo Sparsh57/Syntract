@@ -29,7 +29,8 @@ def process_and_save(
         ants_warp_path=None,
         ants_iwarp_path=None,
         ants_aff_path=None,
-        force_dimensions=False
+        force_dimensions=False,
+        transform_mri_with_ants=False
 ):
     """
     Processing and saving NIfTI and streamline data with new parameters.
@@ -70,6 +71,8 @@ def process_and_save(
         Path to ANTs affine file. Required if use_ants is True.
     force_dimensions : bool, optional
         Force using the specified new_dim even when using ANTs (may cause misalignment)
+    transform_mri_with_ants : bool, optional
+        Whether to transform the MRI with ANTs (default: False). If False, only transform streamlines.
     """
     # Import appropriate array library based on use_gpu setting
     if use_gpu:
@@ -97,10 +100,12 @@ def process_and_save(
         print(f"ANTs warp field dimensions: {warp_shape}")
         
         # Intermediate outputs (not final)
-        ants_mri_output = f"{output_prefix}_ants_intermediate_mri.nii.gz"
+        ants_mri_output = f"{output_prefix}_ants_intermediate_mri.nii.gz" if transform_mri_with_ants else None
         ants_trk_output = f"{output_prefix}_ants_intermediate_trk.trk"
         
         print("\n=== Step 1: Applying ANTs Transforms ===")
+        if not transform_mri_with_ants:
+            print("Note: MRI transformation will be skipped as requested")
         
         # Apply ANTs transforms
         moved_mri, affine_vox2fix, transformed_streamlines, streamlines_voxel = process_with_ants(
@@ -110,27 +115,38 @@ def process_and_save(
             old_nifti_path, 
             old_trk_path, 
             ants_mri_output, 
-            ants_trk_output
+            ants_trk_output,
+            transform_mri=transform_mri_with_ants
         )
         
         print("\n==== ANTs Transform Process Completed! ====")
-        print(f"ANTs-transformed MRI dimensions: {moved_mri.shape[:3]}")
-        print(f"Requested output dimensions: {new_dim}")
         
-        # Use the ANTs-transformed data as starting point
-        print("\n=== Step 2: Resampling ANTs-transformed data to requested dimensions ===")
-        
-        # Create a NIfTI image from the transformed data
-        old_img = nib.Nifti1Image(moved_mri, affine_vox2fix)
-        old_affine = affine_vox2fix
-        old_shape = moved_mri.shape[:3]
-        
-        if old_shape != new_dim:
-            print(f"Note: Resampling from ANTs dimensions {old_shape} to requested dimensions {new_dim}")
-            print("This second transformation will maintain alignment between MRI and streamlines.")
+        if transform_mri_with_ants:
+            print(f"ANTs-transformed MRI dimensions: {moved_mri.shape[:3]}")
+            print(f"Requested output dimensions: {new_dim}")
+            
+            # Use the ANTs-transformed data as starting point
+            print("\n=== Step 2: Resampling ANTs-transformed data to requested dimensions ===")
+            
+            # Create a NIfTI image from the transformed data
+            old_img = nib.Nifti1Image(moved_mri, affine_vox2fix)
+            old_affine = affine_vox2fix
+            old_shape = moved_mri.shape[:3]
+            
+            if old_shape != new_dim:
+                print(f"Note: Resampling from ANTs dimensions {old_shape} to requested dimensions {new_dim}")
+                print("This second transformation will maintain alignment between MRI and streamlines.")
+            else:
+                print(f"Requested dimensions {new_dim} already match ANTs transform dimensions.")
+                print("No additional resampling needed.")
         else:
-            print(f"Requested dimensions {new_dim} already match ANTs transform dimensions.")
-            print("No additional resampling needed.")
+            # Use the original MRI file directly
+            print("\n=== Step 2: Using original MRI directly ===")
+            old_img = nib.load(old_nifti_path, mmap=True)
+            old_affine = old_img.affine
+            old_shape = old_img.shape[:3]
+            print(f"Original MRI dimensions: {old_shape}")
+            print(f"Requested output dimensions: {new_dim}")
         
         # Transform the streamlines to RAS coordinates for consistent resampling
         print("\n=== Converting streamlines to RAS coordinates for resampling ===")
@@ -407,6 +423,7 @@ if __name__ == "__main__":
     parser.add_argument("--ants_iwarp", type=str, default=None, help="Path to ANTs inverse warp file (required if use_ants is True).")
     parser.add_argument("--ants_aff", type=str, default=None, help="Path to ANTs affine file (required if use_ants is True).")
     parser.add_argument("--force_dimensions", action="store_true", help="Force using the specified new_dim even when using ANTs (may cause misalignment)")
+    parser.add_argument("--transform_mri_with_ants", action="store_true", help="Also transform MRI with ANTs (default: only transforms streamlines)")
 
     args = parser.parse_args()
 
@@ -455,5 +472,6 @@ if __name__ == "__main__":
         ants_warp_path=args.ants_warp,
         ants_iwarp_path=args.ants_iwarp,
         ants_aff_path=args.ants_aff,
-        force_dimensions=args.force_dimensions
+        force_dimensions=args.force_dimensions,
+        transform_mri_with_ants=args.transform_mri_with_ants
     )
