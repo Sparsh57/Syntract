@@ -378,7 +378,7 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
 
 def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', epsilon=None, xp=np):
     """
-    Perform RBF interpolation for a streamline.
+    Perform RBF interpolation for a streamline with proper regularization.
     """
     # Import numpy to ensure it's available
     import numpy as np
@@ -412,18 +412,67 @@ def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', eps
         t_cpu = xp.asnumpy(cumulative_lengths)
         streamline_cpu = xp.asnumpy(streamline)
         t_new_cpu = xp.asnumpy(t_new)
-        from scipy.interpolate import Rbf
+    else:
+        t_cpu = cumulative_lengths
+        streamline_cpu = streamline
+        t_new_cpu = t_new
+    
+    # Convert to numpy arrays for scipy
+    t_cpu = np.asarray(t_cpu, dtype=np.float64)
+    streamline_cpu = np.asarray(streamline_cpu, dtype=np.float64)
+    t_new_cpu = np.asarray(t_new_cpu, dtype=np.float64)
+    
+    # Use more stable RBF settings
+    try:
+        from scipy.interpolate import RBFInterpolator
+        
+        # Choose more stable RBF function and add regularization
+        rbf_function = 'multiquadric'  # More stable than thin_plate
+        smoothing = 1e-6  # Small regularization to prevent oscillations
+        
+        # Apply RBF interpolation to each dimension
         result = np.zeros((len(t_new_cpu), streamline_cpu.shape[1]), dtype=np.float32)
+        
         for dim in range(streamline_cpu.shape[1]):
-            rbf = Rbf(t_cpu, streamline_cpu[:, dim], function=function, epsilon=epsilon)
+            # Use proper 2D input for RBFInterpolator (it expects (n_samples, n_features))
+            t_2d = t_cpu.reshape(-1, 1)
+            y_values = streamline_cpu[:, dim]
+            
+            # Create RBF interpolator with regularization
+            rbf = RBFInterpolator(
+                t_2d, 
+                y_values, 
+                kernel=rbf_function,
+                smoothing=smoothing,
+                epsilon=1.0  # Shape parameter for stability
+            )
+            
+            # Evaluate at new points
+            t_new_2d = t_new_cpu.reshape(-1, 1)
+            result[:, dim] = rbf(t_new_2d).astype(np.float32)
+            
+    except ImportError:
+        # Fallback to old Rbf with better parameters
+        print("Warning: RBFInterpolator not available, using legacy Rbf with safer parameters")
+        from scipy.interpolate import Rbf
+        
+        result = np.zeros((len(t_new_cpu), streamline_cpu.shape[1]), dtype=np.float32)
+        
+        for dim in range(streamline_cpu.shape[1]):
+            # Use multiquadric instead of thin_plate and add smoothing
+            rbf = Rbf(
+                t_cpu, 
+                streamline_cpu[:, dim], 
+                function='multiquadric',  # More stable
+                epsilon=1.0,  # Shape parameter
+                smooth=1e-6   # Regularization
+            )
             result[:, dim] = rbf(t_new_cpu)
+    
+    # Convert back to appropriate array type
+    if hasattr(xp, 'asarray') and xp.__name__ == 'cupy':
         return xp.asarray(result)
     else:
-        from scipy.interpolate import Rbf
-        result = xp.zeros((len(t_new), streamline.shape[1]), dtype=xp.float32)
-        for dim in range(streamline.shape[1]):
-            rbf = Rbf(cumulative_lengths, streamline[:, dim], function=function, epsilon=epsilon)
-            result[:, dim] = rbf(t_new)
         return result
 
 def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_method='hermite', voxel_size=1.0):
