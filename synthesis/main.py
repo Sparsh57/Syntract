@@ -1,7 +1,30 @@
+#!/usr/bin/env python
+"""
+Main Syntract Processing Pipeline
+
+This script serves as the entry point for the Syntract tractography synthesis pipeline.
+It orchestrates the complete workflow from raw NIfTI and TRK files to processed,
+resampled, and transformed outputs suitable for analysis and visualization.
+
+The pipeline supports:
+- Advanced streamline interpolation (Linear, Hermite, RBF)
+- GPU-accelerated processing with automatic CPU fallback
+- ANTs-based spatial transformations
+- Flexible output formatting and memory management
+
+Usage:
+    python main.py --input brain.nii.gz --trk fibers.trk [options]
+
+Authors: Sparsh Makharia, LINC Team
+License: MIT
+"""
+
 import argparse
-import nibabel as nib
-import numpy as np
 import os
+import sys
+import time
+import numpy as np
+import nibabel as nib
 from nifti_preprocessing import resample_nifti
 from transform import build_new_affine
 from streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
@@ -12,16 +35,16 @@ from nibabel.streamlines import Tractogram, save as save_trk
 from ants_transform import process_with_ants
 
 def process_and_save(
-        old_nifti_path,
-        old_trk_path,
-        new_voxel_size=0.5,
-        new_dim=(116, 140, 96),
+        original_nifti_path,
+        original_trk_path,
+        target_voxel_size=0.5,
+        target_dimensions=(116, 140, 96),
         output_prefix="resampled",
-        n_jobs=8,
+        num_jobs=8,
         patch_center=None,
         reduction_method=None,
         use_gpu=True,
-        interp_method='hermite',
+        interpolation_method='hermite',
         step_size=0.5,
         max_output_gb=64.0,
         # ANTs transform parameters
@@ -37,17 +60,17 @@ def process_and_save(
 
     Parameters
     ----------
-    old_nifti_path : str
+    original_nifti_path : str
         Path to the original NIfTI file.
-    old_trk_path : str
+    original_trk_path : str
         Path to the original streamline file.
-    new_voxel_size : float, optional
+    target_voxel_size : float, optional
         Desired voxel size, default is 0.5.
-    new_dim : tuple, optional
+    target_dimensions : tuple, optional
         New dimensions, default is (116, 140, 96).
     output_prefix : str, optional
         Prefix for output files, default is "resampled".
-    n_jobs : int, optional
+    num_jobs : int, optional
         Number of parallel jobs, default is 8.
     patch_center : tuple, optional
         Center for patching, default is None.
@@ -55,7 +78,7 @@ def process_and_save(
         Method for reduction, default is None.
     use_gpu : bool, optional
         Whether to use GPU, default is True.
-    interp_method : str, optional
+    interpolation_method : str, optional
         Interpolation method, default is 'hermite'.
     step_size : float, optional
         Step size for streamline densification, by default 0.5.
@@ -70,7 +93,7 @@ def process_and_save(
     ants_aff_path : str, optional
         Path to ANTs affine file. Required if use_ants is True.
     force_dimensions : bool, optional
-        Force using the specified new_dim even when using ANTs (may cause misalignment)
+        Force using the specified target_dimensions even when using ANTs (may cause misalignment)
     transform_mri_with_ants : bool, optional
         Whether to transform the MRI with ANTs (default: False). If False, only transform streamlines.
     """
@@ -112,8 +135,8 @@ def process_and_save(
             ants_warp_path, 
             ants_iwarp_path, 
             ants_aff_path, 
-            old_nifti_path, 
-            old_trk_path, 
+            original_nifti_path, 
+            original_trk_path, 
             ants_mri_output, 
             ants_trk_output,
             transform_mri=transform_mri_with_ants
@@ -123,7 +146,7 @@ def process_and_save(
         
         if transform_mri_with_ants:
             print(f"ANTs-transformed MRI dimensions: {moved_mri.shape[:3]}")
-            print(f"Requested output dimensions: {new_dim}")
+            print(f"Requested output dimensions: {target_dimensions}")
             
             # Use the ANTs-transformed data as starting point
             print("\n=== Step 2: Resampling ANTs-transformed data to requested dimensions ===")
@@ -133,20 +156,20 @@ def process_and_save(
             old_affine = affine_vox2fix
             old_shape = moved_mri.shape[:3]
             
-            if old_shape != new_dim:
-                print(f"Note: Resampling from ANTs dimensions {old_shape} to requested dimensions {new_dim}")
+            if old_shape != target_dimensions:
+                print(f"Note: Resampling from ANTs dimensions {old_shape} to requested dimensions {target_dimensions}")
                 print("This second transformation will maintain alignment between MRI and streamlines.")
             else:
-                print(f"Requested dimensions {new_dim} already match ANTs transform dimensions.")
+                print(f"Requested dimensions {target_dimensions} already match ANTs transform dimensions.")
                 print("No additional resampling needed.")
         else:
             # Use the original MRI file directly
             print("\n=== Step 2: Using original MRI directly ===")
-            old_img = nib.load(old_nifti_path, mmap=True)
+            old_img = nib.load(original_nifti_path, mmap=True)
             old_affine = old_img.affine
             old_shape = old_img.shape[:3]
             print(f"Original MRI dimensions: {old_shape}")
-            print(f"Requested output dimensions: {new_dim}")
+            print(f"Requested output dimensions: {target_dimensions}")
         
         # Transform the streamlines to RAS coordinates for consistent resampling
         print("\n=== Converting streamlines to RAS coordinates for resampling ===")
@@ -181,12 +204,12 @@ def process_and_save(
         """
     else:
         print("\n=== Loading NIfTI ===")
-        old_img = nib.load(old_nifti_path, mmap=True)
+        old_img = nib.load(original_nifti_path, mmap=True)
         old_affine = old_img.affine
         old_shape = old_img.shape[:3]
         
         print("\n=== Loading Tractography Data ===")
-        trk_obj = nib.streamlines.load(old_trk_path)
+        trk_obj = nib.streamlines.load(original_trk_path)
         old_streams_mm = trk_obj.tractogram.streamlines
 
     old_voxel_sizes = np.array(old_img.header.get_zooms()[:3])
@@ -196,22 +219,22 @@ def process_and_save(
     print(f"Old affine:\n{old_affine}")
     
     print("\n=== Building new affine ===")
-    print(f"Using dimensions for affine: {new_dim}")
-    A_new = build_new_affine(old_affine, old_shape, new_voxel_size, new_dim, patch_center_mm=patch_center, use_gpu=use_gpu)
+    print(f"Using dimensions for affine: {target_dimensions}")
+    A_new = build_new_affine(old_affine, old_shape, target_voxel_size, target_dimensions, patch_center_mm=patch_center, use_gpu=use_gpu)
 
     print(f"New affine:\n{A_new}")
-    print(f"New dimensions: {new_dim}")
+    print(f"New dimensions: {target_dimensions}")
     print(f"Using these dimensions for ALL subsequent processing")
     
     print(f"\n=== Resampling NIfTI using {'GPU' if use_gpu else 'CPU'} ===")
-    print(f"Resampling to dimensions: {new_dim}")
+    print(f"Resampling to dimensions: {target_dimensions}")
     print(f"Memory limit: {max_output_gb} GB")
-    new_data, tmp_mmap = resample_nifti(old_img, A_new, new_dim, chunk_size=(64, 64, 64), n_jobs=n_jobs, use_gpu=use_gpu, max_output_gb=max_output_gb)
+    new_data, tmp_mmap = resample_nifti(old_img, A_new, target_dimensions, chunk_size=(64, 64, 64), n_jobs=num_jobs, use_gpu=use_gpu, max_output_gb=max_output_gb)
     print(f"Resampled data shape: {new_data.shape}")
     
     # Verify shape matches expected dimensions
-    if new_data.shape[:3] != new_dim:
-        print(f"WARNING: Resampled shape {new_data.shape[:3]} does not match expected dimensions {new_dim}")
+    if new_data.shape[:3] != target_dimensions:
+        print(f"WARNING: Resampled shape {new_data.shape[:3]} does not match expected dimensions {target_dimensions}")
         print("This could lead to streamline clipping issues!")
 
     if reduction_method:
@@ -237,7 +260,7 @@ def process_and_save(
             reduced_data = reduced_data[..., np.newaxis]  # Keep z-axis size 1
             new_data = reduced_data
             
-        new_dim = (new_dim[0], 1, new_dim[2])
+        target_dimensions = (target_dimensions[0], 1, target_dimensions[2])
 
     # Convert to numpy array for saving if using GPU
     if use_gpu:
@@ -264,18 +287,18 @@ def process_and_save(
     print(f"Total points in original streamlines: {total_points}")
     print(f"Average points per streamline: {avg_points:.2f}")
     
-    print(f"\n=== Transforming, Densifying, and Clipping Streamlines Using {'GPU' if use_gpu else 'CPU'} with {interp_method} interpolation ===")
-    print(f"Step size: {step_size}, Voxel size: {new_voxel_size}")
+    print(f"\n=== Transforming, Densifying, and Clipping Streamlines Using {'GPU' if use_gpu else 'CPU'} with {interpolation_method} interpolation ===")
+    print(f"Step size: {step_size}, Voxel size: {target_voxel_size}")
     print(f"FOV clipping: Enabled")
-    print(f"Using dimensions: {new_dim}")
+    print(f"Using dimensions: {target_dimensions}")
     
     # Process streamlines with clipping always enabled
     if use_ants:
         # In the ANTs case, we need to handle the transform_and_densify process differently
         # because we've already converted our streamlines to RAS coordinates
         print(f"\n=== Transforming, Densifying, and Clipping ANTs-Processed Streamlines ===")
-        print(f"Using {interp_method} interpolation with step size: {step_size}")
-        print(f"Using dimensions: {new_dim}")
+        print(f"Using {interpolation_method} interpolation with step size: {step_size}")
+        print(f"Using dimensions: {target_dimensions}")
         
         # Apply the new affine transformation to convert world coordinates to the new voxel space
         A_new_inv = np.linalg.inv(A_new)
@@ -298,7 +321,7 @@ def process_and_save(
         def process_streamline(streamline):
             try:
                 # Clip to new FOV
-                clipped_segments = clip_streamline_to_fov(streamline, new_dim, use_gpu=use_gpu)
+                clipped_segments = clip_streamline_to_fov(streamline, target_dimensions, use_gpu=use_gpu)
                 
                 # Densify each segment
                 densified_segments = []
@@ -307,7 +330,7 @@ def process_and_save(
                         try:
                             densified = densify_streamline_subvoxel(
                                 segment, step_size=step_size, 
-                                interp_method=interp_method, use_gpu=use_gpu
+                                interp_method=interpolation_method, use_gpu=use_gpu
                             )
                             if len(densified) >= 2:
                                 densified_segments.append(densified)
@@ -321,7 +344,7 @@ def process_and_save(
                 print(f"Error processing streamline: {e}")
                 return []
         
-        results = Parallel(n_jobs=n_jobs)(
+        results = Parallel(num_jobs)(
             delayed(process_streamline)(streamline) for streamline in voxel_streamlines
         )
         
@@ -333,8 +356,8 @@ def process_and_save(
     else:
         # Standard processing for non-ANTs case
         densified_vox = transform_and_densify_streamlines(
-            old_streams_mm, A_new, new_dim, step_size=step_size, n_jobs=n_jobs, 
-            use_gpu=use_gpu, interp_method=interp_method
+            old_streams_mm, A_new, target_dimensions, step_size=step_size, n_jobs=num_jobs, 
+            use_gpu=use_gpu, interp_method=interpolation_method
         )
     
     # Report statistics on the processed streamlines
@@ -355,15 +378,15 @@ def process_and_save(
     if use_ants:
         # Create a new header for ANTs-transformed data
         new_trk_header = {
-            "dimensions": np.array(new_dim, dtype=np.int16),
+            "dimensions": np.array(target_dimensions, dtype=np.int16),
             "voxel_sizes": np.sqrt(np.sum(A_new[:3, :3] ** 2, axis=0)).astype(np.float32),
             "voxel_to_rasmm": A_new.astype(np.float32)
         }
     else:
         # Use the header from the original tract object
-        trk_obj = nib.streamlines.load(old_trk_path)
+        trk_obj = nib.streamlines.load(original_trk_path)
         new_trk_header = trk_obj.header.copy()
-        new_trk_header["dimensions"] = np.array(new_dim, dtype=np.int16)
+        new_trk_header["dimensions"] = np.array(target_dimensions, dtype=np.int16)
         new_voxsize = np.sqrt(np.sum(A_new[:3, :3] ** 2, axis=0))
         new_trk_header["voxel_sizes"] = new_voxsize.astype(np.float32)
         new_trk_header["voxel_to_rasmm"] = A_new.astype(np.float32)
@@ -439,8 +462,8 @@ if __name__ == "__main__":
     print(f"Processing mode: {'CPU' if not use_gpu else 'GPU'}")
     
     # For compatibility with original argument names
-    old_nifti_path = args.input
-    old_trk_path = args.trk
+    original_nifti_path = args.input
+    original_trk_path = args.trk
     output_prefix = args.output
     
     # Handle voxel size: allow either a single float or three floats
@@ -456,16 +479,16 @@ if __name__ == "__main__":
         parser.error("When --use_ants is specified, --ants_warp, --ants_iwarp, and --ants_aff must be provided.")
     
     process_and_save(
-        old_nifti_path=old_nifti_path,
-        old_trk_path=old_trk_path,
-        new_voxel_size=voxel_size,
-        new_dim=tuple(args.new_dim),
+        original_nifti_path=original_nifti_path,
+        original_trk_path=original_trk_path,
+        target_voxel_size=voxel_size,
+        target_dimensions=tuple(args.new_dim),
         output_prefix=output_prefix,
-        n_jobs=args.jobs,
+        num_jobs=args.jobs,
         patch_center=tuple(args.patch_center) if args.patch_center else None,
         reduction_method=args.reduction,
         use_gpu=use_gpu,
-        interp_method=args.interp,
+        interpolation_method=args.interp,
         step_size=args.step_size,
         max_output_gb=args.max_gb,
         use_ants=args.use_ants,
