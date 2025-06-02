@@ -376,9 +376,9 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
         densified = [np.array(s, dtype=np.float32) if not isinstance(s, np.ndarray) else s for s in densified]
         return densified
 
-def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', epsilon=None, xp=np):
+def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', epsilon=None, xp=np, preserve_length=True):
     """
-    Perform RBF interpolation for a streamline with proper regularization.
+    Perform RBF interpolation for a streamline with proper regularization and length preservation.
     """
     # Import numpy to ensure it's available
     import numpy as np
@@ -403,7 +403,7 @@ def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', eps
     # Create parameterization (cumulative distance)
     cumulative_lengths = xp.concatenate((xp.array([0], dtype=segment_lengths.dtype), xp.cumsum(segment_lengths)))
 
-    # Calculate new sampling points
+    # Calculate new sampling points based on original total length
     n_steps = max(int(xp.ceil(total_length / step_size)), 2)
     t_new = xp.linspace(0, cumulative_lengths[-1], n_steps)
 
@@ -468,6 +468,57 @@ def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', eps
                 smooth=1e-6   # Regularization
             )
             result[:, dim] = rbf(t_new_cpu)
+    
+    # === LENGTH PRESERVATION ===
+    if preserve_length and len(result) > 2:
+        # Calculate the length of the RBF interpolated curve
+        result_diffs = np.diff(result, axis=0)
+        result_lengths = np.sqrt(np.sum(result_diffs**2, axis=1))
+        result_total_length = np.sum(result_lengths)
+        
+        # If length differs significantly, apply correction
+        length_ratio = float(total_length) / result_total_length
+        
+        if abs(length_ratio - 1.0) > 0.001:  # More than 0.1% difference
+            # Method 1: Arc-length reparameterization
+            # Calculate cumulative distances for the RBF result
+            result_cumulative = np.concatenate([[0], np.cumsum(result_lengths)])
+            
+            # Normalize to target length
+            result_cumulative_normalized = result_cumulative * length_ratio
+            
+            # Create target arc-length points
+            target_distances = np.linspace(0, float(total_length), n_steps)
+            
+            # Reparameterize to preserve arc length
+            from scipy.interpolate import interp1d
+            
+            # Interpolate each dimension using the corrected arc length
+            corrected_result = np.zeros_like(result)
+            
+            for dim in range(result.shape[1]):
+                # Create interpolator for this dimension vs arc length
+                interp_func = interp1d(
+                    result_cumulative_normalized, 
+                    result[:, dim], 
+                    kind='cubic', 
+                    bounds_error=False, 
+                    fill_value='extrapolate'
+                )
+                corrected_result[:, dim] = interp_func(target_distances)
+            
+            result = corrected_result.astype(np.float32)
+            
+            # Verify correction worked
+            final_diffs = np.diff(result, axis=0)
+            final_lengths = np.sqrt(np.sum(final_diffs**2, axis=1))
+            final_total_length = np.sum(final_lengths)
+            
+            # Optional: Fine-tune with small scaling if still off
+            if abs(final_total_length - float(total_length)) > 0.01:
+                scale_factor = float(total_length) / final_total_length
+                center = np.mean(result, axis=0)
+                result = center + (result - center) * scale_factor
     
     # Convert back to appropriate array type
     if hasattr(xp, 'asarray') and xp.__name__ == 'cupy':
