@@ -5,7 +5,7 @@ Streamline densification with interpolation methods.
 import numpy as np
 import multiprocessing as mp
 from joblib import Parallel, delayed
-import cupy as cp
+# Remove the top-level cupy import - it will be imported conditionally when needed
 import time
 from scipy.interpolate import RBFInterpolator
 import warnings
@@ -380,6 +380,9 @@ def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', eps
     """
     Perform RBF interpolation for a streamline.
     """
+    # Import numpy to ensure it's available
+    import numpy as np
+    
     # Skip if too few points
     if len(streamline) < 4:
         if not isinstance(streamline, np.ndarray):
@@ -406,7 +409,6 @@ def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', eps
 
     # RBF interpolation requires scipy - convert to CPU if necessary
     if hasattr(xp, 'asnumpy'):  # Check if using CuPy
-        import numpy as np
         t_cpu = xp.asnumpy(cumulative_lengths)
         streamline_cpu = xp.asnumpy(streamline)
         t_new_cpu = xp.asnumpy(t_new)
