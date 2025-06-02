@@ -3,8 +3,7 @@ from setuptools import setup, find_packages
 setup(
     name="Syntract",
     version="0.1",
-    packages=find_packages(where="src"),
-    package_dir={"": "src"},
+    packages=find_packages(include=["synthesis*", "nifti_trk_vis*"]),
     install_requires=[
         "numpy",
         "nibabel",
@@ -15,10 +14,10 @@ setup(
     extras_require={
         # Optional GPU dependencies
         "cuda": [
-            "cupy-cuda11x"  # you can change this based on target CUDA version
+            "cupy-cuda11x"  # Adjust based on CUDA version
         ],
         "cpu": [
-            "cupy"  # fallback version of cupy that doesn't require a GPU
+            "cupy"  # CPU-only fallback
         ]
     }
 )

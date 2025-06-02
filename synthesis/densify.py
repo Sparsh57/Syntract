@@ -1,27 +1,22 @@
+"""
+Streamline densification with interpolation methods.
+"""
+
 import numpy as np
+import multiprocessing as mp
 from joblib import Parallel, delayed
+import cupy as cp
+import time
+from scipy.interpolate import RBFInterpolator
+import warnings
 import os
 import traceback
 
+# Suppress RBF warnings for cleaner output - we know what we're doing
+warnings.filterwarnings('ignore', category=RuntimeWarning, module='scipy.interpolate')
+
 def linear_interpolate(p0, p1, t, xp=np):
-    """
-    Performing linear interpolation between two points.
-    
-    Parameters
-    ----------
-    p0, p1 : array-like
-        Start and end points.
-    t : float
-        Interpolation parameter between 0 and 1.
-    xp : module, optional
-        Array library to use (numpy or cupy), default is numpy.
-        
-    Returns
-    -------
-    array-like
-        Interpolated point.
-    """
-    # Linear interpolation: p = p0 + t * (p1 - p0)
+    """Linear interpolation between two points."""
     return p0 + t * (p1 - p0)
 
 def hermite_interpolate(p0, p1, m0, m1, t, xp=np):
