@@ -416,6 +416,104 @@ def process_and_save(
     print(f"Number of streamlines in final .trk file: {len(new_tractogram)}")
     print("\n==== Synthesis Process Completed Successfully! ====")
 
+def main():
+    """Main entry point for the mri-synthesis console script."""
+    import sys
+    
+    # Parse command line arguments and run processing
+    _run_main_with_args(sys.argv[1:])
+
+
+def _run_main_with_args(args=None):
+    """Internal function to run main with specific arguments."""
+    import argparse
+    
+    parser = argparse.ArgumentParser(description="Process and resample NIfTI and streamline tractography data.")
+
+    parser.add_argument("--input", type=str, required=True, help="Path to input NIfTI (.nii or .nii.gz) file.")
+    parser.add_argument("--trk", type=str, required=True, help="Path to input TRK (.trk) file.")
+    parser.add_argument("--output", type=str, default="resampled", help="Prefix for output files.")
+    parser.add_argument("--voxel_size", type=float, nargs='+', default=[0.5],
+                        help="New voxel size: either a single value for isotropic or three values for anisotropic (e.g., --voxel_size 0.5 0.5 1.0)")
+    parser.add_argument("--new_dim", type=int, nargs=3, default=[116, 140, 96], 
+                        help="New image dimensions (x, y, z). When using --use_ants, these dimensions will be used for the final output (alignment is maintained).")
+    parser.add_argument("--jobs", type=int, default=8, help="Number of parallel jobs (-1 for all CPUs).")
+    parser.add_argument("--patch_center", type=float, nargs=3, default=None, help="Optional patch center in mm.")
+    parser.add_argument("--reduction", type=str, choices=["mip", "mean"], default=None,
+                        help="Optional reduction along z-axis.")
+    parser.add_argument("--use_gpu", type=lambda x: str(x).lower() != 'false', nargs='?', const=True, default=True,
+                        help="Use GPU acceleration (default: True). Set to False with --use_gpu=False")
+    parser.add_argument("--cpu", action="store_true", help="Force CPU processing (disables GPU).")
+    parser.add_argument("--interp", type=str, choices=["hermite", "linear", "rbf"], default="hermite",
+                        help="Interpolation method for streamlines (default: hermite).")
+    parser.add_argument("--step_size", type=float, default=0.5, 
+                        help="Step size for streamline densification (default: 0.5).")
+    parser.add_argument("--max_gb", type=float, default=64.0,
+                        help="Maximum output size in GB (default: 64.0). Dimensions will be automatically reduced if exceeded.")
+    
+    # Add ANTs transform related arguments
+    parser.add_argument("--use_ants", action="store_true", help="Use ANTs transforms for processing.")
+    parser.add_argument("--ants_warp", type=str, default=None, help="Path to ANTs warp file (required if use_ants is True).")
+    parser.add_argument("--ants_iwarp", type=str, default=None, help="Path to ANTs inverse warp file (required if use_ants is True).")
+    parser.add_argument("--ants_aff", type=str, default=None, help="Path to ANTs affine file (required if use_ants is True).")
+    parser.add_argument("--force_dimensions", action="store_true", help="Force using the specified new_dim even when using ANTs (may cause misalignment)")
+    parser.add_argument("--transform_mri_with_ants", action="store_true", help="Also transform MRI with ANTs (default: only transforms streamlines)")
+
+    if args is None:
+        args = parser.parse_args()
+    else:
+        args = parser.parse_args(args)
+
+    # Check for very large dimensions that might cause memory issues
+    requested_dim = tuple(args.new_dim)
+    if np.prod(requested_dim) > 100_000_000:  # More than 100M voxels
+        print(f"WARNING: Requested dimensions {requested_dim} are very large!")
+        print(f"Consider using lower-resolution dimensions or smaller voxel size.")
+    
+    # Determine GPU usage based on command line arguments
+    use_gpu = not args.cpu and args.use_gpu  # If --cpu is specified or --use_gpu=False, use_gpu will be False
+    
+    print(f"Processing mode: {'CPU' if not use_gpu else 'GPU'}")
+    
+    # For compatibility with original argument names
+    original_nifti_path = args.input
+    original_trk_path = args.trk
+    output_prefix = args.output
+    
+    # Handle voxel size: allow either a single float or three floats
+    if len(args.voxel_size) == 1:
+        voxel_size = args.voxel_size[0]
+    elif len(args.voxel_size) == 3:
+        voxel_size = tuple(args.voxel_size)
+    else:
+        raise ValueError("--voxel_size must be either one value (isotropic) or three values (anisotropic)")
+    
+    # Validate ANTs transform arguments
+    if args.use_ants and not all([args.ants_warp, args.ants_iwarp, args.ants_aff]):
+        parser.error("When --use_ants is specified, --ants_warp, --ants_iwarp, and --ants_aff must be provided.")
+    
+    process_and_save(
+        original_nifti_path=original_nifti_path,
+        original_trk_path=original_trk_path,
+        target_voxel_size=voxel_size,
+        target_dimensions=tuple(args.new_dim),
+        output_prefix=output_prefix,
+        num_jobs=args.jobs,
+        patch_center=tuple(args.patch_center) if args.patch_center else None,
+        reduction_method=args.reduction,
+        use_gpu=use_gpu,
+        interpolation_method=args.interp,
+        step_size=args.step_size,
+        max_output_gb=args.max_gb,
+        use_ants=args.use_ants,
+        ants_warp_path=args.ants_warp,
+        ants_iwarp_path=args.ants_iwarp,
+        ants_aff_path=args.ants_aff,
+        force_dimensions=args.force_dimensions,
+        transform_mri_with_ants=args.transform_mri_with_ants
+    )
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Process and resample NIfTI and streamline tractography data.")
 
