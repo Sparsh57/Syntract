@@ -11,11 +11,18 @@ from dipy.tracking.streamline import transform_streamlines
 import random
 from pathlib import Path
 
-from core import visualize_nifti_with_trk, visualize_nifti_with_trk_coronal, visualize_multiple_views
-from contrast import apply_enhanced_contrast_and_augmentation, CORNUCOPIA_INTEGRATION_AVAILABLE
-from masking import create_aggressive_brain_mask, create_fiber_mask
-from effects import apply_smart_dark_field_effect
-from utils import select_random_streamlines, densify_streamline, generate_tract_color_variation, get_colormap
+try:
+    from .core import visualize_nifti_with_trk, visualize_nifti_with_trk_coronal, visualize_multiple_views
+    from .contrast import apply_enhanced_contrast_and_augmentation, CORNUCOPIA_INTEGRATION_AVAILABLE
+    from .masking import create_aggressive_brain_mask, create_fiber_mask
+    from .effects import apply_smart_dark_field_effect
+    from .utils import select_random_streamlines, densify_streamline, generate_tract_color_variation, get_colormap
+except ImportError:
+    from core import visualize_nifti_with_trk, visualize_nifti_with_trk_coronal, visualize_multiple_views
+    from contrast import apply_enhanced_contrast_and_augmentation, CORNUCOPIA_INTEGRATION_AVAILABLE
+    from masking import create_aggressive_brain_mask, create_fiber_mask
+    from effects import apply_smart_dark_field_effect
+    from utils import select_random_streamlines, densify_streamline, generate_tract_color_variation, get_colormap
 
 
 def generate_varied_examples(nifti_file, trk_file, output_dir, n_examples=5, prefix="synthetic_", 
@@ -227,28 +234,55 @@ def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir,
                                     tract_linewidth=1.0, save_masks=False,
                                     min_fiber_percentage=10.0, max_fiber_percentage=100.0,
                                     contrast_method='clahe', contrast_params=None,
-                                    cornucopia_preset='clinical_simulation',
-                                    use_cornucopia_per_example=True,
+                                    cornucopia_preset=None,
+                                    background_preset='preserve_edges',
+                                    enable_sharpening=True,
+                                    sharpening_strength=0.5,
+                                    use_cornucopia_per_example=False,
+                                    use_background_enhancement=True,
                                     random_state=None, **kwargs):
     """
-    Generate varied examples with enhanced augmentations using Cornucopia.
+    Generate varied examples with enhanced augmentations using Cornucopia and background enhancement.
     """
     os.makedirs(output_dir, exist_ok=True)
     
     # Set up augmentation configuration
     augmentation_config = None
-    if use_cornucopia_per_example and CORNUCOPIA_INTEGRATION_AVAILABLE:
+    if use_cornucopia_per_example and cornucopia_preset and CORNUCOPIA_INTEGRATION_AVAILABLE:
         try:
-            from .cornucopia_augmentation import create_augmentation_presets
+            try:
+                from .cornucopia_augmentation import create_augmentation_presets
+            except ImportError:
+                from cornucopia_augmentation import create_augmentation_presets
+            
             presets = create_augmentation_presets()
             if cornucopia_preset in presets:
                 augmentation_config = presets[cornucopia_preset]
             else:
-                print(f"Warning: Unknown Cornucopia preset '{cornucopia_preset}', using 'standard'")
-                augmentation_config = presets.get('standard', None)
+                print(f"Warning: Unknown Cornucopia preset '{cornucopia_preset}', using 'clinical_simulation'")
+                augmentation_config = presets.get('clinical_simulation', None)
         except Exception as e:
             print(f"Warning: Failed to create augmentation config: {e}")
             augmentation_config = None
+    
+    # Set up background enhancement configuration
+    background_config = None
+    if use_background_enhancement:
+        try:
+            try:
+                from .background_enhancement import create_enhancement_presets
+            except ImportError:
+                from background_enhancement import create_enhancement_presets
+            
+            presets = create_enhancement_presets()
+            if background_preset in presets:
+                background_config = background_preset
+            else:
+                print(f"Warning: Unknown background preset '{background_preset}', using 'smooth_realistic'")
+                background_config = 'smooth_realistic'
+        except Exception as e:
+            print(f"Warning: Failed to create background config: {e}")
+            background_config = None
     
     if random_state is not None:
         np.random.seed(random_state)
@@ -259,16 +293,18 @@ def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir,
             'tile_grid_size': (8, 8)
         }
     
-    print(f"🚀 Generating {n_examples} enhanced examples with Cornucopia augmentations")
+    print(f"🚀 Generating {n_examples} enhanced examples with advanced processing")
     print(f"   Contrast method: {contrast_method}")
-    print(f"   Cornucopia preset: {cornucopia_preset}")
+    print(f"   Background enhancement: {background_config if background_config else 'disabled'}")
+    print(f"   Cornucopia preset: {cornucopia_preset if augmentation_config else 'disabled'}")
     print(f"   Cornucopia available: {CORNUCOPIA_INTEGRATION_AVAILABLE}")
     
     # Generate enhanced examples
-    if use_cornucopia_per_example and CORNUCOPIA_INTEGRATION_AVAILABLE and augmentation_config is not None:
-        print("🎨 Generating examples with Cornucopia applied to NIfTI slice data...")
+    if (use_cornucopia_per_example and CORNUCOPIA_INTEGRATION_AVAILABLE and augmentation_config is not None) or \
+       (use_background_enhancement and background_config is not None):
+        print("🎨 Generating examples with comprehensive slice processing...")
         
-        base_results = _generate_examples_with_slice_augmentation(
+        base_results = _generate_examples_with_comprehensive_processing(
             nifti_file=nifti_file,
             trk_file=trk_file,
             output_dir=output_dir,
@@ -285,6 +321,7 @@ def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir,
             contrast_method=contrast_method,
             contrast_params=contrast_params,
             cornucopia_config=augmentation_config,
+            background_config=background_config,
             random_state=random_state,
             **kwargs
         )
@@ -313,6 +350,8 @@ def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir,
     # Create summary report
     summary = {
         'n_examples_generated': n_examples,
+        'background_enhancement_available': background_config is not None,
+        'background_preset_used': background_preset if background_config else None,
         'cornucopia_available': CORNUCOPIA_INTEGRATION_AVAILABLE,
         'cornucopia_preset_used': cornucopia_preset if use_cornucopia_per_example else None,
         'contrast_method': contrast_method,
@@ -323,15 +362,16 @@ def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir,
     return summary
 
 
-def _generate_examples_with_slice_augmentation(nifti_file, trk_file, output_dir, 
+def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, output_dir, 
                                              n_examples=5, prefix="enhanced_",
                                              slice_mode="coronal", specific_slice=None,
                                              streamline_percentage=100.0, roi_sphere=None,
                                              tract_linewidth=1.0, save_masks=False,
                                              min_fiber_percentage=10.0, max_fiber_percentage=100.0,
                                              contrast_method='clahe', contrast_params=None,
-                                             cornucopia_config=None, random_state=None, **kwargs):
-    """Generate examples with Cornucopia augmentation applied to NIfTI slice data."""
+                                             cornucopia_config=None, background_config=None,
+                                             random_state=None, **kwargs):
+    """Generate examples with comprehensive processing including background enhancement and Cornucopia."""
     if random_state is not None:
         random.seed(random_state)
         np.random.seed(random_state)
@@ -394,12 +434,22 @@ def _generate_examples_with_slice_augmentation(nifti_file, trk_file, output_dir,
         else:  # sagittal
             slice_data = nii_data[slice_idx, :, :]
         
-        # Apply Cornucopia augmentation and contrast enhancement
-        enhanced_slice = apply_enhanced_contrast_and_augmentation(
+        # Apply comprehensive slice processing
+        try:
+            from .contrast import apply_comprehensive_slice_processing
+        except ImportError:
+            from contrast import apply_comprehensive_slice_processing
+        
+        enhanced_slice = apply_comprehensive_slice_processing(
             slice_data,
+            background_preset=background_config,
+            cornucopia_preset=cornucopia_config,
             contrast_method=contrast_method,
+            background_params=None,
+            cornucopia_params=cornucopia_config if isinstance(cornucopia_config, dict) else None,
             contrast_params=contrast_params,
-            cornucopia_augmentation=cornucopia_config,
+            enable_sharpening=kwargs.get('enable_sharpening', False),
+            sharpening_strength=kwargs.get('sharpening_strength', 0.5),
             random_state=example_random_state
         )
         
@@ -407,7 +457,10 @@ def _generate_examples_with_slice_augmentation(nifti_file, trk_file, output_dir,
         if np.all(enhanced_slice == 0) or np.std(enhanced_slice) < 1e-6:
             print(f"   ⚠️  Enhanced slice is empty, using original slice data")
             enhanced_slice = slice_data.copy()
-            from .contrast import apply_contrast_enhancement
+            try:
+                from .contrast import apply_contrast_enhancement
+            except ImportError:
+                from contrast import apply_contrast_enhancement
             enhanced_slice = apply_contrast_enhancement(
                 enhanced_slice, 
                 clip_limit=contrast_params.get('clip_limit', 0.01),
@@ -438,9 +491,12 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
         'blue_tint': random.uniform(0.1, 0.4)
     }
     
-    # Apply dark field effect
+    # Apply dark field effect (explicitly disable ventricle preservation)
     dark_field_slice = apply_smart_dark_field_effect(
-        enhanced_slice, intensity_params, random_state=example_random_state
+        enhanced_slice, 
+        intensity_params, 
+        preserve_ventricles=False,  # Explicitly disable to prevent fake ventricles
+        random_state=example_random_state
     )
     
     # Additional background cleanup for Cornucopia artifacts
@@ -458,11 +514,11 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
     blue_tint = intensity_params.get('blue_tint', 0.3)
     dark_field_cmap = get_colormap(color_scheme, blue_tint)
     
-    # Display brain slice
-    brain_min = np.min(dark_field_slice[dark_field_slice > 0]) if np.any(dark_field_slice > 0) else 0
-    brain_max = np.max(dark_field_slice)
-    
-    ax.imshow(np.rot90(dark_field_slice), cmap=dark_field_cmap, aspect='equal', 
+    # Display brain slice with pure black background
+    brain_min = 0.0  # Force minimum to pure black
+    brain_max = np.max(dark_field_slice) if np.any(dark_field_slice > 0) else 1.0
+
+    ax.imshow(np.rot90(dark_field_slice), cmap=dark_field_cmap, aspect='equal',
              interpolation='bicubic', vmin=brain_min, vmax=brain_max)
     ax.set_facecolor('black')
     
