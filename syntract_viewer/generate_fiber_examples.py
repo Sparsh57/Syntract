@@ -27,9 +27,11 @@ except ImportError:
     CORNUCOPIA_INTEGRATION_AVAILABLE = False
 
 
-def generate_examples_original_mode(args):
-    """Generate examples using the original mode with optional Cornucopia enhancement."""
+def generate_examples_original_mode(args, background_enhancement_available):
+    """Generate examples using the original mode with automatic background enhancement and optional Cornucopia."""
     print("🎨 Running in Original Mode")
+    if background_enhancement_available:
+        print("🌟 Automatic background enhancement enabled (high-quality preset for pixelation reduction)")
     if args.cornucopia_preset and ENHANCED_AVAILABLE:
         print(f"🚀 Using Cornucopia augmentations with preset: {args.cornucopia_preset}")
     
@@ -45,66 +47,45 @@ def generate_examples_original_mode(args):
     if args.use_high_density_masks:
         print(f"Using high-density masks ({args.max_fiber_pct}%) for all fiber density variations")
     
-    # Choose function based on Cornucopia settings
-    if args.cornucopia_preset and ENHANCED_AVAILABLE:
-        generate_enhanced_varied_examples(
-            nifti_file=args.nifti,
-            trk_file=args.trk,
-            output_dir=args.output_dir,
-            n_examples=args.examples,
-            prefix=args.prefix,
-            slice_mode=args.view,
-            specific_slice=None,
-            min_fiber_percentage=args.min_fiber_pct,
-            max_fiber_percentage=args.max_fiber_pct,
-            roi_sphere=args.roi_sphere,
-            tract_linewidth=args.tract_linewidth,
-            save_masks=True,
-            mask_thickness=args.mask_thickness,
-            density_threshold=args.density_threshold,
-            gaussian_sigma=2.0,
-            random_state=args.random_state,
-            close_gaps=args.close_gaps,
-            closing_footprint_size=args.closing_footprint_size,
-            label_bundles=args.label_bundles,
-            min_bundle_size=args.min_bundle_size,
-            use_high_density_masks=args.use_high_density_masks,
-            contrast_method=args.contrast_method,
-            contrast_params=contrast_params,
-            cornucopia_preset=args.cornucopia_preset,
-            use_cornucopia_per_example=True
-        )
-    else:
-        generate_varied_examples(
-            nifti_file=args.nifti,
-            trk_file=args.trk,
-            output_dir=args.output_dir,
-            n_examples=args.examples,
-            prefix=args.prefix,
-            slice_mode=args.view,
-            specific_slice=None,
-            min_fiber_percentage=args.min_fiber_pct,
-            max_fiber_percentage=args.max_fiber_pct,
-            roi_sphere=args.roi_sphere,
-            tract_linewidth=args.tract_linewidth,
-            save_masks=True,
-            mask_thickness=args.mask_thickness,
-            density_threshold=args.density_threshold,
-            gaussian_sigma=2.0,
-            random_state=args.random_state,
-            close_gaps=args.close_gaps,
-            closing_footprint_size=args.closing_footprint_size,
-            label_bundles=args.label_bundles,
-            min_bundle_size=args.min_bundle_size,
-            use_high_density_masks=args.use_high_density_masks,
-            contrast_method=args.contrast_method,
-            contrast_params=contrast_params
-        )
+    # Always use enhanced processing with automatic background enhancement
+    generate_enhanced_varied_examples(
+        nifti_file=args.nifti,
+        trk_file=args.trk,
+        output_dir=args.output_dir,
+        n_examples=args.examples,
+        prefix=args.prefix,
+        slice_mode=args.view,
+        specific_slice=None,
+        min_fiber_percentage=args.min_fiber_pct,
+        max_fiber_percentage=args.max_fiber_pct,
+        roi_sphere=args.roi_sphere,
+        tract_linewidth=args.tract_linewidth,
+        save_masks=True,
+        mask_thickness=args.mask_thickness,
+        density_threshold=args.density_threshold,
+        gaussian_sigma=2.0,
+        random_state=args.random_state,
+        close_gaps=args.close_gaps,
+        closing_footprint_size=args.closing_footprint_size,
+        label_bundles=args.label_bundles,
+        min_bundle_size=args.min_bundle_size,
+        use_high_density_masks=args.use_high_density_masks,
+        contrast_method=args.contrast_method,
+        contrast_params=contrast_params,
+        cornucopia_preset=args.cornucopia_preset,
+        background_preset=args.background_preset if background_enhancement_available else None,
+        enable_sharpening=args.enable_sharpening,
+        sharpening_strength=args.sharpening_strength,
+        use_cornucopia_per_example=args.cornucopia_preset is not None,
+        use_background_enhancement=background_enhancement_available
+    )
 
 
-def generate_examples_with_spatial_subdivisions(args):
+def generate_examples_with_spatial_subdivisions(args, background_enhancement_available):
     """Generate examples using spatial subdivisions of the NIfTI volume."""
     print("📐 Running in Spatial Subdivision Mode")
+    if background_enhancement_available:
+        print("🌟 Automatic background enhancement enabled (high-quality preset for pixelation reduction)")
     if args.cornucopia_preset and ENHANCED_AVAILABLE:
         print(f"🚀 Using Cornucopia augmentations with preset: {args.cornucopia_preset}")
     print("🔄 Creating spatial grid subdivisions of the NIfTI volume")
@@ -144,7 +125,8 @@ def generate_examples_with_spatial_subdivisions(args):
         print(f"   Processing region {i+1}/{len(grid_subdivisions)}: ({x_start}:{x_end}, {y_start}:{y_end}, {z_start}:{z_end})")
         
         region_streamlines = _filter_streamlines_by_region(
-            streamlines, trk_file_obj, x_start, x_end, y_start, y_end, z_start, z_end
+            streamlines, trk_file_obj, x_start, x_end, y_start, y_end, z_start, z_end, 
+            max_streamlines=args.max_streamlines_per_region
         )
         
         print(f"      Found {len(region_streamlines)} streamlines")
@@ -180,64 +162,48 @@ def generate_examples_with_spatial_subdivisions(args):
                         region_random_state = args.random_state + sub_id * 1000
                     
                     try:
-                        if args.cornucopia_preset and ENHANCED_AVAILABLE:
-                            generate_enhanced_varied_examples(
-                                nifti_file=temp_nifti.name,
-                                trk_file=temp_trk.name,
-                                output_dir=str(sub_dir),
-                                n_examples=args.examples,
-                                prefix=prefix,
-                                slice_mode=args.view,
-                                specific_slice=None,
-                                min_fiber_percentage=args.min_fiber_pct,
-                                max_fiber_percentage=args.max_fiber_pct,
-                                roi_sphere=args.roi_sphere,
-                                tract_linewidth=args.tract_linewidth,
-                                save_masks=True,
-                                mask_thickness=args.mask_thickness,
-                                density_threshold=args.density_threshold,
-                                gaussian_sigma=2.0,
-                                random_state=region_random_state,
-                                close_gaps=args.close_gaps,
-                                closing_footprint_size=args.closing_footprint_size,
-                                label_bundles=args.label_bundles,
-                                min_bundle_size=args.min_bundle_size,
-                                use_high_density_masks=args.use_high_density_masks,
-                                contrast_method=args.contrast_method,
-                                contrast_params={'clip_limit': 0.01, 'tile_grid_size': (8, 8)},
-                                cornucopia_preset=args.cornucopia_preset,
-                                use_cornucopia_per_example=True
-                            )
-                        else:
-                            generate_varied_examples(
-                                nifti_file=temp_nifti.name,
-                                trk_file=temp_trk.name,
-                                output_dir=str(sub_dir),
-                                n_examples=args.examples,
-                                prefix=prefix,
-                                slice_mode=args.view,
-                                specific_slice=None,
-                                min_fiber_percentage=args.min_fiber_pct,
-                                max_fiber_percentage=args.max_fiber_pct,
-                                roi_sphere=args.roi_sphere,
-                                tract_linewidth=args.tract_linewidth,
-                                save_masks=True,
-                                mask_thickness=args.mask_thickness,
-                                density_threshold=args.density_threshold,
-                                gaussian_sigma=2.0,
-                                random_state=region_random_state,
-                                close_gaps=args.close_gaps,
-                                closing_footprint_size=args.closing_footprint_size,
-                                label_bundles=args.label_bundles,
-                                min_bundle_size=args.min_bundle_size,
-                                use_high_density_masks=args.use_high_density_masks,
-                                contrast_method=args.contrast_method,
-                                contrast_params={'clip_limit': 0.01, 'tile_grid_size': (8, 8)}
-                            )
+                        # Always use enhanced processing with automatic background enhancement
+                        generate_enhanced_varied_examples(
+                            nifti_file=temp_nifti.name,
+                            trk_file=temp_trk.name,
+                            output_dir=str(sub_dir),
+                            n_examples=args.examples,
+                            prefix=prefix,
+                            slice_mode=args.view,
+                            specific_slice=None,
+                            min_fiber_percentage=args.min_fiber_pct,
+                            max_fiber_percentage=args.max_fiber_pct,
+                            roi_sphere=args.roi_sphere,
+                            tract_linewidth=args.tract_linewidth,
+                            save_masks=True,
+                            mask_thickness=args.mask_thickness,
+                            density_threshold=args.density_threshold,
+                            gaussian_sigma=2.0,
+                            random_state=region_random_state,
+                            close_gaps=args.close_gaps,
+                            closing_footprint_size=args.closing_footprint_size,
+                            label_bundles=args.label_bundles,
+                            min_bundle_size=args.min_bundle_size,
+                            use_high_density_masks=args.use_high_density_masks,
+                            contrast_method=args.contrast_method,
+                            contrast_params={'clip_limit': 0.01, 'tile_grid_size': (8, 8)},
+                            cornucopia_preset=args.cornucopia_preset,
+                            background_preset=args.background_preset if background_enhancement_available else None,
+                            enable_sharpening=args.enable_sharpening,
+                            sharpening_strength=args.sharpening_strength,
+                            use_cornucopia_per_example=args.cornucopia_preset is not None,
+                            use_background_enhancement=background_enhancement_available
+                        )
                         
                         total_examples += args.examples
+                        enhancements = []
+                        if background_enhancement_available:
+                            enhancements.append("background 'high_quality'")
                         if args.cornucopia_preset and ENHANCED_AVAILABLE:
-                            print(f"      ✅ Generated {args.examples} examples with Cornucopia '{args.cornucopia_preset}'")
+                            enhancements.append(f"Cornucopia '{args.cornucopia_preset}'")
+                        
+                        if enhancements:
+                            print(f"      ✅ Generated {args.examples} examples with {' + '.join(enhancements)}")
                         else:
                             print(f"      ✅ Generated {args.examples} examples")
                         
@@ -321,34 +287,56 @@ def _calculate_grid_subdivisions(nifti_shape, n_subdivisions):
     return subdivisions
 
 
-def _filter_streamlines_by_region(streamlines, trk_file_obj, x_start, x_end, y_start, y_end, z_start, z_end):
-    """Filter streamlines that pass through the specified region."""
+def _filter_streamlines_by_region(streamlines, trk_file_obj, x_start, x_end, y_start, y_end, z_start, z_end, max_streamlines=50000):
+    """Filter streamlines that pass through the specified region with memory management."""
     import numpy as np
     
     filtered_streamlines = []
     voxel_to_rasmm = trk_file_obj.header.get('voxel_to_rasmm', None)
     
-    for streamline in streamlines:
-        if voxel_to_rasmm is not None:
-            world_coords = np.hstack([streamline, np.ones((streamline.shape[0], 1))])
-            rasmm_to_voxel = np.linalg.inv(voxel_to_rasmm)
-            voxel_coords = world_coords @ rasmm_to_voxel.T
-            voxel_coords = voxel_coords[:, :3]
-        else:
-            voxel_coords = streamline
+    # Process streamlines in chunks for memory efficiency
+    chunk_size = 10000
+    total_streamlines = len(streamlines)
+    
+    print(f"      Processing {total_streamlines} streamlines in chunks of {chunk_size}...")
+    
+    for chunk_start in range(0, total_streamlines, chunk_size):
+        chunk_end = min(chunk_start + chunk_size, total_streamlines)
+        chunk_streamlines = streamlines[chunk_start:chunk_end]
         
-        points_in_region = (
-            (voxel_coords[:, 0] >= x_start) & (voxel_coords[:, 0] < x_end) &
-            (voxel_coords[:, 1] >= y_start) & (voxel_coords[:, 1] < y_end) &
-            (voxel_coords[:, 2] >= z_start) & (voxel_coords[:, 2] < z_end)
-        )
+        for i, streamline in enumerate(chunk_streamlines):
+            if len(filtered_streamlines) >= max_streamlines:
+                print(f"      Reached maximum streamlines limit ({max_streamlines}), stopping...")
+                break
+                
+            if voxel_to_rasmm is not None:
+                world_coords = np.hstack([streamline, np.ones((streamline.shape[0], 1))])
+                rasmm_to_voxel = np.linalg.inv(voxel_to_rasmm)
+                voxel_coords = world_coords @ rasmm_to_voxel.T
+                voxel_coords = voxel_coords[:, :3]
+            else:
+                voxel_coords = streamline
+            
+            points_in_region = (
+                (voxel_coords[:, 0] >= x_start) & (voxel_coords[:, 0] < x_end) &
+                (voxel_coords[:, 1] >= y_start) & (voxel_coords[:, 1] < y_end) &
+                (voxel_coords[:, 2] >= z_start) & (voxel_coords[:, 2] < z_end)
+            )
+            
+            if np.any(points_in_region):
+                adjusted_streamline = voxel_coords.copy()
+                adjusted_streamline[:, 0] -= x_start
+                adjusted_streamline[:, 1] -= y_start  
+                adjusted_streamline[:, 2] -= z_start
+                filtered_streamlines.append(adjusted_streamline)
         
-        if np.any(points_in_region):
-            adjusted_streamline = voxel_coords.copy()
-            adjusted_streamline[:, 0] -= x_start
-            adjusted_streamline[:, 1] -= y_start  
-            adjusted_streamline[:, 2] -= z_start
-            filtered_streamlines.append(adjusted_streamline)
+        if len(filtered_streamlines) >= max_streamlines:
+            break
+            
+        # Progress update every 5 chunks
+        if (chunk_start // chunk_size) % 5 == 0:
+            progress = min(100, (chunk_end / total_streamlines) * 100)
+            print(f"      Progress: {progress:.1f}% ({len(filtered_streamlines)} streamlines found)")
     
     return filtered_streamlines
 
@@ -416,20 +404,44 @@ def main():
                        help='Number of spatial grid subdivisions to create')
     parser.add_argument('--min_streamlines_per_region', type=int, default=10,
                        help='Minimum streamlines required for a subdivision region')
+    parser.add_argument('--max_streamlines_per_region', type=int, default=50000,
+                       help='Maximum streamlines to process per subdivision region (for memory management)')
     
     # Cornucopia parameters
     parser.add_argument('--cornucopia_preset', 
                         choices=['aggressive', 'clinical_simulation'], 
                         help='Cornucopia preset for advanced medical imaging augmentations')
     
+    # Background enhancement parameters  
+    parser.add_argument('--background_preset', 
+                        choices=['preserve_edges', 'high_quality', 'smooth_realistic', 'clinical_appearance', 'subtle_enhancement'],
+                        default='preserve_edges',
+                        help='Background enhancement preset (default: preserve_edges for anatomical boundary preservation)')
+    parser.add_argument('--enable_sharpening', action='store_true', default=True,
+                        help='Enable sharpening after background enhancement to preserve edges (enabled by default)')
+    parser.add_argument('--sharpening_strength', type=float, default=0.5,
+                        help='Sharpening strength (0.0-1.0, default: 0.5)')
+    
+
+    
     args = parser.parse_args()
     
-    # Check Cornucopia availability
-    if args.cornucopia_preset and not ENHANCED_AVAILABLE:
+    # Check availability of requested features
+    if args.cornucopia_preset and not CORNUCOPIA_INTEGRATION_AVAILABLE:
         print("⚠️  Warning: Cornucopia augmentation requested but not available.")
-        print("   Install cornucopia-pytorch: pip install cornucopia-pytorch")
+        print("   Install cornucopia: pip install cornucopia")
         print("   Falling back to standard augmentations.")
         args.cornucopia_preset = None
+    
+    # Background enhancement is now enabled by default for pixelation reduction
+    try:
+        from background_enhancement import enhance_slice_background
+        print("✅ Quantized data preprocessing enabled (eliminates tiling artifacts)")
+        print("ℹ️  Your data has few unique values - using smooth processing to prevent tiling")
+        background_enhancement_available = True
+    except ImportError:
+        print("⚠️  Background enhancement module not found. Pixelation reduction disabled.")
+        background_enhancement_available = False
     
     args.contrast_method = 'clahe'
     print(f"🎨 Using contrast method: {args.contrast_method}")
@@ -449,9 +461,9 @@ def main():
     print(f"📁 Output Directory: {args.output_dir}")
     
     if args.spatial_subdivisions:
-        generate_examples_with_spatial_subdivisions(args)
+        generate_examples_with_spatial_subdivisions(args, background_enhancement_available)
     else:
-        generate_examples_original_mode(args)
+        generate_examples_original_mode(args, background_enhancement_available)
     
     print("\n🎉 Dataset generation complete!")
     

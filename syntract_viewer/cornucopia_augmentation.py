@@ -783,7 +783,7 @@ def create_augmentation_presets():
         'aggressive': {
             'spatial': {'type': 'elastic_deformation'},
             'intensity': {'type': 'bias_field'},
-            'noise': {'type': 'rician_noise', 'intensity': 0.6},  # Further reduced from 1.0 to 0.6 for smoother results
+            'noise': {'type': 'rician_noise', 'intensity': 0.1},  # Further reduced from 1.0 to 0.6 for smoother results
             'contrast': {'type': 'local_contrast'}
         },
         

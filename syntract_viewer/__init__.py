@@ -23,12 +23,14 @@ from .masking import (
 
 from .contrast import (
     apply_contrast_enhancement,
-    apply_enhanced_contrast_and_augmentation
+    apply_enhanced_contrast_and_augmentation,
+    apply_comprehensive_slice_processing
 )
 
 from .effects import (
     apply_dark_field_effect,
-    apply_smart_dark_field_effect
+    apply_smart_dark_field_effect,
+    apply_conservative_dark_field_effect
 )
 
 from .utils import (
@@ -37,6 +39,18 @@ from .utils import (
     generate_tract_color_variation,
     get_colormap
 )
+
+# Try to import background enhancement functionality
+try:
+    from .background_enhancement import (
+        enhance_slice_background,
+        enhance_background_smoothness,
+        apply_smart_sharpening,
+        create_enhancement_presets
+    )
+    BACKGROUND_ENHANCEMENT_AVAILABLE = True
+except ImportError:
+    BACKGROUND_ENHANCEMENT_AVAILABLE = False
 
 # Try to import Cornucopia functionality
 try:
@@ -70,10 +84,12 @@ __all__ = [
     # Contrast
     'apply_contrast_enhancement',
     'apply_enhanced_contrast_and_augmentation',
+    'apply_comprehensive_slice_processing',
     
     # Effects
     'apply_dark_field_effect',
     'apply_smart_dark_field_effect',
+    'apply_conservative_dark_field_effect',
     
     # Utils
     'select_random_streamlines',
@@ -82,8 +98,18 @@ __all__ = [
     'get_colormap',
     
     # Constants
+    'BACKGROUND_ENHANCEMENT_AVAILABLE',
     'CORNUCOPIA_INTEGRATION_AVAILABLE'
 ]
+
+# Add background enhancement exports if available
+if BACKGROUND_ENHANCEMENT_AVAILABLE:
+    __all__.extend([
+        'enhance_slice_background',
+        'enhance_background_smoothness',
+        'apply_smart_sharpening',
+        'create_enhancement_presets'
+    ])
 
 # Add Cornucopia exports if available
 if CORNUCOPIA_INTEGRATION_AVAILABLE:
