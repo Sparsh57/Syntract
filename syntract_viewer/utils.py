@@ -53,20 +53,24 @@ def generate_tract_color_variation(base_color=(1.0, 1.0, 0.0), variation=0.2, ra
 
 def get_colormap(color_scheme='bw', blue_tint=0.3):
     """
-    Get appropriate colormap for dark field visualization.
+    Get appropriate colormap for dark field visualization with pure black background.
     """
     if color_scheme == 'blue':
         dark_field_cmap = LinearSegmentedColormap.from_list('dark_field_blue', [
-            (0, 0, 0),
+            (0.0, 0.0, 0.0),  # Pure black for zero values
             (0.35, 0.35, 0.35 + blue_tint),
             (0.55, 0.55, 0.55 + min(0.45, blue_tint * 1.5))
         ], N=256)
     else:
         dark_field_cmap = LinearSegmentedColormap.from_list('dark_field_bw', [
-            (0, 0, 0),
+            (0.0, 0.0, 0.0),  # Pure black for zero values
             (0.4, 0.4, 0.4),
             (0.7, 0.7, 0.7)
         ], N=256)
+    
+    # Ensure the colormap has pure black at value 0
+    dark_field_cmap.set_under('black')
+    dark_field_cmap.set_bad('black')
     
     return dark_field_cmap
 

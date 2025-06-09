@@ -11,27 +11,46 @@ from matplotlib.collections import LineCollection
 from dipy.tracking.streamline import transform_streamlines
 import random
 
-from contrast import apply_contrast_enhancement
-from effects import apply_smart_dark_field_effect
-from masking import create_fiber_mask
-from utils import (
-    densify_streamline, 
-    generate_tract_color_variation,
-    get_colormap,
-    select_random_streamlines
-)
+try:
+    from .contrast import apply_contrast_enhancement, apply_comprehensive_slice_processing
+    from .effects import apply_smart_dark_field_effect
+    from .masking import create_fiber_mask
+    from .utils import (
+        densify_streamline, 
+        generate_tract_color_variation,
+        get_colormap,
+        select_random_streamlines
+    )
+except ImportError:
+    from contrast import apply_contrast_enhancement, apply_comprehensive_slice_processing
+    from effects import apply_smart_dark_field_effect
+    from masking import create_fiber_mask
+    from utils import (
+        densify_streamline, 
+        generate_tract_color_variation,
+        get_colormap,
+        select_random_streamlines
+    )
 
 
 def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1, cmap='gray',
-                             clahe_clip_limit=0.01, clahe_tile_grid_size=8, intensity_params=None,
+                             clahe_clip_limit=0.01, clahe_tile_grid_size=32, intensity_params=None,
                              tract_color_base=(1.0, 1.0, 0.0), tract_color_variation=0.2,
                              slice_idx=None, streamline_percentage=100.0, roi_sphere=None,
                              tract_linewidth=1.0, save_masks=False, mask_thickness=1,
                              density_threshold=0.15, gaussian_sigma=2.0, random_state=None,
                              close_gaps=False, closing_footprint_size=5, label_bundles=False,
-                             min_bundle_size=20, contrast_method='clahe', contrast_params=None):
+                             min_bundle_size=20, contrast_method='clahe', contrast_params=None,
+                             background_enhancement=None, cornucopia_augmentation=None):
     """
     Visualize multiple axial slices of a nifti file with tractography overlaid.
+    
+    Parameters
+    ----------
+    background_enhancement : str or dict, optional
+        Background enhancement configuration to reduce pixelation
+    cornucopia_augmentation : str or dict, optional
+        Cornucopia augmentation configuration
     """
     if random_state is not None:
         random.seed(random_state)
@@ -40,7 +59,7 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
     if contrast_params is None:
         contrast_params = {
             'clip_limit': clahe_clip_limit,
-            'tile_grid_size': (clahe_tile_grid_size, clahe_tile_grid_size)
+            'tile_grid_size': (max(32, clahe_tile_grid_size), max(32, clahe_tile_grid_size))
         }
     
     # Load data
@@ -106,13 +125,27 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
         slice_intensity_params = intensity_params.copy() if intensity_params else None
         
         slice_data = nii_data[:, :, slice_idx]
-        slice_enhanced = apply_contrast_enhancement(slice_data, 
-                                                   clip_limit=contrast_params.get('clip_limit', 0.01),
-                                                   tile_grid_size=contrast_params.get('tile_grid_size', (8, 8)))
         
-        dark_field_slice = apply_smart_dark_field_effect(slice_enhanced, slice_intensity_params, random_state=random_state)
+        # Apply processing based on user preferences (don't force processing)
+        slice_enhanced = apply_comprehensive_slice_processing(
+            slice_data,
+            background_preset=background_enhancement if isinstance(background_enhancement, str) else None,
+            cornucopia_preset=cornucopia_augmentation if isinstance(cornucopia_augmentation, str) else None,
+            contrast_method=contrast_method,
+            background_params=background_enhancement if isinstance(background_enhancement, dict) else None,
+            cornucopia_params=cornucopia_augmentation if isinstance(cornucopia_augmentation, dict) else None,
+            contrast_params=contrast_params,
+            random_state=random_state
+        )
         
-        axes[i].imshow(np.rot90(dark_field_slice), cmap=dark_field_cmap, aspect='equal', interpolation='bicubic', vmin=0)
+        dark_field_slice = apply_smart_dark_field_effect(
+            slice_enhanced, 
+            slice_intensity_params, 
+            preserve_ventricles=False,  # Explicitly disable to prevent fake ventricles
+            random_state=random_state
+        )
+
+        axes[i].imshow(np.rot90(dark_field_slice), cmap=dark_field_cmap, aspect='equal', interpolation='bilinear')
         axes[i].set_facecolor('black')
         
         # Create mask if requested
@@ -193,15 +226,23 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
 
 
 def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_slices=1, cmap='gray',
-                             clahe_clip_limit=0.01, clahe_tile_grid_size=8, intensity_params=None,
+                             clahe_clip_limit=0.01, clahe_tile_grid_size=32, intensity_params=None,
                              tract_color_base=(1.0, 1.0, 0.0), tract_color_variation=0.2,
                              slice_idx=None, streamline_percentage=100.0, roi_sphere=None,
                              tract_linewidth=1.0, save_masks=False, mask_thickness=1,
                              density_threshold=0.15, gaussian_sigma=2.0, random_state=None,
                              close_gaps=False, closing_footprint_size=5, label_bundles=False,
-                             min_bundle_size=20, contrast_method='clahe', contrast_params=None):
+                             min_bundle_size=20, contrast_method='clahe', contrast_params=None,
+                             background_enhancement=None, cornucopia_augmentation=None):
     """
     Visualize multiple coronal slices of a nifti file with tractography overlaid.
+    
+    Parameters
+    ----------
+    background_enhancement : str or dict, optional
+        Background enhancement configuration to reduce pixelation
+    cornucopia_augmentation : str or dict, optional
+        Cornucopia augmentation configuration
     """
     if random_state is not None:
         random.seed(random_state)
@@ -210,7 +251,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
     if contrast_params is None:
         contrast_params = {
             'clip_limit': clahe_clip_limit,
-            'tile_grid_size': (clahe_tile_grid_size, clahe_tile_grid_size)
+            'tile_grid_size': (max(32, clahe_tile_grid_size), max(32, clahe_tile_grid_size))
         }
     
     # Load data
@@ -276,13 +317,27 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
         slice_intensity_params = intensity_params.copy() if intensity_params else None
         
         slice_data = nii_data[:, slice_idx, :]
-        slice_enhanced = apply_contrast_enhancement(slice_data, 
-                                                   clip_limit=contrast_params.get('clip_limit', 0.01),
-                                                   tile_grid_size=contrast_params.get('tile_grid_size', (8, 8)))
         
-        dark_field_slice = apply_smart_dark_field_effect(slice_enhanced, slice_intensity_params, random_state=random_state)
+        # Apply processing based on user preferences (don't force processing)
+        slice_enhanced = apply_comprehensive_slice_processing(
+            slice_data,
+            background_preset=background_enhancement if isinstance(background_enhancement, str) else None,
+            cornucopia_preset=cornucopia_augmentation if isinstance(cornucopia_augmentation, str) else None,
+            contrast_method=contrast_method,
+            background_params=background_enhancement if isinstance(background_enhancement, dict) else None,
+            cornucopia_params=cornucopia_augmentation if isinstance(cornucopia_augmentation, dict) else None,
+            contrast_params=contrast_params,
+            random_state=random_state
+        )
         
-        axes[i].imshow(np.rot90(dark_field_slice), cmap=dark_field_cmap, aspect='equal', interpolation='bicubic', vmin=0)
+        dark_field_slice = apply_smart_dark_field_effect(
+            slice_enhanced, 
+            slice_intensity_params, 
+            preserve_ventricles=False,  # Explicitly disable to prevent fake ventricles
+            random_state=random_state
+        )
+
+        axes[i].imshow(np.rot90(dark_field_slice), cmap=dark_field_cmap, aspect='equal', interpolation='bilinear')
         axes[i].set_facecolor('black')
         
         # Create mask if requested
@@ -363,7 +418,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
 
 
 def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray',
-                             clahe_clip_limit=0.01, clahe_tile_grid_size=8, intensity_params=None,
+                             clahe_clip_limit=0.01, clahe_tile_grid_size=32, intensity_params=None,
                              tract_color_base=(1.0, 1.0, 0.0), tract_color_variation=0.2,
                              streamline_percentage=100.0, roi_sphere=None,
                              tract_linewidth=1.0, save_masks=False, mask_thickness=1,
@@ -438,13 +493,22 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
         else:  # sagittal
             slice_data = nii_data[slice_idx, :, :]
         
-        slice_enhanced = apply_contrast_enhancement(slice_data, 
-                                                   clip_limit=clahe_clip_limit,
-                                                   tile_grid_size=(clahe_tile_grid_size, clahe_tile_grid_size))
+        # Apply processing based on user preferences (don't force processing)
+        slice_enhanced = apply_comprehensive_slice_processing(
+            slice_data,
+            background_preset='high_quality',
+            contrast_method='clahe',
+            contrast_params={'clip_limit': clahe_clip_limit, 'tile_grid_size': (clahe_tile_grid_size, clahe_tile_grid_size)}
+        )
         
-        dark_field_slice = apply_smart_dark_field_effect(slice_enhanced, intensity_params, random_state=random_state)
-        
-        axes[view_idx].imshow(np.rot90(dark_field_slice), cmap=dark_field_cmap, aspect='equal', interpolation='bicubic', vmin=0)
+        dark_field_slice = apply_smart_dark_field_effect(
+            slice_enhanced, 
+            intensity_params, 
+            preserve_ventricles=False,  # Explicitly disable to prevent fake ventricles
+            random_state=random_state
+        )
+
+        axes[view_idx].imshow(np.rot90(dark_field_slice), cmap=dark_field_cmap, aspect='equal', interpolation='bilinear')
         axes[view_idx].set_facecolor('black')
         
         # Create mask if requested

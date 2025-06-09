@@ -174,10 +174,17 @@ def create_smart_brain_mask(image, method='adaptive_morphology', **kwargs):
 def _adaptive_morphology_mask(image, initial_threshold=0.03, min_object_size=500, 
                              closing_disk_size=15, opening_disk_size=3, keep_all_components=True):
     """Create brain mask using adaptive morphological operations."""
-    brain_rough = image > initial_threshold
-    brain_rough = morphology.remove_small_objects(brain_rough, min_size=25)
-    brain_filled = morphology.binary_closing(brain_rough, morphology.disk(closing_disk_size))
-    brain_smooth = morphology.binary_opening(brain_filled, morphology.disk(opening_disk_size))
+    # Use much higher threshold to completely avoid background noise
+    safe_threshold = max(initial_threshold, 0.03)  # Even higher threshold
+    brain_rough = image > safe_threshold
+    brain_rough = morphology.remove_small_objects(brain_rough, min_size=100)  # Remove even more small objects
+    
+    # Be extremely conservative with morphological operations
+    brain_filled = morphology.binary_closing(brain_rough, morphology.disk(min(closing_disk_size, 3)))  # Much smaller closing
+    brain_smooth = morphology.binary_opening(brain_filled, morphology.disk(max(opening_disk_size, 1)))
+    
+    # Additional aggressive cleanup to remove isolated regions
+    brain_smooth = morphology.remove_small_objects(brain_smooth, min_size=200)
     
     brain_labels = measure.label(brain_smooth)
     
@@ -280,16 +287,54 @@ def _combined_mask(image, **kwargs):
     return combined.astype(np.uint8)
 
 
-def adaptive_ventricle_preservation(image, brain_mask, ventricle_threshold_percentile=5):
+def adaptive_ventricle_preservation(image, brain_mask, ventricle_threshold_percentile=2):
     """Specifically preserve ventricle regions that might be suppressed."""
     brain_pixels = image[brain_mask > 0]
     
     if len(brain_pixels) == 0:
         return brain_mask
     
+    # Much more conservative ventricle detection
     ventricle_threshold = np.percentile(brain_pixels, ventricle_threshold_percentile)
     potential_ventricles = (image <= ventricle_threshold) & (brain_mask > 0)
-    ventricle_regions = morphology.remove_small_objects(potential_ventricles, min_size=50)
+    
+    # Remove small objects and apply stricter size requirements
+    ventricle_regions = morphology.remove_small_objects(potential_ventricles, min_size=200)
+    
+    # Additional validation: ventricles should be reasonably central and connected
+    if np.any(ventricle_regions):
+        # Label connected components
+        labeled_ventricles = measure.label(ventricle_regions)
+        regions = measure.regionprops(labeled_ventricles)
+        
+        # Only keep regions that look like actual ventricles
+        validated_ventricles = np.zeros_like(ventricle_regions)
+        total_brain_area = np.sum(brain_mask)
+        
+        for region in regions:
+            # Size constraints: not too small, not too large
+            area_ratio = region.area / total_brain_area
+            if area_ratio < 0.001 or area_ratio > 0.15:  # Too small or too large
+                continue
+            
+            # Shape constraints: ventricles should have reasonable aspect ratios
+            bbox = region.bbox
+            height = bbox[2] - bbox[0]
+            width = bbox[3] - bbox[1]
+            aspect_ratio = max(height, width) / (min(height, width) + 1e-6)
+            if aspect_ratio > 5:  # Too elongated
+                continue
+            
+            # Compactness constraint: ventricles should be reasonably compact
+            if region.area > 0 and region.perimeter > 0:
+                compactness = (4 * np.pi * region.area) / (region.perimeter ** 2)
+                if compactness < 0.1:  # Too irregular
+                    continue
+            
+            # This region passes validation
+            validated_ventricles[labeled_ventricles == region.label] = True
+        
+        ventricle_regions = validated_ventricles
     
     enhanced_mask = brain_mask.copy()
     enhanced_mask[ventricle_regions] = 1
