@@ -5,6 +5,7 @@ Masking functions for brain segmentation and fiber mask generation.
 import numpy as np
 from skimage import morphology, filters, feature, draw, measure, segmentation
 from scipy import ndimage
+from scipy.signal import find_peaks
 
 
 def create_fiber_mask(streamlines_voxel, slice_idx, orientation='axial', dims=(256, 256, 256), 
@@ -92,12 +93,9 @@ def create_fiber_mask(streamlines_voxel, slice_idx, orientation='axial', dims=(2
         if np.sum(mask) > 0:
             mask = morphology.remove_small_objects(mask.astype(bool), min_size=10).astype(np.uint8)
     
-    # Apply gap closing
+    # Apply smooth gap closing
     if close_gaps and np.any(mask):
-        closing_footprint = morphology.disk(closing_footprint_size)
-        mask = morphology.binary_closing(mask, closing_footprint)
-        mask = morphology.remove_small_holes(mask.astype(bool), area_threshold=500).astype(np.uint8)
-        mask = morphology.remove_small_objects(mask.astype(bool), min_size=50).astype(np.uint8)
+        mask = _apply_smooth_gap_closing(mask, closing_footprint_size)
     
     # Apply min_bundle_size filtering
     if not label_bundles and min_bundle_size > 0 and np.any(mask):
@@ -134,10 +132,10 @@ def create_fiber_mask(streamlines_voxel, slice_idx, orientation='axial', dims=(2
             labeled_mask = measure.label(filtered_mask, connectivity=2)
             num_labels = np.max(labeled_mask)
             print(f"Found {num_labels} distinct fiber bundles in slice {slice_idx}")
-            return mask, labeled_mask
+            return filtered_mask.astype(np.uint8), labeled_mask
         else:
             print(f"No significant fiber bundles found in slice {slice_idx}")
-            return mask, np.zeros_like(mask)
+            return np.zeros_like(mask), np.zeros_like(mask)
     
     return mask
 
@@ -344,12 +342,31 @@ def adaptive_ventricle_preservation(image, brain_mask, ventricle_threshold_perce
 
 def create_aggressive_brain_mask(original_slice, augmented_slice):
     """
-    Create an aggressive brain mask to suppress Cornucopia noise artifacts.
+    Create a brain mask to suppress Cornucopia noise artifacts while preserving blockface areas.
+    Modified to be less aggressive and preserve bright tissue areas.
     """
     original_norm = (original_slice - np.min(original_slice)) / (np.ptp(original_slice) + 1e-8)
     
-    brain_threshold = 0.02
+    # Use a more sophisticated threshold that preserves bright areas
+    # Check for bimodal distribution (brain vs background)
+    hist, bin_edges = np.histogram(original_norm[original_norm > 0], bins=50, density=True)
+    
+    # Find valleys in histogram to determine threshold
+    valleys = find_peaks(-hist)[0]
+    
+    if len(valleys) > 0 and len(bin_edges) > valleys[0]:
+        # Use the first valley as threshold, but not too low
+        brain_threshold = max(0.01, bin_edges[valleys[0]])
+    else:
+        # Fallback: use percentile-based threshold that's less aggressive
+        brain_threshold = max(0.01, np.percentile(original_norm[original_norm > 0], 5))
+    
+    # Create initial mask
     brain_mask = original_norm > brain_threshold
+    
+    # Additional check for very bright areas (potential blockface) - always include them
+    bright_areas = original_norm > 0.7  # Very bright areas are likely tissue
+    brain_mask = brain_mask | bright_areas
     
     brain_mask = morphology.binary_closing(brain_mask, morphology.disk(10))
     brain_mask = morphology.remove_small_objects(brain_mask, min_size=200)
@@ -360,8 +377,119 @@ def create_aggressive_brain_mask(original_slice, augmented_slice):
     augmented_norm = (augmented_slice - np.min(augmented_slice)) / (np.ptp(augmented_slice) + 1e-8)
     outside_brain = augmented_norm * (~brain_mask)
     
+    # Also check for bright areas in augmented slice
+    augmented_bright = augmented_norm > 0.6
+    brain_mask = brain_mask | augmented_bright
+    
     outside_values = outside_brain[outside_brain > 0]
     if len(outside_values) > 0 and np.percentile(outside_values, 95) > 0.1:
         brain_mask = morphology.binary_dilation(brain_mask, morphology.disk(5))
     
-    return brain_mask.astype(np.uint8) 
+    return brain_mask.astype(np.uint8)
+
+
+def _apply_smooth_gap_closing(mask, closing_footprint_size):
+    """
+    Apply ultra-smooth, round gap closing that creates organic, blob-like shapes.
+    
+    This function prioritizes roundness and smoothness over geometric precision,
+    creating very organic, flowing boundaries without sharp edges.
+    
+    Parameters
+    ----------
+    mask : np.ndarray
+        Binary mask to process
+    closing_footprint_size : int
+        Size parameter for closing operations
+        
+    Returns
+    -------
+    np.ndarray
+        Ultra-smoothly gap-closed mask with round boundaries
+    """
+    result = mask.astype(bool)
+    
+    # Step 1: Distance-based smooth closing for ultra-round results
+    # This creates much more organic boundaries than traditional morphology
+    if np.any(result):
+        # Apply distance transform for organic shape expansion (import ndimage first)
+        from scipy import ndimage
+        distance = ndimage.distance_transform_edt(result)
+        
+        # Create smooth expansion based on distance field
+        expansion_radius = max(2, closing_footprint_size * 0.3)
+        expanded = distance > -expansion_radius  # This doesn't make sense, let me fix this
+        
+        # Actually, let's use a better approach with multiple gaussian smoothing passes
+        smooth_mask = result.astype(np.float32)
+        
+        # Apply multiple progressive gaussian smoothing passes for ultra-round boundaries
+        base_sigma = max(1.0, closing_footprint_size * 0.15)
+        for i in range(3):  # Multiple smoothing passes
+            sigma = base_sigma * (1 + i * 0.5)  # Increasing sigma
+            smooth_mask = filters.gaussian(smooth_mask, sigma=sigma)
+            
+            # Progressive threshold lowering for smoother boundaries
+            threshold = 0.4 - (i * 0.1)  # 0.4, 0.3, 0.2
+            result = smooth_mask > threshold
+            smooth_mask = result.astype(np.float32)
+    
+    # Step 2: Progressive circular closing with only circular elements for roundness
+    max_size = min(closing_footprint_size, 40)
+    steps = min(7, max(3, max_size // 4))  # More steps for smoother progression
+    
+    for i in range(steps):
+        # Always use circular footprints for maximum roundness
+        size = int(1 + (max_size - 1) * (i + 1) / steps)
+        footprint = morphology.disk(size)
+        result = morphology.binary_closing(result, footprint)
+        
+        # Apply light gaussian smoothing after each step for ultra-smooth edges
+        if i < steps - 1:  # Don't smooth on final step
+            smooth_temp = filters.gaussian(result.astype(np.float32), sigma=0.8)
+            result = smooth_temp > 0.4
+    
+    # Step 3: Heavy gaussian smoothing for ultra-soft, round boundaries
+    ultra_smooth = result.astype(np.float32)
+    
+    # Apply very strong gaussian blur for blob-like appearance
+    final_sigma = max(2.0, closing_footprint_size * 0.2)
+    ultra_smooth = filters.gaussian(ultra_smooth, sigma=final_sigma)
+    
+    # Use very low threshold for maximum roundness (includes more fuzzy boundary)
+    result = ultra_smooth > 0.2
+    
+    # Step 4: Distance-based smoothing for perfectly round boundaries
+    if np.any(result):
+        # Use distance transform to create perfectly smooth boundaries
+        distance = ndimage.distance_transform_edt(~result)
+        smooth_boundary = distance < (closing_footprint_size * 0.1)
+        result = result | smooth_boundary
+    
+    # Step 5: Remove small holes with large threshold for blob-like continuity
+    hole_threshold = max(200, closing_footprint_size * 15)
+    result = morphology.remove_small_holes(result, area_threshold=hole_threshold)
+    
+    # Step 6: Final ultra-gentle smoothing with large median filter  
+    median_size = min(5, max(2, closing_footprint_size // 8))
+    if median_size > 1:
+        result = ndimage.median_filter(result.astype(np.uint8), size=median_size).astype(bool)
+    
+    # Step 7: Final round morphological operations - only circles for maximum roundness
+    final_round_size = min(3, max(1, closing_footprint_size // 15))
+    if final_round_size > 0:
+        # Multiple passes of small circular operations for ultra-smooth boundaries
+        for _ in range(2):
+            final_footprint = morphology.disk(final_round_size)
+            result = morphology.binary_closing(result, final_footprint)
+            result = morphology.binary_opening(result, final_footprint)
+    
+    # Step 8: Final gaussian pass for blob-like smoothness
+    final_result = filters.gaussian(result.astype(np.float32), sigma=1.5)
+    result = final_result > 0.3
+    
+    # Step 9: Remove small objects but keep size reasonable for continuity
+    min_object_size = max(50, closing_footprint_size * 3)
+    result = morphology.remove_small_objects(result, min_size=min_object_size)
+    
+    return result.astype(np.uint8)

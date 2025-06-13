@@ -20,11 +20,15 @@ import tempfile
 from generation import generate_varied_examples, generate_enhanced_varied_examples
 
 try:
-    from . import CORNUCOPIA_INTEGRATION_AVAILABLE
+    from .contrast import CORNUCOPIA_INTEGRATION_AVAILABLE
     ENHANCED_AVAILABLE = True
 except ImportError:
-    ENHANCED_AVAILABLE = False
-    CORNUCOPIA_INTEGRATION_AVAILABLE = False
+    try:
+        from contrast import CORNUCOPIA_INTEGRATION_AVAILABLE
+        ENHANCED_AVAILABLE = True
+    except ImportError:
+        ENHANCED_AVAILABLE = False
+        CORNUCOPIA_INTEGRATION_AVAILABLE = False
 
 
 def generate_examples_original_mode(args, background_enhancement_available):
@@ -36,7 +40,7 @@ def generate_examples_original_mode(args, background_enhancement_available):
         print(f"🚀 Using Cornucopia augmentations with preset: {args.cornucopia_preset}")
     
     contrast_params = {
-        'clip_limit': 0.01,
+        'clip_limit': 0.04,
         'tile_grid_size': (8, 8)
     }
     
@@ -432,6 +436,8 @@ def main():
         print("   Install cornucopia: pip install cornucopia")
         print("   Falling back to standard augmentations.")
         args.cornucopia_preset = None
+    elif args.cornucopia_preset and CORNUCOPIA_INTEGRATION_AVAILABLE:
+        print(f"✅ Cornucopia augmentation enabled with preset: {args.cornucopia_preset}")
     
     # Background enhancement is now enabled by default for pixelation reduction
     try:

@@ -13,7 +13,10 @@ from .core import (
 
 from .generation import (
     generate_varied_examples,
-    generate_enhanced_varied_examples
+    generate_enhanced_varied_examples,
+    generate_enhanced_varied_examples_with_preserved_background,
+    generate_anatomically_realistic_examples,
+    generate_clean_natural_examples
 )
 
 from .masking import (
@@ -30,7 +33,12 @@ from .contrast import (
 from .effects import (
     apply_dark_field_effect,
     apply_smart_dark_field_effect,
-    apply_conservative_dark_field_effect
+    apply_conservative_dark_field_effect,
+    apply_gentle_dark_field_effect,
+    apply_balanced_dark_field_effect,
+    apply_blockface_preserving_dark_field_effect,
+    apply_anatomically_aware_dark_field_effect,
+    apply_natural_anatomical_enhancement
 )
 
 from .utils import (
@@ -76,6 +84,9 @@ __all__ = [
     # Generation
     'generate_varied_examples',
     'generate_enhanced_varied_examples',
+    'generate_enhanced_varied_examples_with_preserved_background',
+    'generate_anatomically_realistic_examples',
+    'generate_clean_natural_examples',
     
     # Masking
     'create_fiber_mask',
@@ -90,6 +101,11 @@ __all__ = [
     'apply_dark_field_effect',
     'apply_smart_dark_field_effect',
     'apply_conservative_dark_field_effect',
+    'apply_gentle_dark_field_effect',
+    'apply_balanced_dark_field_effect',
+    'apply_blockface_preserving_dark_field_effect',
+    'apply_anatomically_aware_dark_field_effect',
+    'apply_natural_anatomical_enhancement',
     
     # Utils
     'select_random_streamlines',
