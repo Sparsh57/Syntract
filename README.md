@@ -38,7 +38,7 @@ pip install syntract
 ### Development Installation
 
 ```bash
-git clone https://github.com/your-repo/syntract.git
+git clone https://github.com/Sparsh57/Syntract.git
 cd syntract
 pip install -e .
 ```
@@ -396,8 +396,8 @@ python -m synthesis.compare_interpolation
 - [CuPy](https://cupy.dev/) - GPU-accelerated computing
 
 ## Support
-- **Issues**: [GitHub Issues](https://github.com/your-repo/syntract/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-repo/syntract/discussions)
+- **Issues**: [GitHub Issues](https://github.com/Sparsh57/Syntract/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/Sparsh57/Syntract/discussions)
 
 ---
 
