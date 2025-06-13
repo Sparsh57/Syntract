@@ -36,7 +36,7 @@ def densify_streamline(streamline, step=0.2):
     return new_points
 
 
-def generate_tract_color_variation(base_color=(1.0, 1.0, 0.0), variation=0.2, random_state=None):
+def generate_tract_color_variation(base_color=(1.0, 0.8, 0.1), variation=0.2, random_state=None):
     """
     Generate a variation of the base tract color.
     """

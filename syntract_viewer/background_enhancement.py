@@ -3,6 +3,36 @@ Background enhancement functions for improving slice appearance before fiber ove
 
 This module provides various techniques to make thin NIfTI slices appear smoother and more realistic,
 addressing pixelation issues that can occur with dimensions like (500, 1, 500).
+
+Available enhancement methods include:
+- Multi-scale bicubic interpolation
+- OpenCV super-resolution techniques  
+- Adaptive smoothing with edge preservation
+- Edge-preserving filters
+- Anisotropic diffusion
+- Texture synthesis
+- LPSVD (Linear Prediction with Singular Value Decomposition) for noise reduction
+- Combined enhancement using multiple methods
+
+LPSVD Enhancement:
+The LPSVD method is particularly effective for medical imaging applications as it:
+- Reduces noise while preserving important structural information
+- Uses SVD decomposition to separate signal from noise
+- Applies linear prediction modeling for optimal reconstruction
+- Provides multiple preset configurations (conservative, denoising, aggressive)
+
+Example usage:
+    # Use LPSVD directly
+    enhanced = enhance_slice_background(slice_data, preset='lpsvd_denoising')
+    
+    # Use LPSVD with custom parameters
+    enhanced = enhance_slice_background(slice_data, 
+                                      custom_params={'method': 'lpsvd', 
+                                                   'svd_rank': 20, 
+                                                   'lpsvd_order': 10})
+    
+    # Use hybrid LPSVD with adaptive smoothing
+    enhanced = enhance_slice_background(slice_data, preset='hybrid_lpsvd')
 """
 
 import numpy as np
@@ -88,6 +118,8 @@ def enhance_background_smoothness(slice_data: np.ndarray,
         return _apply_texture_synthesis(slice_data, **all_params)
     elif method == 'combined_enhancement':
         return _apply_combined_enhancement(slice_data, **all_params)
+    elif method == 'lpsvd':
+        return _apply_lpsvd_enhancement(slice_data, **all_params)
     else:
         # Fallback to basic method
         return _apply_basic_smoothing(slice_data, **all_params)
@@ -304,6 +336,227 @@ def _apply_texture_synthesis(slice_data: np.ndarray,
     return enhanced
 
 
+def _apply_lpsvd_enhancement(slice_data: np.ndarray,
+                           svd_rank: int = 20,
+                           lpsvd_order: int = 10,
+                           enhancement_factor: float = 1.2,
+                           preserve_mean: bool = True,
+                           noise_threshold: float = 0.05,
+                           **kwargs) -> np.ndarray:
+    """
+    Apply Linear Prediction with Singular Value Decomposition (LPSVD) enhancement.
+    
+    LPSVD is commonly used in medical imaging for noise reduction and signal enhancement.
+    It works by decomposing the signal using SVD and reconstructing with reduced rank
+    to filter out noise while preserving important structural information.
+    
+    Parameters
+    ----------
+    slice_data : np.ndarray
+        Input slice data (2D array)
+    svd_rank : int
+        Number of singular values to retain (higher = more detail, more noise)
+    lpsvd_order : int
+        Order of linear prediction model
+    enhancement_factor : float
+        Factor to enhance the reconstructed signal
+    preserve_mean : bool
+        Whether to preserve the original mean intensity
+    noise_threshold : float
+        Threshold for noise suppression (0-1)
+    **kwargs : dict
+        Additional parameters
+    
+    Returns
+    -------
+    np.ndarray
+        LPSVD enhanced slice data
+    """
+    if not SCIPY_SKIMAGE_AVAILABLE:
+        warnings.warn("LPSVD enhancement requires scipy. Falling back to basic smoothing.")
+        return _apply_basic_smoothing(slice_data, **kwargs)
+    
+    try:
+        print("Applying LPSVD enhancement...")
+        # Store original properties
+        original_mean = np.mean(slice_data)
+        original_std = np.std(slice_data)
+        original_min = np.min(slice_data)
+        original_max = np.max(slice_data)
+        
+        # Create a brain mask to only process tissue regions
+        brain_mask = slice_data > np.percentile(slice_data[slice_data > 0], 5) if np.any(slice_data > 0) else slice_data > 0
+        
+        if not np.any(brain_mask):
+            return slice_data  # No brain tissue detected
+        
+        # Extract brain tissue data
+        brain_data = slice_data[brain_mask]
+        
+        # Normalize data for LPSVD processing
+        if np.std(brain_data) > 0:
+            normalized_data = (brain_data - np.mean(brain_data)) / np.std(brain_data)
+        else:
+            return slice_data  # No variation in data
+        
+        # Create Hankel matrix for LPSVD
+        hankel_matrix = _create_hankel_matrix(normalized_data, lpsvd_order)
+        
+        # Apply SVD
+        U, s, Vh = np.linalg.svd(hankel_matrix, full_matrices=False)
+        
+        # Determine optimal rank based on singular value decay
+        effective_rank = min(svd_rank, _estimate_optimal_rank(s, noise_threshold))
+        
+        # Reconstruct with reduced rank
+        s_filtered = s.copy()
+        s_filtered[effective_rank:] = 0  # Zero out smaller singular values
+        
+        # Reconstruct the signal
+        reconstructed_matrix = U @ np.diag(s_filtered) @ Vh
+        
+        # Extract the enhanced signal from the reconstructed Hankel matrix
+        enhanced_brain_data = _extract_signal_from_hankel(reconstructed_matrix, len(normalized_data))
+        
+        # Apply enhancement factor
+        enhanced_brain_data *= enhancement_factor
+        
+        # Denormalize
+        enhanced_brain_data = enhanced_brain_data * np.std(brain_data) + np.mean(brain_data)
+        
+        # Create output array
+        enhanced_slice = slice_data.copy()
+        enhanced_slice[brain_mask] = enhanced_brain_data
+        
+        # Preserve mean if requested
+        if preserve_mean:
+            current_mean = np.mean(enhanced_slice)
+            if current_mean > 0:
+                enhanced_slice = enhanced_slice * (original_mean / current_mean)
+        
+        # Ensure output is in reasonable range
+        enhanced_slice = np.clip(enhanced_slice, 0, original_max * 1.5)
+        
+        # Apply final smoothing to reduce any artifacts
+        if SCIPY_SKIMAGE_AVAILABLE:
+            enhanced_slice = filters.gaussian(enhanced_slice, sigma=0.3)
+        
+        return enhanced_slice.astype(slice_data.dtype)
+        
+    except Exception as e:
+        warnings.warn(f"LPSVD enhancement failed: {e}. Falling back to basic smoothing.")
+        return _apply_basic_smoothing(slice_data, **kwargs)
+
+
+def _create_hankel_matrix(signal: np.ndarray, order: int) -> np.ndarray:
+    """
+    Create a Hankel matrix from the input signal for LPSVD processing.
+    
+    Parameters
+    ----------
+    signal : np.ndarray
+        Input 1D signal
+    order : int
+        Order of the Hankel matrix (number of rows)
+    
+    Returns
+    -------
+    np.ndarray
+        Hankel matrix
+    """
+    n = len(signal)
+    if order >= n:
+        order = n // 2  # Ensure we have enough data
+    
+    cols = n - order + 1
+    hankel = np.zeros((order, cols))
+    
+    for i in range(order):
+        for j in range(cols):
+            hankel[i, j] = signal[i + j]
+    
+    return hankel
+
+
+def _estimate_optimal_rank(singular_values: np.ndarray, noise_threshold: float) -> int:
+    """
+    Estimate optimal rank for SVD reconstruction based on singular value decay.
+    
+    Parameters
+    ----------
+    singular_values : np.ndarray
+        Array of singular values in descending order
+    noise_threshold : float
+        Threshold for determining noise level (0-1)
+    
+    Returns
+    -------
+    int
+        Estimated optimal rank
+    """
+    # Normalize singular values
+    s_norm = singular_values / singular_values[0]
+    
+    # Find the elbow point in the singular value curve
+    # This is where the decay becomes more gradual (indicating noise dominance)
+    
+    # Method 1: Threshold-based
+    threshold_rank = np.sum(s_norm > noise_threshold)
+    
+    # Method 2: Elbow detection using second derivative
+    if len(s_norm) > 3:
+        # Compute second derivative
+        second_deriv = np.diff(s_norm, n=2)
+        # Find the point where second derivative is closest to zero (elbow)
+        elbow_idx = np.argmin(np.abs(second_deriv)) + 2  # +2 due to diff operations
+        elbow_rank = min(elbow_idx, len(s_norm))
+    else:
+        elbow_rank = len(s_norm)
+    
+    # Use the more conservative estimate
+    optimal_rank = min(threshold_rank, elbow_rank)
+    
+    # Ensure we retain at least some components
+    optimal_rank = max(optimal_rank, min(5, len(singular_values)))
+    
+    return optimal_rank
+
+
+def _extract_signal_from_hankel(hankel_matrix: np.ndarray, original_length: int) -> np.ndarray:
+    """
+    Extract the enhanced signal from the reconstructed Hankel matrix.
+    
+    Parameters
+    ----------
+    hankel_matrix : np.ndarray
+        Reconstructed Hankel matrix
+    original_length : int
+        Length of the original signal
+    
+    Returns
+    -------
+    np.ndarray
+        Extracted enhanced signal
+    """
+    rows, cols = hankel_matrix.shape
+    signal = np.zeros(original_length)
+    counts = np.zeros(original_length)
+    
+    # Average over anti-diagonals to extract the signal
+    for i in range(rows):
+        for j in range(cols):
+            idx = i + j
+            if idx < original_length:
+                signal[idx] += hankel_matrix[i, j]
+                counts[idx] += 1
+    
+    # Avoid division by zero
+    counts[counts == 0] = 1
+    signal = signal / counts
+    
+    return signal
+
+
 def _apply_combined_enhancement(slice_data: np.ndarray,
                               methods: Optional[list] = None,
                               **kwargs) -> np.ndarray:
@@ -328,6 +581,8 @@ def _apply_combined_enhancement(slice_data: np.ndarray,
                 method_result = _apply_edge_preserving_filter(enhanced, **kwargs)
             elif method == 'texture_synthesis':
                 method_result = _apply_texture_synthesis(enhanced, **kwargs)
+            elif method == 'lpsvd':
+                method_result = _apply_lpsvd_enhancement(enhanced, **kwargs)
             else:
                 continue
             
@@ -530,6 +785,44 @@ def create_enhancement_presets() -> dict:
             'edge_threshold': 0.05,
             'smooth_sigma': 0.5,
             'edge_sigma': 0.2
+        },
+        
+        'lpsvd_denoising': {
+            'method': 'lpsvd',
+            'svd_rank': 15,
+            'lpsvd_order': 8,
+            'enhancement_factor': 1.1,
+            'noise_threshold': 0.08,
+            'preserve_mean': True
+        },
+        
+        'lpsvd_aggressive': {
+            'method': 'lpsvd',
+            'svd_rank': 25,
+            'lpsvd_order': 12,
+            'enhancement_factor': 1.3,
+            'noise_threshold': 0.05,
+            'preserve_mean': True
+        },
+        
+        'lpsvd_conservative': {
+            'method': 'lpsvd',
+            'svd_rank': 10,
+            'lpsvd_order': 6,
+            'enhancement_factor': 1.05,
+            'noise_threshold': 0.12,
+            'preserve_mean': True
+        },
+        
+        'hybrid_lpsvd': {
+            'method': 'combined_enhancement',
+            'methods': ['lpsvd', 'adaptive_smoothing'],
+            'svd_rank': 20,
+            'lpsvd_order': 10,
+            'enhancement_factor': 1.2,
+            'noise_threshold': 0.06,
+            'smooth_sigma': 0.5,
+            'edge_sigma': 0.2
         }
     }
 
@@ -584,7 +877,8 @@ def enhance_slice_background(slice_data: np.ndarray,
         **enhancement_params,
         random_state=random_state
     )
-    
+    if sharpening_method==None:
+        sharpening_method="lpsvd"
     # Apply sharpening if requested
     if apply_sharpening:
         if sharpening_params is None:

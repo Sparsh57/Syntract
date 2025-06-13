@@ -13,20 +13,20 @@ import random
 
 try:
     from .contrast import apply_contrast_enhancement, apply_comprehensive_slice_processing
-    from .effects import apply_smart_dark_field_effect
+    from .effects import apply_smart_dark_field_effect, apply_gentle_dark_field_effect, apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect, apply_anatomically_aware_dark_field_effect, apply_natural_anatomical_enhancement
     from .masking import create_fiber_mask
     from .utils import (
-        densify_streamline, 
+        densify_streamline,
         generate_tract_color_variation,
         get_colormap,
         select_random_streamlines
     )
 except ImportError:
     from contrast import apply_contrast_enhancement, apply_comprehensive_slice_processing
-    from effects import apply_smart_dark_field_effect
+    from effects import apply_smart_dark_field_effect, apply_gentle_dark_field_effect, apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect, apply_anatomically_aware_dark_field_effect, apply_natural_anatomical_enhancement
     from masking import create_fiber_mask
     from utils import (
-        densify_streamline, 
+        densify_streamline,
         generate_tract_color_variation,
         get_colormap,
         select_random_streamlines
@@ -35,7 +35,7 @@ except ImportError:
 
 def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1, cmap='gray',
                              clahe_clip_limit=0.01, clahe_tile_grid_size=32, intensity_params=None,
-                             tract_color_base=(1.0, 1.0, 0.0), tract_color_variation=0.2,
+                             tract_color_base=(1.0, 0.8, 0.1), tract_color_variation=0.2,
                              slice_idx=None, streamline_percentage=100.0, roi_sphere=None,
                              tract_linewidth=1.0, save_masks=False, mask_thickness=1,
                              density_threshold=0.15, gaussian_sigma=2.0, random_state=None,
@@ -44,7 +44,7 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
                              background_enhancement=None, cornucopia_augmentation=None):
     """
     Visualize multiple axial slices of a nifti file with tractography overlaid.
-    
+
     Parameters
     ----------
     background_enhancement : str or dict, optional
@@ -55,13 +55,13 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
     if random_state is not None:
         random.seed(random_state)
         np.random.seed(random_state)
-    
+
     if contrast_params is None:
         contrast_params = {
             'clip_limit': clahe_clip_limit,
             'tile_grid_size': (max(32, clahe_tile_grid_size), max(32, clahe_tile_grid_size))
         }
-    
+
     # Load data
     nii_img = nib.load(nifti_file)
     nii_data = nii_img.get_fdata()
@@ -82,7 +82,7 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
     if has_streamlines:
         affine_inv = np.linalg.inv(nii_img.affine)
         streamlines_voxel = list(transform_streamlines(streamlines, affine_inv))
-        
+
         if streamline_percentage < 100.0:
             print(f"Randomly selecting {streamline_percentage}% of streamlines")
             streamlines_voxel = select_random_streamlines(streamlines_voxel, streamline_percentage, random_state=random_state)
@@ -110,7 +110,7 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
             'color_scheme': random.choice(['bw', 'blue']),
             'blue_tint': random.uniform(0.1, 0.4)
         }
-    
+
     # Get colormap
     color_scheme = intensity_params.get('color_scheme', 'bw')
     blue_tint = intensity_params.get('blue_tint', 0.3)
@@ -123,9 +123,9 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
     # Process each slice
     for i, slice_idx in enumerate(slice_positions):
         slice_intensity_params = intensity_params.copy() if intensity_params else None
-        
+
         slice_data = nii_data[:, :, slice_idx]
-        
+
         # Apply processing based on user preferences (don't force processing)
         slice_enhanced = apply_comprehensive_slice_processing(
             slice_data,
@@ -137,22 +137,24 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
             contrast_params=contrast_params,
             random_state=random_state
         )
-        
-        dark_field_slice = apply_smart_dark_field_effect(
-            slice_enhanced, 
-            slice_intensity_params, 
-            preserve_ventricles=False,  # Explicitly disable to prevent fake ventricles
-            random_state=random_state
+
+        # Apply gentle, natural anatomical enhancement for realistic appearance  
+        # This preserves natural tissue contrast while subtly enhancing white matter
+        dark_field_slice = apply_natural_anatomical_enhancement(
+            slice_enhanced,
+            slice_intensity_params,
+            random_state=random_state,
+            force_background_black=True
         )
 
         axes[i].imshow(np.rot90(dark_field_slice), cmap=dark_field_cmap, aspect='equal', interpolation='bilinear')
         axes[i].set_facecolor('black')
-        
+
         # Create mask if requested
         if save_masks and has_streamlines:
             if label_bundles:
                 mask, labeled_mask = create_fiber_mask(
-                    streamlines_voxel, slice_idx, orientation='axial', 
+                    streamlines_voxel, slice_idx, orientation='axial',
                     dims=dims, thickness=mask_thickness, dilate=True,
                     density_threshold=density_threshold, gaussian_sigma=gaussian_sigma,
                     close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
@@ -164,7 +166,7 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
                 labeled_masks.append(labeled_mask)
             else:
                 mask = create_fiber_mask(
-                    streamlines_voxel, slice_idx, orientation='axial', 
+                    streamlines_voxel, slice_idx, orientation='axial',
                     dims=dims, thickness=mask_thickness, dilate=True,
                     density_threshold=density_threshold, gaussian_sigma=gaussian_sigma,
                     close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
@@ -172,7 +174,7 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
                 )
                 mask = np.rot90(mask)
                 fiber_masks.append(mask)
-        
+
         # Add streamlines
         if has_streamlines:
             segments = []
@@ -182,28 +184,29 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
                 x = sl_dense[:, 0]
                 y = sl_dense[:, 1]
                 z = sl_dense[:, 2]
-                
+
                 distance_to_slice = np.abs(z - slice_idx)
                 min_distance = np.min(distance_to_slice)
                 if min_distance > 2.0:
                     continue
-                
+
                 y_plot = dims[1] - y - 1
                 points = np.array([x, y_plot]).T.reshape(-1, 1, 2)
                 segs = np.concatenate([points[:-1], points[1:]], axis=1)
-                
+
                 tract_color = generate_tract_color_variation(tract_color_base, tract_color_variation, random_state=random_state)
-                base_opacity = max(0.0, 1.0 - min_distance / 2.0)
-                
+                # Reduce fiber contrast to make them less obvious and blend better with background
+                base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.7)
+
                 for seg in segs:
                     segments.append(seg)
                     colors.append(tract_color + (base_opacity,))
-                    
+
             if segments:
                 linewidth = tract_linewidth * random.uniform(0.9, 1.1)
                 lc = LineCollection(segments, colors=colors, linewidths=linewidth)
                 axes[i].add_collection(lc)
-        
+
         axes[i].axis('off')
 
     plt.tight_layout()
@@ -212,7 +215,7 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
     if output_file:
         plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor='black', pad_inches=0)
         print(f"Figure saved to {output_file}")
-        
+
         # Save masks if requested
         if save_masks and fiber_masks:
             _save_masks(output_file, fiber_masks, labeled_masks, slice_positions, label_bundles)
@@ -227,7 +230,7 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
 
 def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_slices=1, cmap='gray',
                              clahe_clip_limit=0.01, clahe_tile_grid_size=32, intensity_params=None,
-                             tract_color_base=(1.0, 1.0, 0.0), tract_color_variation=0.2,
+                             tract_color_base=(1.0, 0.8, 0.1), tract_color_variation=0.2,
                              slice_idx=None, streamline_percentage=100.0, roi_sphere=None,
                              tract_linewidth=1.0, save_masks=False, mask_thickness=1,
                              density_threshold=0.15, gaussian_sigma=2.0, random_state=None,
@@ -236,7 +239,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                              background_enhancement=None, cornucopia_augmentation=None):
     """
     Visualize multiple coronal slices of a nifti file with tractography overlaid.
-    
+
     Parameters
     ----------
     background_enhancement : str or dict, optional
@@ -247,13 +250,13 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
     if random_state is not None:
         random.seed(random_state)
         np.random.seed(random_state)
-    
+
     if contrast_params is None:
         contrast_params = {
             'clip_limit': clahe_clip_limit,
             'tile_grid_size': (max(32, clahe_tile_grid_size), max(32, clahe_tile_grid_size))
         }
-    
+
     # Load data
     nii_img = nib.load(nifti_file)
     nii_data = nii_img.get_fdata()
@@ -274,7 +277,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
     if has_streamlines:
         affine_inv = np.linalg.inv(nii_img.affine)
         streamlines_voxel = list(transform_streamlines(streamlines, affine_inv))
-        
+
         if streamline_percentage < 100.0:
             print(f"Randomly selecting {streamline_percentage}% of streamlines")
             streamlines_voxel = select_random_streamlines(streamlines_voxel, streamline_percentage, random_state=random_state)
@@ -302,7 +305,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
             'color_scheme': random.choice(['bw', 'blue']),
             'blue_tint': random.uniform(0.1, 0.4)
         }
-    
+
     # Get colormap
     color_scheme = intensity_params.get('color_scheme', 'bw')
     blue_tint = intensity_params.get('blue_tint', 0.3)
@@ -315,9 +318,9 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
     # Process each slice
     for i, slice_idx in enumerate(slice_positions):
         slice_intensity_params = intensity_params.copy() if intensity_params else None
-        
+
         slice_data = nii_data[:, slice_idx, :]
-        
+
         # Apply processing based on user preferences (don't force processing)
         slice_enhanced = apply_comprehensive_slice_processing(
             slice_data,
@@ -329,22 +332,24 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
             contrast_params=contrast_params,
             random_state=random_state
         )
-        
-        dark_field_slice = apply_smart_dark_field_effect(
-            slice_enhanced, 
-            slice_intensity_params, 
-            preserve_ventricles=False,  # Explicitly disable to prevent fake ventricles
-            random_state=random_state
+
+        # Apply gentle, natural anatomical enhancement for realistic appearance  
+        # This preserves natural tissue contrast while subtly enhancing white matter
+        dark_field_slice = apply_natural_anatomical_enhancement(
+            slice_enhanced,
+            slice_intensity_params,
+            random_state=random_state,
+            force_background_black=True
         )
 
         axes[i].imshow(np.rot90(dark_field_slice), cmap=dark_field_cmap, aspect='equal', interpolation='bilinear')
         axes[i].set_facecolor('black')
-        
+
         # Create mask if requested
         if save_masks and has_streamlines:
             if label_bundles:
                 mask, labeled_mask = create_fiber_mask(
-                    streamlines_voxel, slice_idx, orientation='coronal', 
+                    streamlines_voxel, slice_idx, orientation='coronal',
                     dims=dims, thickness=mask_thickness, dilate=True,
                     density_threshold=density_threshold, gaussian_sigma=gaussian_sigma,
                     close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
@@ -356,7 +361,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                 labeled_masks.append(labeled_mask)
             else:
                 mask = create_fiber_mask(
-                    streamlines_voxel, slice_idx, orientation='coronal', 
+                    streamlines_voxel, slice_idx, orientation='coronal',
                     dims=dims, thickness=mask_thickness, dilate=True,
                     density_threshold=density_threshold, gaussian_sigma=gaussian_sigma,
                     close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
@@ -364,7 +369,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                 )
                 mask = np.rot90(mask)
                 fiber_masks.append(mask)
-        
+
         # Add streamlines
         if has_streamlines:
             segments = []
@@ -374,28 +379,29 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                 x = sl_dense[:, 0]
                 y = sl_dense[:, 1]
                 z = sl_dense[:, 2]
-                
+
                 distance_to_slice = np.abs(y - slice_idx)
                 min_distance = np.min(distance_to_slice)
                 if min_distance > 2.0:
                     continue
-                
+
                 z_plot = dims[2] - z - 1
                 points = np.array([x, z_plot]).T.reshape(-1, 1, 2)
                 segs = np.concatenate([points[:-1], points[1:]], axis=1)
-                
+
                 tract_color = generate_tract_color_variation(tract_color_base, tract_color_variation, random_state=random_state)
-                base_opacity = max(0.0, 1.0 - min_distance / 2.0)
-                
+                # Reduce fiber contrast to make them less obvious and blend better with background
+                base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.7)
+
                 for seg in segs:
                     segments.append(seg)
                     colors.append(tract_color + (base_opacity,))
-                    
+
             if segments:
                 linewidth = tract_linewidth * random.uniform(0.9, 1.1)
                 lc = LineCollection(segments, colors=colors, linewidths=linewidth)
                 axes[i].add_collection(lc)
-        
+
         axes[i].axis('off')
 
     plt.tight_layout()
@@ -404,7 +410,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
     if output_file:
         plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor='black', pad_inches=0)
         print(f"Figure saved to {output_file}")
-        
+
         # Save masks if requested
         if save_masks and fiber_masks:
             _save_masks(output_file, fiber_masks, labeled_masks, slice_positions, label_bundles)
@@ -419,7 +425,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
 
 def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray',
                              clahe_clip_limit=0.01, clahe_tile_grid_size=32, intensity_params=None,
-                             tract_color_base=(1.0, 1.0, 0.0), tract_color_variation=0.2,
+                             tract_color_base=(1.0, 0.8, 0.1), tract_color_variation=0.2,
                              streamline_percentage=100.0, roi_sphere=None,
                              tract_linewidth=1.0, save_masks=False, mask_thickness=1,
                              density_threshold=0.15, gaussian_sigma=2.0, random_state=None,
@@ -431,7 +437,7 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
     if random_state is not None:
         random.seed(random_state)
         np.random.seed(random_state)
-    
+
     # Load data
     nii_img = nib.load(nifti_file)
     nii_data = nii_img.get_fdata()
@@ -452,7 +458,7 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
     if has_streamlines:
         affine_inv = np.linalg.inv(nii_img.affine)
         streamlines_voxel = list(transform_streamlines(streamlines, affine_inv))
-        
+
         if streamline_percentage < 100.0:
             print(f"Randomly selecting {streamline_percentage}% of streamlines")
             streamlines_voxel = select_random_streamlines(streamlines_voxel, streamline_percentage, random_state=random_state)
@@ -471,7 +477,7 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
             'color_scheme': random.choice(['bw', 'blue']),
             'blue_tint': random.uniform(0.1, 0.4)
         }
-    
+
     # Get colormap
     color_scheme = intensity_params.get('color_scheme', 'bw')
     blue_tint = intensity_params.get('blue_tint', 0.3)
@@ -492,7 +498,7 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
             slice_data = nii_data[:, slice_idx, :]
         else:  # sagittal
             slice_data = nii_data[slice_idx, :, :]
-        
+
         # Apply processing based on user preferences (don't force processing)
         slice_enhanced = apply_comprehensive_slice_processing(
             slice_data,
@@ -500,12 +506,14 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
             contrast_method='clahe',
             contrast_params={'clip_limit': clahe_clip_limit, 'tile_grid_size': (clahe_tile_grid_size, clahe_tile_grid_size)}
         )
-        
-        dark_field_slice = apply_smart_dark_field_effect(
-            slice_enhanced, 
-            intensity_params, 
-            preserve_ventricles=False,  # Explicitly disable to prevent fake ventricles
-            random_state=random_state
+
+        # Apply gentle, natural anatomical enhancement for realistic appearance  
+        # This preserves natural tissue contrast while subtly enhancing white matter
+        dark_field_slice = apply_natural_anatomical_enhancement(
+            slice_enhanced,
+            intensity_params,
+            random_state=random_state,
+            force_background_black=True
         )
 
         axes[view_idx].imshow(np.rot90(dark_field_slice), cmap=dark_field_cmap, aspect='equal', interpolation='bilinear')
@@ -563,7 +571,8 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
                 
                 segs = np.concatenate([points[:-1], points[1:]], axis=1)
                 tract_color = generate_tract_color_variation(tract_color_base, tract_color_variation, random_state=random_state)
-                base_opacity = max(0.0, 1.0 - min_distance / distance_threshold)
+                # Reduce fiber contrast to make them less obvious and blend better with background
+                base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.7)
                 
                 for seg in segs:
                     segments.append(seg)
