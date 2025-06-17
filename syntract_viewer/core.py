@@ -13,7 +13,7 @@ import random
 
 try:
     from .contrast import apply_contrast_enhancement, apply_comprehensive_slice_processing
-    from .effects import apply_smart_dark_field_effect, apply_gentle_dark_field_effect, apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect, apply_anatomically_aware_dark_field_effect, apply_natural_anatomical_enhancement
+    from .effects import apply_smart_dark_field_effect, apply_gentle_dark_field_effect, apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
     from .masking import create_fiber_mask
     from .utils import (
         densify_streamline,
@@ -23,7 +23,7 @@ try:
     )
 except ImportError:
     from contrast import apply_contrast_enhancement, apply_comprehensive_slice_processing
-    from effects import apply_smart_dark_field_effect, apply_gentle_dark_field_effect, apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect, apply_anatomically_aware_dark_field_effect, apply_natural_anatomical_enhancement
+    from effects import apply_smart_dark_field_effect, apply_gentle_dark_field_effect, apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
     from masking import create_fiber_mask
     from utils import (
         densify_streamline,
@@ -138,9 +138,9 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
             random_state=random_state
         )
 
-        # Apply gentle, natural anatomical enhancement for realistic appearance  
-        # This preserves natural tissue contrast while subtly enhancing white matter
-        dark_field_slice = apply_natural_anatomical_enhancement(
+        # Use balanced dark field effect for good artifact removal with smooth transitions
+        # Preserve bright blockface areas by not forcing background to black
+        dark_field_slice = apply_balanced_dark_field_effect(
             slice_enhanced,
             slice_intensity_params,
             random_state=random_state,
@@ -195,8 +195,8 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
                 segs = np.concatenate([points[:-1], points[1:]], axis=1)
 
                 tract_color = generate_tract_color_variation(tract_color_base, tract_color_variation, random_state=random_state)
-                # Reduce fiber contrast to make them less obvious and blend better with background
-                base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.7)
+                # Reduce fiber contrast to make them less obvious and blend better with dark background
+                base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.4)
 
                 for seg in segs:
                     segments.append(seg)
@@ -333,9 +333,9 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
             random_state=random_state
         )
 
-        # Apply gentle, natural anatomical enhancement for realistic appearance  
-        # This preserves natural tissue contrast while subtly enhancing white matter
-        dark_field_slice = apply_natural_anatomical_enhancement(
+        # Use balanced dark field effect for good artifact removal with smooth transitions
+        # Preserve bright blockface areas by not forcing background to black
+        dark_field_slice = apply_balanced_dark_field_effect(
             slice_enhanced,
             slice_intensity_params,
             random_state=random_state,
@@ -390,8 +390,8 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                 segs = np.concatenate([points[:-1], points[1:]], axis=1)
 
                 tract_color = generate_tract_color_variation(tract_color_base, tract_color_variation, random_state=random_state)
-                # Reduce fiber contrast to make them less obvious and blend better with background
-                base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.7)
+                # Reduce fiber contrast to make them less obvious and blend better with dark background
+                base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.4)
 
                 for seg in segs:
                     segments.append(seg)
@@ -507,9 +507,9 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
             contrast_params={'clip_limit': clahe_clip_limit, 'tile_grid_size': (clahe_tile_grid_size, clahe_tile_grid_size)}
         )
 
-        # Apply gentle, natural anatomical enhancement for realistic appearance  
-        # This preserves natural tissue contrast while subtly enhancing white matter
-        dark_field_slice = apply_natural_anatomical_enhancement(
+        # Use balanced dark field effect for good artifact removal with smooth transitions
+        # Preserve bright blockface areas by not forcing background to black
+        dark_field_slice = apply_balanced_dark_field_effect(
             slice_enhanced,
             intensity_params,
             random_state=random_state,
@@ -571,8 +571,8 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
                 
                 segs = np.concatenate([points[:-1], points[1:]], axis=1)
                 tract_color = generate_tract_color_variation(tract_color_base, tract_color_variation, random_state=random_state)
-                # Reduce fiber contrast to make them less obvious and blend better with background
-                base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.7)
+                # Reduce fiber contrast to make them less obvious and blend better with dark background
+                base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.4)
                 
                 for seg in segs:
                     segments.append(seg)

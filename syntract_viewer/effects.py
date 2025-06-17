@@ -873,10 +873,20 @@ def apply_blockface_preserving_dark_field_effect(slice_clahe, intensity_params=N
     # Combine brain and background
     result = brain_region + background_region
     
-    # STEP 2: Now identify and selectively preserve blockface areas
-    blockface_areas = slice_clahe > bright_threshold
+    # STEP 2: Identify tissue density areas for enhanced contrast
+    # Create multiple density levels for realistic tissue contrast enhancement
+    medium_tissue_threshold = 0.15  # Medium density tissue
+    high_tissue_threshold = 0.25    # High density tissue  
+    very_high_tissue_threshold = bright_threshold  # Very high density (blockface)
     
-    # Store the original blockface values for selective restoration
+    # Identify different tissue density areas
+    medium_tissue_areas = (slice_clahe > medium_tissue_threshold) & (slice_clahe <= high_tissue_threshold)
+    high_tissue_areas = (slice_clahe > high_tissue_threshold) & (slice_clahe <= very_high_tissue_threshold)
+    blockface_areas = slice_clahe > very_high_tissue_threshold
+    
+    # Store the original values for selective restoration
+    original_medium_values = slice_clahe[medium_tissue_areas] if np.any(medium_tissue_areas) else None
+    original_high_values = slice_clahe[high_tissue_areas] if np.any(high_tissue_areas) else None
     original_blockface_values = slice_clahe[blockface_areas] if np.any(blockface_areas) else None
     
         # STEP 3: Apply COMPREHENSIVE ARTIFACT REMOVAL (same as smart dark field)
@@ -961,41 +971,93 @@ def apply_blockface_preserving_dark_field_effect(slice_clahe, intensity_params=N
                         replacement_value = np.mean(surrounding_region[surrounding_mask])
                         result[dark_spot_mask] = replacement_value * np.random.uniform(0.9, 1.1)
 
-    # STEP 4: Process blockface areas with contrast enhancement but NO inversion
+    # STEP 4: Process different tissue density areas with SUBTLE darkfield-appropriate enhancement
+    
+    # Process medium density tissue areas - very dark for authentic darkfield
+    if np.any(medium_tissue_areas) and original_medium_values is not None:
+        medium_processed = original_medium_values.copy()
+        
+        # Apply moderate smoothing like balanced version
+        medium_smoothed = filters.gaussian(medium_processed, sigma=0.6)
+        
+        # More aggressive contrast stretching like balanced version
+        p_low, p_high = (2.0, 95.0)  # Tighter range for better contrast
+        p1, p99 = np.percentile(medium_smoothed, (p_low, p_high))
+        if p99 > p1:
+            medium_stretched = exposure.rescale_intensity(medium_smoothed, in_range=(p1, p99))
+        else:
+            medium_stretched = medium_smoothed
+        
+        # Much darker enhancement for authentic darkfield appearance
+        medium_enhanced = medium_stretched * 1.05  # Very minimal boost for dark look
+        medium_final = np.clip(medium_enhanced * 0.1, 0, 0.25)  # Very dark values for authentic darkfield
+        
+        result[medium_tissue_areas] = medium_final
+    
+    # Process high density tissue areas - very dark for authentic darkfield  
+    if np.any(high_tissue_areas) and original_high_values is not None:
+        high_processed = original_high_values.copy()
+        
+        # Apply moderate contrast enhancement like balanced version
+        high_smoothed = filters.gaussian(high_processed, sigma=0.6)
+        
+        # More aggressive contrast stretching like balanced version
+        p_low, p_high = (1.5, 97.0)  # Tighter range for better contrast
+        p1, p99 = np.percentile(high_smoothed, (p_low, p_high))
+        if p99 > p1:
+            high_stretched = exposure.rescale_intensity(high_smoothed, in_range=(p1, p99))
+        else:
+            high_stretched = high_smoothed
+        
+        # Much darker enhancement for authentic darkfield appearance
+        high_enhanced = high_stretched * 1.08  # Very minimal boost for dark look
+        high_final = np.clip(high_enhanced * 0.2, 0, 0.35)  # Very dark values for authentic darkfield
+        
+        result[high_tissue_areas] = high_final
+    
+    # Process blockface areas (very high density) - selective brightness for authentic darkfield
     if np.any(blockface_areas) and original_blockface_values is not None:
-        # Apply the SAME contrast enhancement as the rest, but without inversion
         blockface_processed = original_blockface_values.copy()
         
-        # Apply same gaussian smoothing
-        blockface_temp = original_blockface_values.copy()
-        blockface_smoothed = filters.gaussian(blockface_temp, sigma=0.5)
+        # Apply enhanced contrast for blockface visibility but keep darkfield character
+        blockface_smoothed = filters.gaussian(blockface_processed, sigma=0.5)
         
-        # Apply same contrast stretching
-        p_low, p_high = intensity_params['contrast_stretch']
+        # Moderate contrast stretching for darkfield authenticity
+        p_low, p_high = (1.0, 98.0)  # Less aggressive for darkfield character
         p1, p99 = np.percentile(blockface_smoothed, (p_low, p_high))
         if p99 > p1:
             blockface_stretched = exposure.rescale_intensity(blockface_smoothed, in_range=(p1, p99))
         else:
             blockface_stretched = blockface_smoothed
         
-        # Apply same background boost
-        blockface_enhanced = blockface_stretched * intensity_params['background_boost']
-        
-        # Apply dulling factor to prevent being too bright
-        dulling_factor = 0.15  # Slightly less dulling to maintain contrast
-        blockface_final = blockface_enhanced * dulling_factor
-        blockface_final = np.clip(blockface_final, 0, 1)
+        # Selective enhancement - only brighten the brightest blockface areas
+        blockface_enhanced = blockface_stretched * 1.2  # Reduced enhancement
+        blockface_final = np.clip(blockface_enhanced * 0.35, 0, 0.55)  # Much darker range for authentic darkfield
         
         result[blockface_areas] = blockface_final
 
-    # STEP 5: Handle background areas
+    # STEP 5: Handle background areas - make them PURE BLACK for maximum contrast
     background_areas = ~full_brain_mask.astype(bool)
 
-    if force_background_black and np.any(background_areas):
-        result[background_areas] = 0.0
-    elif np.any(background_areas):
-        # Dim background instead of forcing to black
-        result[background_areas] *= 0.3
+    # Always force background to pure black for authentic darkfield
+    result[background_areas] = 0.0
+    
+    # STEP 5.5: Apply subtle global contrast enhancement for darkfield realism
+    # Only enhance brain tissue areas to maintain realism
+    brain_tissue_areas = full_brain_mask.astype(bool)
+    if np.any(brain_tissue_areas):
+        # Get current brain tissue values
+        brain_values = result[brain_tissue_areas]
+        
+        # Apply minimal global contrast boost for authentic darkfield
+        non_enhanced_areas = brain_tissue_areas & (~medium_tissue_areas) & (~high_tissue_areas) & (~blockface_areas)
+        if np.any(non_enhanced_areas):
+            # Apply minimal contrast enhancement to maintain authentic darkfield character
+            regular_values = result[non_enhanced_areas]
+            if len(regular_values) > 0 and np.std(regular_values) > 0:
+                # Minimal enhancement for very dark authentic darkfield
+                enhanced_regular = regular_values * 1.02  # Barely any boost for authentic darkfield
+                result[non_enhanced_areas] = np.clip(enhanced_regular, 0, 0.3)  # Very low cap for dark appearance
 
     # STEP 6: Add subtle noise to brain regions only (same as smart dark field)
     if np.any(full_brain_mask):
@@ -1004,331 +1066,37 @@ def apply_blockface_preserving_dark_field_effect(slice_clahe, intensity_params=N
         brain_areas_for_noise = full_brain_mask > 0
         result[brain_areas_for_noise] = np.clip(result[brain_areas_for_noise] + noise[brain_areas_for_noise], 0, 1)
         
-        # Final background cleanup - configurable
-        if force_background_black:
-            background_areas = ~full_brain_mask.astype(bool)
-            result[background_areas] = 0.0
+        # Final background cleanup - always force to pure black for darkfield
+        background_areas = ~full_brain_mask.astype(bool)
+        result[background_areas] = 0.0
+    
+    # STEP 7: Final balanced contrast enhancement 
+    # Apply moderate enhancement like balanced version for good contrast
+    tissue_areas = medium_tissue_areas | high_tissue_areas | blockface_areas
+    if np.any(tissue_areas):
+        # Apply moderate processing for good contrast like balanced version
+        tissue_values = result[tissue_areas]
+        if len(tissue_values) > 0 and np.std(tissue_values) > 0:
+            # Normalize tissue values for processing
+            tissue_min, tissue_max = np.min(tissue_values), np.max(tissue_values)
+            if tissue_max > tissue_min:
+                tissue_normalized = (tissue_values - tissue_min) / (tissue_max - tissue_min)
+                
+                # Apply ultra-subtle adaptive histogram equalization for authentic darkfield
+                try:
+                    tissue_enhanced = exposure.equalize_adapthist(
+                        tissue_normalized.reshape(np.sum(tissue_areas), 1),
+                        clip_limit=0.002,  # Ultra-subtle for authentic darkfield character
+                        kernel_size=None
+                    ).flatten()
+                    
+                    # Scale back to original range with barely any boost
+                    tissue_final = tissue_enhanced * (tissue_max - tissue_min) + tissue_min
+                    tissue_final *= 1.01  # Barely any final boost for darkfield
+                    
+                    result[tissue_areas] = np.clip(tissue_final, 0, 0.55)  # Much lower cap for very dark appearance
+                except:
+                    # If adaptive enhancement fails, apply barely any boost
+                    result[tissue_areas] = np.clip(tissue_values * 1.01, 0, 0.55)
 
-    
-
-    return result
-
-
-def apply_natural_anatomical_enhancement(slice_clahe, intensity_params=None, random_state=None, 
-                                       force_background_black=True):
-    """
-    Apply gentle, natural anatomical enhancement without over-processing.
-    
-    This creates a more realistic appearance by:
-    - Gently enhancing white matter brightness
-    - Preserving natural tissue contrast
-    - Avoiding aggressive dark field inversion
-    - Maintaining anatomical authenticity
-    
-    Parameters
-    ----------
-    slice_clahe : np.ndarray
-        Input slice data after contrast enhancement
-    intensity_params : dict, optional
-        Parameters for intensity adjustments
-    random_state : int, optional
-        Random seed for reproducible results
-    force_background_black : bool, optional
-        Whether to force background areas to black
-        
-    Returns
-    -------
-    np.ndarray
-        Naturally enhanced slice with realistic appearance
-    """
-    if random_state is not None:
-        random.seed(random_state)
-    
-    # Use gentle default parameters
-    if intensity_params is None:
-        intensity_params = {
-            'gamma': random.uniform(0.9, 1.1),
-            'threshold': random.uniform(0.005, 0.015),
-            'contrast_stretch': (random.uniform(1.0, 3.0), random.uniform(97.0, 99.0)),
-            'background_boost': random.uniform(0.95, 1.05),
-            'color_scheme': random.choice(['bw', 'blue']),
-            'blue_tint': random.uniform(0.1, 0.3)
-        }
-    
-    # Start with the original slice
-    result = slice_clahe.copy().astype(np.float64)
-    
-    # Create a gentle brain mask to separate brain from background
-    brain_threshold = np.percentile(result[result > 0], 5) if np.any(result > 0) else 0.01
-    brain_mask = result > brain_threshold
-    
-    if force_background_black:
-        result[~brain_mask] = 0.0
-    
-    if not np.any(brain_mask):
-        return result.astype(slice_clahe.dtype)
-    
-    # Gentle white matter enhancement
-    brain_values = result[brain_mask]
-    if len(brain_values) > 0:
-        # Identify potential white matter (brighter regions)
-        white_matter_threshold = np.percentile(brain_values, 75)
-        white_matter_mask = brain_mask & (result > white_matter_threshold)
-        
-        # Very gentle enhancement of white matter
-        if np.any(white_matter_mask):
-            white_values = result[white_matter_mask]
-            # Subtle brightness boost using gentle gamma correction
-            enhanced_white = np.power(white_values, 0.85)  # Very mild brightening
-            # Small multiplicative boost
-            enhanced_white *= 1.15  # Just 15% brighter
-            result[white_matter_mask] = enhanced_white
-    
-    # Apply very gentle contrast enhancement to brain regions only
-    if np.any(brain_mask):
-        brain_region = result[brain_mask]
-        if len(brain_region) > 0:
-            # Gentle contrast stretch
-            p_low, p_high = intensity_params['contrast_stretch']
-            p1, p99 = np.percentile(brain_region, (p_low, p_high))
-            if p99 > p1:
-                enhanced_brain = exposure.rescale_intensity(brain_region, in_range=(p1, p99))
-                result[brain_mask] = enhanced_brain * intensity_params['background_boost']
-    
-    # Light smoothing to reduce noise while preserving structure
-    if np.any(brain_mask):
-        # Apply very gentle Gaussian smoothing
-        smoothed = filters.gaussian(result, sigma=0.3)
-        # Blend original with smoothed (70% original, 30% smoothed)
-        result = 0.7 * result + 0.3 * smoothed
-    
-    # Apply gentle gamma correction for overall brightness balance
-    gamma = intensity_params['gamma']
-    if gamma != 1.0:
-        # Only apply to brain regions
-        brain_region = result[brain_mask]
-        if len(brain_region) > 0:
-            gamma_corrected = np.power(brain_region, gamma)
-            result[brain_mask] = gamma_corrected
-    
-    # Final gentle thresholding to clean up very dark areas
-    threshold = intensity_params['threshold'] 
-    result[brain_mask & (result < threshold)] = 0
-    
-    # Ensure output is in reasonable range
-    result = np.clip(result, 0, 1)
-    
-    return result.astype(slice_clahe.dtype)
-
-
-def apply_anatomically_aware_dark_field_effect(slice_clahe, intensity_params=None, random_state=None, 
-                                             force_background_black=True):
-    """
-    Apply a dark field effect with anatomically-aware white matter enhancement.
-    
-    This function detects white matter regions and enhances their brightness to appear
-    more white and anatomically realistic, while applying appropriate dark field processing
-    to other tissue types. Reduces dullness and improves contrast differentiation.
-    
-    Parameters
-    ----------
-    slice_clahe : np.ndarray
-        Input slice data after contrast enhancement
-    intensity_params : dict, optional
-        Parameters for intensity adjustments
-    random_state : int, optional
-        Random seed for reproducible results
-    force_background_black : bool, optional
-        Whether to force background areas to black
-        
-    Returns
-    -------
-    np.ndarray
-        Anatomically-aware processed slice with enhanced white matter
-    """
-    if random_state is not None:
-        random.seed(random_state)
-    
-    # Default parameters optimized for anatomical realism
-    if intensity_params is None:
-        intensity_params = {
-            'gamma': random.uniform(0.8, 1.2),
-            'threshold': random.uniform(0.01, 0.03),
-            'contrast_stretch': (random.uniform(0.1, 1.0), random.uniform(99.0, 99.9)),
-            'background_boost': random.uniform(0.9, 1.1),
-            'color_scheme': random.choice(['bw', 'blue']),
-            'blue_tint': random.uniform(0.1, 0.4)
-        }
-    
-    # STEP 1: Identify different tissue types based on intensity
-    
-    # Calculate intensity thresholds for tissue classification
-    non_zero_intensities = slice_clahe[slice_clahe > 0]
-    if len(non_zero_intensities) == 0:
-        return slice_clahe
-    
-    # Use percentiles to identify tissue types
-    background_threshold = 0.015
-    grey_matter_threshold = np.percentile(non_zero_intensities, 25)  # Lower 25% = grey matter
-    white_matter_threshold = np.percentile(non_zero_intensities, 70)  # Upper 30% = white matter
-    very_bright_threshold = np.percentile(non_zero_intensities, 90)   # Top 10% = very bright areas
-    
-    # Create tissue masks
-    background_mask = slice_clahe <= background_threshold
-    grey_matter_mask = (slice_clahe > background_threshold) & (slice_clahe <= grey_matter_threshold)
-    intermediate_mask = (slice_clahe > grey_matter_threshold) & (slice_clahe <= white_matter_threshold)
-    white_matter_mask = (slice_clahe > white_matter_threshold) & (slice_clahe <= very_bright_threshold)
-    very_bright_mask = slice_clahe > very_bright_threshold
-    
-    # STEP 2: Apply different processing to each tissue type
-    
-    # Initialize result with zeros
-    result = np.zeros_like(slice_clahe)
-    
-    # Background: Pure black
-    if force_background_black:
-        result[background_mask] = 0.0
-    
-    # Grey matter: Traditional dark field effect (inverted, dimmed)
-    if np.any(grey_matter_mask):
-        grey_values = slice_clahe[grey_matter_mask]
-        inverted_grey = 1 - grey_values
-        processed_grey = np.power(inverted_grey, intensity_params['gamma'])
-        
-        # Apply gentle contrast enhancement
-        if len(processed_grey) > 0:
-            p_low, p_high = intensity_params['contrast_stretch']
-            p1, p99 = np.percentile(processed_grey, (p_low, p_high))
-            if p99 > p1:
-                processed_grey = exposure.rescale_intensity(processed_grey, in_range=(p1, p99))
-        
-        # Dim grey matter to be darker
-        processed_grey *= 0.4 * intensity_params['background_boost']
-        result[grey_matter_mask] = processed_grey
-    
-    # Intermediate tissue: Moderate processing
-    if np.any(intermediate_mask):
-        intermediate_values = slice_clahe[intermediate_mask]
-        # Light inversion with enhancement
-        light_inverted = 0.8 - (intermediate_values * 0.6)
-        processed_intermediate = np.power(light_inverted, intensity_params['gamma'] * 0.8)
-        processed_intermediate *= 0.6 * intensity_params['background_boost']
-        result[intermediate_mask] = processed_intermediate
-    
-    # White matter: Enhanced brightness, minimal inversion
-    if np.any(white_matter_mask):
-        white_values = slice_clahe[white_matter_mask]
-        
-        # Instead of inversion, enhance brightness while maintaining contrast
-        # Apply gamma correction for brightness enhancement
-        enhanced_white = np.power(white_values, 0.7)  # Brighten with gamma < 1
-        
-        # Apply contrast enhancement specifically for white matter
-        if len(enhanced_white) > 0:
-            # Use tighter contrast stretch for white matter preservation
-            p1, p99 = np.percentile(enhanced_white, (5, 98))
-            if p99 > p1:
-                enhanced_white = exposure.rescale_intensity(enhanced_white, in_range=(p1, p99))
-        
-        # Boost white matter brightness significantly - reduce dullness
-        white_matter_boost = 0.85 * intensity_params['background_boost']  # Much brighter
-        enhanced_white *= white_matter_boost
-        
-        # Apply additional sharpening to white matter for clarity
-        enhanced_white = filters.gaussian(enhanced_white, sigma=0.3)  # Light smoothing
-        
-        result[white_matter_mask] = enhanced_white
-    
-    # Very bright areas (potential blockface): Preserve with enhancement
-    if np.any(very_bright_mask):
-        very_bright_values = slice_clahe[very_bright_mask]
-        
-        # Minimal processing - just enhance and preserve
-        processed_bright = np.power(very_bright_values, 0.6)  # Further brighten
-        
-        # Apply light contrast enhancement
-        if len(processed_bright) > 0:
-            p1, p99 = np.percentile(processed_bright, (2, 99))
-            if p99 > p1:
-                processed_bright = exposure.rescale_intensity(processed_bright, in_range=(p1, p99))
-        
-        # Maximum brightness preservation
-        processed_bright *= 0.9 * intensity_params['background_boost']
-        result[very_bright_mask] = processed_bright
-    
-    # STEP 3: Apply edge enhancement to improve tissue boundaries
-    from skimage import feature
-    
-    # Detect edges for boundary enhancement
-    edges = feature.canny(slice_clahe, sigma=1.0, low_threshold=0.05, high_threshold=0.15)
-    edges_dilated = morphology.binary_dilation(edges, morphology.disk(1))
-    
-    # Enhance boundaries between white matter and other tissues
-    if np.any(edges_dilated):
-        # Boost edge areas slightly for better definition
-        edge_boost = 1.15
-        result[edges_dilated] *= edge_boost
-    
-    # STEP 4: Apply tissue-specific smoothing
-    
-    # Light smoothing for grey matter regions (reduce noise)
-    if np.any(grey_matter_mask):
-        grey_region = result * grey_matter_mask.astype(float)
-        smoothed_grey = filters.gaussian(grey_region, sigma=0.8)
-        result[grey_matter_mask] = smoothed_grey[grey_matter_mask]
-    
-    # Minimal smoothing for white matter (preserve detail)
-    if np.any(white_matter_mask):
-        white_region = result * white_matter_mask.astype(float)
-        smoothed_white = filters.gaussian(white_region, sigma=0.4)
-        result[white_matter_mask] = smoothed_white[white_matter_mask]
-    
-    # STEP 5: Final contrast adjustment and artifact removal
-    
-    # Apply smart thresholding
-    threshold = intensity_params['threshold']
-    brain_region = ~background_mask
-    
-    # Gentle thresholding that preserves white matter
-    result[brain_region & (result < threshold/4)] = 0  # More lenient threshold
-    
-    # Remove small artifacts while preserving anatomical structures
-    if np.any(result > 0):
-        # Remove very small isolated bright spots (likely artifacts)
-        bright_threshold_removal = np.percentile(result[result > 0], 95)
-        bright_regions = result > bright_threshold_removal
-        from skimage import measure
-        labeled_bright = measure.label(bright_regions)
-        regions = measure.regionprops(labeled_bright)
-        
-        brain_area = np.sum(brain_region)
-        min_region_size = max(20, brain_area * 0.0005)  # Smaller threshold to preserve anatomy
-        
-        for region in regions:
-            if region.area < min_region_size:
-                # Check if this is in white matter before removing
-                region_mask = labeled_bright == region.label
-                if np.mean(white_matter_mask[region_mask]) < 0.5:  # Not primarily white matter
-                    result[region_mask] = 0.0
-    
-    # STEP 6: Final brightness and contrast optimization
-    
-    # Ensure good contrast between tissue types
-    if np.any(result > 0):
-        # Apply histogram equalization only to brain regions for better contrast
-        brain_values = result[brain_region & (result > 0)]
-        if len(brain_values) > 100:
-            # Gentle histogram equalization
-            brain_eq = exposure.equalize_hist(brain_values)
-            
-            # Blend with original (50% each for natural appearance)
-            blending_factor = 0.3  # Less aggressive blending
-            result[brain_region & (result > 0)] = (
-                (1 - blending_factor) * brain_values + 
-                blending_factor * brain_eq
-            )
-    
-    # Final cleanup and normalization
-    result = np.clip(result, 0, 1)
-    
-    return result
+    return result 

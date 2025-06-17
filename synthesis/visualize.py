@@ -50,8 +50,8 @@ def overlay_streamlines_on_blockface_coronal(
 
 # Example usage:
 overlay_streamlines_on_blockface_coronal(
-    trk_file="full_find_new.trk",
-    blockface_nifti_file="full_find_new.nii.gz")
+    trk_file="multi_new2.trk",
+    blockface_nifti_file="multi_new2.nii.gz")
 
 
 def visualize_trk_with_nifti(trk_file, nifti_file, save_path=None):

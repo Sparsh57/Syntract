@@ -14,9 +14,7 @@ from .core import (
 from .generation import (
     generate_varied_examples,
     generate_enhanced_varied_examples,
-    generate_enhanced_varied_examples_with_preserved_background,
-    generate_anatomically_realistic_examples,
-    generate_clean_natural_examples
+    generate_enhanced_varied_examples_with_preserved_background
 )
 
 from .masking import (
@@ -36,9 +34,7 @@ from .effects import (
     apply_conservative_dark_field_effect,
     apply_gentle_dark_field_effect,
     apply_balanced_dark_field_effect,
-    apply_blockface_preserving_dark_field_effect,
-    apply_anatomically_aware_dark_field_effect,
-    apply_natural_anatomical_enhancement
+    apply_blockface_preserving_dark_field_effect
 )
 
 from .utils import (
@@ -60,11 +56,11 @@ try:
 except ImportError:
     BACKGROUND_ENHANCEMENT_AVAILABLE = False
 
-# Try to import Cornucopia functionality
+# Try to import Cornucopia functionality (improved version)
 try:
-    from .cornucopia_augmentation import (
-        CornucopiaAugmenter,
-        create_augmentation_presets,
+    from .improved_cornucopia import (
+        ImprovedCornucopiaAugmenter,
+        create_optical_presets,
         augment_fiber_slice
     )
     CORNUCOPIA_INTEGRATION_AVAILABLE = True
@@ -85,8 +81,6 @@ __all__ = [
     'generate_varied_examples',
     'generate_enhanced_varied_examples',
     'generate_enhanced_varied_examples_with_preserved_background',
-    'generate_anatomically_realistic_examples',
-    'generate_clean_natural_examples',
     
     # Masking
     'create_fiber_mask',
@@ -104,8 +98,6 @@ __all__ = [
     'apply_gentle_dark_field_effect',
     'apply_balanced_dark_field_effect',
     'apply_blockface_preserving_dark_field_effect',
-    'apply_anatomically_aware_dark_field_effect',
-    'apply_natural_anatomical_enhancement',
     
     # Utils
     'select_random_streamlines',
@@ -130,7 +122,7 @@ if BACKGROUND_ENHANCEMENT_AVAILABLE:
 # Add Cornucopia exports if available
 if CORNUCOPIA_INTEGRATION_AVAILABLE:
     __all__.extend([
-        'CornucopiaAugmenter',
-        'create_augmentation_presets',
+        'ImprovedCornucopiaAugmenter',
+        'create_optical_presets',
         'augment_fiber_slice'
     ]) 
