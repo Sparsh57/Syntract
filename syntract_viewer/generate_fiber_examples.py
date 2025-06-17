@@ -442,9 +442,9 @@ def main():
     
     # Randomization parameters
     parser.add_argument('--randomize', action='store_true',
-                        help='Randomize parameters per example: min/max streamline percentage (5-30%% to 70-100%%), '
-                             'streamline appearance (linewidth 0.5-1.5), cornucopia preset (None/aggressive/clinical_simulation), '
-                             'and background effect (balanced/blockface_preserving)')
+                        help='Randomize parameters per example: min/max streamline percentage (5-30%% to 70-100%% for balanced, '
+                             '15-40%% to 80-100%% for blockface_preserving), streamline appearance (linewidth 0.5-1.5), '
+                             'cornucopia preset (None/aggressive/clinical_simulation), and background effect (balanced/blockface_preserving)')
     
     args = parser.parse_args()
     
@@ -498,14 +498,14 @@ def main():
         print(f"- {args.examples} examples per subdivision")
         print(f"- Each subdivision contains a different spatial region of the brain")
         if args.randomize:
-            print(f"- Randomized parameters: streamline percentages (5-30% to 70-100%), tract appearance, Cornucopia presets, background effects")
+            print(f"- Randomized parameters: streamline percentages (5-30% to 70-100% for balanced, 15-40% to 80-100% for blockface_preserving), tract appearance, Cornucopia presets, background effects")
     else:
         print("The dataset includes:")
         print(f"- {args.examples} synthetic images with varying fiber densities")
         print(f"- Corresponding ground truth masks for segmentation")
         if args.randomize:
             print(f"- Randomized parameters per example:")
-            print(f"  • Min/max streamline percentages: 5-30% to 70-100%")
+            print(f"  • Min/max streamline percentages: 5-30% to 70-100% (balanced), 15-40% to 80-100% (blockface_preserving)")
             print(f"  • Tract linewidth: 0.5-1.5")
             print(f"  • Cornucopia preset: None/aggressive/clinical_simulation")
             print(f"  • Background effect: balanced/blockface_preserving")

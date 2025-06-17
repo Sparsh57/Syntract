@@ -458,10 +458,19 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
 
         # Randomize parameters if requested
         if randomize:
-            # 1. Randomize min/max fiber percentages
-            # Generate a random range where min is 5-30% and max is 70-100%
-            random_min_fiber = random.uniform(5.0, 30.0)
-            random_max_fiber = random.uniform(70.0, 100.0)
+            # 4. Randomize background effect first (so we can adjust fiber percentage based on it)
+            current_background_effect = random.choice(background_effects)
+            
+            # 1. Randomize min/max fiber percentages based on background effect
+            if current_background_effect == 'blockface_preserving':
+                # Higher fiber percentages for blockface preserving (better contrast against bright areas)
+                random_min_fiber = random.uniform(15.0, 40.0)  # Higher min: 15-40% instead of 5-30%
+                random_max_fiber = random.uniform(80.0, 100.0)  # Higher max: 80-100% instead of 70-100%
+                print(f"   Using higher fiber percentages for blockface_preserving effect")
+            else:  # 'balanced'
+                # Standard fiber percentages for balanced effect
+                random_min_fiber = random.uniform(5.0, 30.0)
+                random_max_fiber = random.uniform(70.0, 100.0)
             
             # Calculate actual fiber percentage for this example
             if n_examples > 1:
@@ -477,14 +486,11 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
             current_cornucopia_preset = random.choice(cornucopia_options)
             current_cornucopia_config = cornucopia_configs.get(current_cornucopia_preset, None)
             
-            # 4. Randomize background effect
-            current_background_effect = random.choice(background_effects)
-            
             print(f"Example {i+1} randomized parameters:")
+            print(f"   Background effect: {current_background_effect}")
             print(f"   Fiber range: {random_min_fiber:.1f}% - {random_max_fiber:.1f}% (using {fiber_pct:.1f}%)")
             print(f"   Tract linewidth: {random_tract_linewidth:.2f}")
             print(f"   Cornucopia: {current_cornucopia_preset}")
-            print(f"   Background effect: {current_background_effect}")
             
         else:
             # Use base parameters
@@ -671,7 +677,7 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
             mask = np.rot90(mask)
     
     # Overlay streamlines
-    _add_streamlines_to_plot(ax, selected_streamlines, slice_mode, slice_idx, dims, tract_linewidth, example_random_state)
+    _add_streamlines_to_plot(ax, selected_streamlines, slice_mode, slice_idx, dims, tract_linewidth, example_random_state, background_effect)
     
     ax.axis('off')
     plt.tight_layout()
@@ -703,12 +709,21 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
     plt.close()
 
 
-def _add_streamlines_to_plot(ax, streamlines, slice_mode, slice_idx, dims, tract_linewidth, random_state):
-    """Add streamlines to the plot."""
+def _add_streamlines_to_plot(ax, streamlines, slice_mode, slice_idx, dims, tract_linewidth, random_state, background_effect='balanced'):
+    """Add streamlines to the plot with opacity adjusted based on background effect."""
     from matplotlib.collections import LineCollection
     
     segments = []
     colors = []
+    
+    # Adjust base opacity based on background effect
+    if background_effect == 'blockface_preserving':
+        # Higher opacity for blockface preserving to make fibers more visible against preserved bright areas
+        opacity_multiplier = 2  # Increase opacity by 50%
+        print(f"   Using higher fiber opacity for blockface_preserving effect")
+    else:  # 'balanced' or other effects
+        # Current opacity level for balanced effect
+        opacity_multiplier = 1.0
     
     for sl in streamlines:
         sl_dense = densify_streamline(sl)
@@ -758,12 +773,13 @@ def _add_streamlines_to_plot(ax, streamlines, slice_mode, slice_idx, dims, tract
             tract_color_base, 0.3, random_state=random_state  # Increased variation
         )
         
-        # Adjust opacity - reduce fiber contrast to blend better with background
+        # Adjust opacity based on background effect and distance
         base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.5)
+        adjusted_opacity = min(1.0, base_opacity * opacity_multiplier)  # Cap at 1.0
         
         for seg in segs:
             segments.append(seg)
-            colors.append(tract_color + (base_opacity,))
+            colors.append(tract_color + (adjusted_opacity,))
     
     # Add streamlines to plot
     if segments:
