@@ -15,13 +15,13 @@ try:
     from .core import visualize_nifti_with_trk, visualize_nifti_with_trk_coronal, visualize_multiple_views
     from .contrast import apply_enhanced_contrast_and_augmentation, CORNUCOPIA_INTEGRATION_AVAILABLE
     from .masking import create_aggressive_brain_mask, create_fiber_mask
-    from .effects import apply_smart_dark_field_effect, apply_gentle_dark_field_effect, apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect, apply_anatomically_aware_dark_field_effect, apply_natural_anatomical_enhancement
+    from .effects import apply_smart_dark_field_effect, apply_gentle_dark_field_effect, apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
     from .utils import select_random_streamlines, densify_streamline, generate_tract_color_variation, get_colormap
 except ImportError:
     from core import visualize_nifti_with_trk, visualize_nifti_with_trk_coronal, visualize_multiple_views
     from contrast import apply_enhanced_contrast_and_augmentation, CORNUCOPIA_INTEGRATION_AVAILABLE
     from masking import create_aggressive_brain_mask, create_fiber_mask
-    from effects import apply_smart_dark_field_effect, apply_gentle_dark_field_effect, apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect, apply_anatomically_aware_dark_field_effect, apply_natural_anatomical_enhancement
+    from effects import apply_smart_dark_field_effect, apply_gentle_dark_field_effect, apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
     from utils import select_random_streamlines, densify_streamline, generate_tract_color_variation, get_colormap
 
 
@@ -241,15 +241,23 @@ def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir,
                                     use_cornucopia_per_example=False,
                                     use_background_enhancement=True,
                                     close_gaps=False, closing_footprint_size=5,
+                                    randomize=False,
                                     random_state=None, **kwargs):
     """
     Generate varied examples with enhanced augmentations using Cornucopia and background enhancement.
+    
+    Parameters
+    ----------
+    randomize : bool
+        If True, randomize min/max streamline percentages, streamline appearance,
+        cornucopia preset (present or not, which one), and background effect type
+        for each example
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    # Set up augmentation configuration
+    # Set up base augmentation configuration
     augmentation_config = None
-    if use_cornucopia_per_example and cornucopia_preset and CORNUCOPIA_INTEGRATION_AVAILABLE:
+    if use_cornucopia_per_example and cornucopia_preset and CORNUCOPIA_INTEGRATION_AVAILABLE and not randomize:
         try:
             try:
                 from .cornucopia_augmentation import create_augmentation_presets
@@ -266,9 +274,9 @@ def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir,
             print(f"Warning: Failed to create augmentation config: {e}")
             augmentation_config = None
 
-    # Set up background enhancement configuration
+    # Set up base background enhancement configuration
     background_config = None
-    if use_background_enhancement:
+    if use_background_enhancement and not randomize:
         try:
             try:
                 from .background_enhancement import create_enhancement_presets
@@ -290,18 +298,23 @@ def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir,
 
     if contrast_params is None:
         contrast_params = {
-            'clip_limit': 0.04,
+            'clip_limit': 0.01,
             'tile_grid_size': (8, 8)
         }
 
     print(f"🚀 Generating {n_examples} enhanced examples with advanced processing")
-    print(f"   Contrast method: {contrast_method}")
-    print(f"   Background enhancement: {background_config if background_config else 'disabled'}")
-    print(f"   Cornucopia preset: {cornucopia_preset if augmentation_config else 'disabled'}")
+    print(f"   Randomize mode: {randomize}")
+    if not randomize:
+        print(f"   Contrast method: {contrast_method}")
+        print(f"   Background enhancement: {background_config if background_config else 'disabled'}")
+        print(f"   Cornucopia preset: {cornucopia_preset if augmentation_config else 'disabled'}")
+    else:
+        print(f"   Parameters will be randomized for each example")
     print(f"   Cornucopia available: {CORNUCOPIA_INTEGRATION_AVAILABLE}")
 
     # Generate enhanced examples
-    if (use_cornucopia_per_example and CORNUCOPIA_INTEGRATION_AVAILABLE and augmentation_config is not None) or \
+    if randomize or \
+       (use_cornucopia_per_example and CORNUCOPIA_INTEGRATION_AVAILABLE and augmentation_config is not None) or \
        (use_background_enhancement and background_config is not None):
         print("🎨 Generating examples with comprehensive slice processing...")
 
@@ -327,6 +340,7 @@ def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir,
             background_config=background_config,
             close_gaps=close_gaps,
             closing_footprint_size=closing_footprint_size,
+            randomize=randomize,
             random_state=random_state,
             **kwargs
         )
@@ -355,6 +369,7 @@ def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir,
     # Create summary report
     summary = {
         'n_examples_generated': n_examples,
+        'randomize_mode': randomize,
         'background_enhancement_available': background_config is not None,
         'background_preset_used': background_preset if background_config else None,
         'cornucopia_available': CORNUCOPIA_INTEGRATION_AVAILABLE,
@@ -377,7 +392,7 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
                                              contrast_method='clahe', contrast_params=None,
                                              cornucopia_config=None, background_config=None,
                                              close_gaps=False, closing_footprint_size=5,
-                                             random_state=None, **kwargs):
+                                             randomize=False, random_state=None, **kwargs):
     """Generate examples with comprehensive processing including background enhancement and Cornucopia."""
     if random_state is not None:
         random.seed(random_state)
@@ -409,7 +424,29 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
             slice_idx = dims[0] // 2
 
     if contrast_params is None:
-        contrast_params = {'clip_limit': 0.04, 'tile_grid_size': (8, 8)}
+        contrast_params = {'clip_limit': 0.01, 'tile_grid_size': (8, 8)}
+
+    # Prepare available options for randomization
+    if randomize:
+        # Available cornucopia presets (including None for no cornucopia)
+        cornucopia_options = [None, 'aggressive', 'clinical_simulation']
+        
+        # Available background effects 
+        background_effects = ['balanced', 'blockface_preserving']
+        
+        # Prepare cornucopia configs
+        cornucopia_configs = {None: None}
+        if CORNUCOPIA_INTEGRATION_AVAILABLE:
+            try:
+                try:
+                    from .cornucopia_augmentation import create_augmentation_presets
+                except ImportError:
+                    from cornucopia_augmentation import create_augmentation_presets
+                
+                presets = create_augmentation_presets()
+                cornucopia_configs.update(presets)
+            except Exception as e:
+                print(f"Warning: Failed to load cornucopia presets: {e}")
 
     # Generate examples
     for i in range(n_examples):
@@ -419,19 +456,56 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
             random.seed(example_random_state)
             np.random.seed(example_random_state)
 
-        # Calculate fiber percentage
-        if n_examples > 1:
-            t = i / (n_examples - 1)
-            fiber_pct = min_fiber_percentage + t * (max_fiber_percentage - min_fiber_percentage)
+        # Randomize parameters if requested
+        if randomize:
+            # 1. Randomize min/max fiber percentages
+            # Generate a random range where min is 5-30% and max is 70-100%
+            random_min_fiber = random.uniform(5.0, 30.0)
+            random_max_fiber = random.uniform(70.0, 100.0)
+            
+            # Calculate actual fiber percentage for this example
+            if n_examples > 1:
+                t = i / (n_examples - 1)
+                fiber_pct = random_min_fiber + t * (random_max_fiber - random_min_fiber)
+            else:
+                fiber_pct = (random_min_fiber + random_max_fiber) / 2
+            
+            # 2. Randomize streamline appearance
+            random_tract_linewidth = random.uniform(0.5, 1.5)
+            
+            # 3. Randomize cornucopia preset
+            current_cornucopia_preset = random.choice(cornucopia_options)
+            current_cornucopia_config = cornucopia_configs.get(current_cornucopia_preset, None)
+            
+            # 4. Randomize background effect
+            current_background_effect = random.choice(background_effects)
+            
+            print(f"Example {i+1} randomized parameters:")
+            print(f"   Fiber range: {random_min_fiber:.1f}% - {random_max_fiber:.1f}% (using {fiber_pct:.1f}%)")
+            print(f"   Tract linewidth: {random_tract_linewidth:.2f}")
+            print(f"   Cornucopia: {current_cornucopia_preset}")
+            print(f"   Background effect: {current_background_effect}")
+            
         else:
-            fiber_pct = (min_fiber_percentage + max_fiber_percentage) / 2
+            # Use base parameters
+            if n_examples > 1:
+                t = i / (n_examples - 1)
+                fiber_pct = min_fiber_percentage + t * (max_fiber_percentage - min_fiber_percentage)
+            else:
+                fiber_pct = (min_fiber_percentage + max_fiber_percentage) / 2
+            
+            random_tract_linewidth = tract_linewidth
+            current_cornucopia_config = cornucopia_config
+            current_background_effect = 'balanced'  # default
+            
+            print(f"Example {i+1}: Using {fiber_pct:.1f}% of fibers")
 
         # Select streamlines
         selected_streamlines = select_random_streamlines(
             streamlines_voxel, fiber_pct, random_state=example_random_state
         )
 
-        print(f"Example {i+1}: Using {fiber_pct:.1f}% of fibers ({len(selected_streamlines)} streamlines)")
+        print(f"   Selected {len(selected_streamlines)} streamlines")
 
         # Extract slice data
         if slice_mode == "coronal":
@@ -447,13 +521,20 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
         except ImportError:
             from contrast import apply_comprehensive_slice_processing
 
+        # Use randomized or base background config
+        if randomize:
+            # For randomized mode, always use background enhancement with preserve_edges preset
+            current_background_config = 'preserve_edges'
+        else:
+            current_background_config = background_config
+
         enhanced_slice = apply_comprehensive_slice_processing(
             slice_data,
-            background_preset=background_config,
-            cornucopia_preset=cornucopia_config,
+            background_preset=current_background_config,
+            cornucopia_preset=current_cornucopia_preset if randomize else None,
             contrast_method=contrast_method,
             background_params=None,
-            cornucopia_params=cornucopia_config if isinstance(cornucopia_config, dict) else None,
+            cornucopia_params=current_cornucopia_config if isinstance(current_cornucopia_config, dict) else None,
             contrast_params=contrast_params,
             enable_sharpening=kwargs.get('enable_sharpening', False),
             sharpening_strength=kwargs.get('sharpening_strength', 0.5),
@@ -475,7 +556,8 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
             )
         
         # Additional background cleanup for Cornucopia artifacts
-        if cornucopia_config is not None:
+        if (randomize and current_cornucopia_preset is not None) or \
+           (not randomize and cornucopia_config is not None):
             # Make background cleanup optional and less aggressive
             apply_background_cleanup = kwargs.get('apply_background_cleanup', False)
             if apply_background_cleanup:
@@ -486,11 +568,13 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
                 background_dimming_factor = kwargs.get('background_dimming_factor', 0.3)
                 enhanced_slice[background_areas] *= background_dimming_factor
         
-        # Generate visualization
+        # Generate visualization with randomized background effect
         _create_enhanced_visualization(
             enhanced_slice, selected_streamlines, slice_mode, slice_idx, dims,
-            output_dir, prefix, i, save_masks, cornucopia_config, slice_data,
-            tract_linewidth, example_random_state, 
+            output_dir, prefix, i, save_masks, 
+            current_cornucopia_config if randomize else cornucopia_config, 
+            slice_data, random_tract_linewidth, example_random_state, 
+            background_effect=current_background_effect if randomize else 'balanced',
             close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
             **kwargs
         )
@@ -500,7 +584,8 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
 
 def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_mode, slice_idx, dims,
                                  output_dir, prefix, example_idx, save_masks, cornucopia_config, slice_data,
-                                 tract_linewidth, example_random_state, **kwargs):
+                                 tract_linewidth, example_random_state, 
+                                 background_effect='balanced', **kwargs):
     """Create enhanced visualization with streamlines."""
     # Generate intensity parameters
     intensity_params = {
@@ -512,14 +597,21 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
         'blue_tint': random.uniform(0.1, 0.4)
     }
     
-    # Apply gentle, natural anatomical enhancement for realistic appearance
-    # This preserves natural tissue contrast while subtly enhancing white matter
-    dark_field_slice = apply_blockface_preserving_dark_field_effect(
-        enhanced_slice,
-        intensity_params,
-        random_state=example_random_state,
-        force_background_black=True
-    )
+    # Apply the specified background effect
+    if background_effect == 'blockface_preserving':
+        dark_field_slice = apply_blockface_preserving_dark_field_effect(
+            enhanced_slice,
+            intensity_params,
+            random_state=example_random_state,
+            force_background_black=True
+        )
+    else:  # 'balanced' is default
+        dark_field_slice = apply_balanced_dark_field_effect(
+            enhanced_slice,
+            intensity_params,
+            random_state=example_random_state,
+            force_background_black=True
+        )
     
     # Additional background cleanup for Cornucopia artifacts
     if cornucopia_config is not None:
@@ -655,12 +747,18 @@ def _add_streamlines_to_plot(ax, streamlines, slice_mode, slice_idx, dims, tract
         
         segs = np.concatenate([points[:-1], points[1:]], axis=1)
         
-        # Generate varied color (saturated orange-yellow for realism)
+        # Generate varied color (saturated orange-yellow for realism with randomization)
+        # For randomized mode, generate more varied colors
+        base_r = random.uniform(0.8, 1.0)  # Allow more variation in red
+        base_g = random.uniform(0.6, 0.9)  # Allow more variation in green  
+        base_b = random.uniform(0.0, 0.2)  # Allow slight variation in blue
+        tract_color_base = (base_r, base_g, base_b)
+        
         tract_color = generate_tract_color_variation(
-            (1.0, 0.8, 0.1), 0.2, random_state=random_state
+            tract_color_base, 0.3, random_state=random_state  # Increased variation
         )
         
-        # Adjust opacity - make fibers very subtle and blend naturally with background
+        # Adjust opacity - reduce fiber contrast to blend better with background
         base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.5)
         
         for seg in segs:
@@ -845,187 +943,5 @@ def generate_enhanced_varied_examples_with_preserved_background(nifti_file, trk_
         output_dir=output_dir,
         n_examples=n_examples,
         prefix=prefix,
-        **kwargs
-    )
-
-
-def generate_anatomically_realistic_examples(nifti_file, trk_file, output_dir, 
-                                           n_examples=5, prefix="anatomical_",
-                                           slice_mode="coronal", specific_slice=None,
-                                           streamline_percentage=100.0, roi_sphere=None,
-                                           tract_linewidth=1.0, save_masks=False,
-                                           min_fiber_percentage=10.0, max_fiber_percentage=100.0,
-                                           contrast_method='clahe', contrast_params=None,
-                                           background_preset='high_quality',
-                                           random_state=None, **kwargs):
-    """
-    Generate anatomically realistic examples with enhanced white matter appearance.
-    
-    This function uses the new anatomically-aware dark field processing to make
-    white matter areas appear more white and realistic, reducing dullness while
-    maintaining proper contrast for different tissue types.
-    
-    Parameters
-    ----------
-    nifti_file : str
-        Path to NIfTI file
-    trk_file : str  
-        Path to tractography file
-    output_dir : str
-        Output directory
-    n_examples : int
-        Number of examples to generate
-    prefix : str
-        File prefix for examples
-    slice_mode : str
-        Visualization mode ('axial', 'coronal', 'all')
-    specific_slice : int, optional
-        Specific slice index to use
-    streamline_percentage : float
-        Percentage of streamlines to visualize
-    roi_sphere : tuple, optional
-        ROI sphere parameters
-    tract_linewidth : float
-        Width of tract lines
-    save_masks : bool
-        Whether to save masks
-    min_fiber_percentage : float
-        Minimum fiber percentage for density variation
-    max_fiber_percentage : float
-        Maximum fiber percentage for density variation
-    contrast_method : str
-        Contrast enhancement method
-    contrast_params : dict, optional
-        Contrast parameters
-    background_preset : str
-        Background enhancement preset
-    random_state : int, optional
-        Random seed for reproducible results
-    **kwargs : dict
-        Additional parameters
-        
-    Returns
-    -------
-    dict
-        Summary of generation results
-    """
-    print(f"🧠 Generating {n_examples} anatomically realistic examples")
-    print("   Enhanced white matter appearance with reduced dullness")
-    print("   Using anatomically-aware tissue differentiation")
-    
-    os.makedirs(output_dir, exist_ok=True)
-
-    if random_state is not None:
-        random.seed(random_state)
-        np.random.seed(random_state)
-
-    if contrast_params is None:
-        contrast_params = {
-            'clip_limit': 0.01,
-            'tile_grid_size': (8, 8)
-        }
-
-    # Generate enhanced examples with anatomical awareness
-    return generate_enhanced_varied_examples(
-        nifti_file=nifti_file,
-        trk_file=trk_file,
-        output_dir=output_dir,
-        n_examples=n_examples,
-        prefix=prefix,
-        slice_mode=slice_mode,
-        specific_slice=specific_slice,
-        streamline_percentage=streamline_percentage,
-        roi_sphere=roi_sphere,
-        tract_linewidth=tract_linewidth,
-        save_masks=save_masks,
-        min_fiber_percentage=min_fiber_percentage,
-        max_fiber_percentage=max_fiber_percentage,
-        contrast_method=contrast_method,
-        contrast_params=contrast_params,
-        background_preset=background_preset,
-        use_background_enhancement=True,
-        random_state=random_state,
-        **kwargs
-    )
-
-
-def generate_clean_natural_examples(nifti_file, trk_file, output_dir, 
-                                   n_examples=5, prefix="natural_",
-                                   slice_mode="coronal", specific_slice=None,
-                                   streamline_percentage=100.0, tract_linewidth=1.0,
-                                   min_fiber_percentage=10.0, max_fiber_percentage=100.0,
-                                   random_state=None, **kwargs):
-    """
-    Generate clean, natural-looking examples without over-processing.
-    
-    This function focuses on creating realistic, clean images by:
-    - Minimal processing steps to avoid artifacts
-    - Gentle enhancement that preserves natural appearance  
-    - Subtle fiber integration that doesn't disturb the background
-    - Clean, medical imaging aesthetic
-    
-    Parameters
-    ----------
-    nifti_file : str
-        Path to NIfTI file
-    trk_file : str  
-        Path to tractography file
-    output_dir : str
-        Output directory
-    n_examples : int
-        Number of examples to generate
-    prefix : str
-        File prefix for examples
-    slice_mode : str
-        Visualization mode ('axial', 'coronal', 'all')
-    specific_slice : int, optional
-        Specific slice index to use
-    streamline_percentage : float
-        Percentage of streamlines to visualize
-    tract_linewidth : float
-        Width of tract lines
-    min_fiber_percentage : float
-        Minimum fiber percentage for density variation
-    max_fiber_percentage : float
-        Maximum fiber percentage for density variation
-    random_state : int, optional
-        Random seed for reproducible results
-    **kwargs : dict
-        Additional parameters
-        
-    Returns
-    -------
-    dict
-        Summary of generation results
-    """
-    print(f"🌿 Generating {n_examples} clean, natural examples")
-    print("   Minimal processing for clean, realistic appearance")
-    
-    os.makedirs(output_dir, exist_ok=True)
-
-    if random_state is not None:
-        random.seed(random_state)
-        np.random.seed(random_state)
-
-    # Generate examples using the enhanced system but with gentle settings
-    return generate_enhanced_varied_examples(
-        nifti_file=nifti_file,
-        trk_file=trk_file,
-        output_dir=output_dir,
-        n_examples=n_examples,
-        prefix=prefix,
-        slice_mode=slice_mode,
-        specific_slice=specific_slice,
-        streamline_percentage=streamline_percentage,
-        tract_linewidth=tract_linewidth,
-        min_fiber_percentage=min_fiber_percentage,
-        max_fiber_percentage=max_fiber_percentage,
-        # Disable aggressive processing
-        background_preset=None,  # No background enhancement
-        cornucopia_preset=None,  # No Cornucopia augmentation
-        use_background_enhancement=False,
-        use_cornucopia_per_example=False,
-        enable_sharpening=False,
-        random_state=random_state,
         **kwargs
     ) 

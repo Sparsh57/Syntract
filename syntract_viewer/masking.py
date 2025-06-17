@@ -393,7 +393,7 @@ def _apply_smooth_gap_closing(mask, closing_footprint_size):
     Apply ultra-smooth, round gap closing that creates organic, blob-like shapes.
     
     This function prioritizes roundness and smoothness over geometric precision,
-    creating very organic, flowing boundaries without sharp edges.
+    creating very organic, flowing boundaries without sharp edges or tears.
     
     Parameters
     ----------
@@ -405,91 +405,84 @@ def _apply_smooth_gap_closing(mask, closing_footprint_size):
     Returns
     -------
     np.ndarray
-        Ultra-smoothly gap-closed mask with round boundaries
+        Ultra-smoothly gap-closed mask with round boundaries and no tears
     """
     result = mask.astype(bool)
     
-    # Step 1: Distance-based smooth closing for ultra-round results
-    # This creates much more organic boundaries than traditional morphology
+    # Step 1: Distance-based smooth closing for ultra-round results and tear prevention
     if np.any(result):
-        # Apply distance transform for organic shape expansion (import ndimage first)
-        from scipy import ndimage
-        distance = ndimage.distance_transform_edt(result)
-        
-        # Create smooth expansion based on distance field
-        expansion_radius = max(2, closing_footprint_size * 0.3)
-        expanded = distance > -expansion_radius  # This doesn't make sense, let me fix this
-        
-        # Actually, let's use a better approach with multiple gaussian smoothing passes
+        # Apply multiple progressive gaussian smoothing passes for ultra-round boundaries
         smooth_mask = result.astype(np.float32)
         
-        # Apply multiple progressive gaussian smoothing passes for ultra-round boundaries
-        base_sigma = max(1.0, closing_footprint_size * 0.15)
+        # Apply multiple progressive gaussian smoothing passes for ultra-round boundaries (tear-free)
+        base_sigma = max(0.8, closing_footprint_size * 0.12)  # Reduced base sigma to prevent over-smoothing
         for i in range(3):  # Multiple smoothing passes
-            sigma = base_sigma * (1 + i * 0.5)  # Increasing sigma
+            sigma = base_sigma * (1 + i * 0.3)  # Gentler progression
             smooth_mask = filters.gaussian(smooth_mask, sigma=sigma)
             
-            # Progressive threshold lowering for smoother boundaries
-            threshold = 0.4 - (i * 0.1)  # 0.4, 0.3, 0.2
+            # Progressive threshold with tear prevention
+            threshold = 0.5 - (i * 0.05)  # More conservative thresholds: 0.5, 0.45, 0.4
             result = smooth_mask > threshold
             smooth_mask = result.astype(np.float32)
     
-    # Step 2: Progressive circular closing with only circular elements for roundness
-    max_size = min(closing_footprint_size, 40)
-    steps = min(7, max(3, max_size // 4))  # More steps for smoother progression
+    # Step 2: Progressive circular closing with only circular elements for roundness (tear-free)
+    max_size = min(closing_footprint_size, 35)  # Reduced max size to prevent large artifacts
+    steps = min(5, max(3, max_size // 5))  # Fewer steps for smoother progression
     
     for i in range(steps):
-        # Always use circular footprints for maximum roundness
+        # Always use circular footprints for maximum roundness and tear prevention
         size = int(1 + (max_size - 1) * (i + 1) / steps)
         footprint = morphology.disk(size)
+        
+        # Apply gentle closing to prevent sharp boundaries
         result = morphology.binary_closing(result, footprint)
         
-        # Apply light gaussian smoothing after each step for ultra-smooth edges
+        # Apply smoothing after each step for tear-free edges (reduced smoothing)
         if i < steps - 1:  # Don't smooth on final step
-            smooth_temp = filters.gaussian(result.astype(np.float32), sigma=0.8)
-            result = smooth_temp > 0.4
+            smooth_temp = filters.gaussian(result.astype(np.float32), sigma=0.5)  # Reduced from 0.8
+            result = smooth_temp > 0.5  # More conservative threshold
     
-    # Step 3: Heavy gaussian smoothing for ultra-soft, round boundaries
+    # Step 3: Gentle gaussian smoothing for ultra-soft, tear-free boundaries
     ultra_smooth = result.astype(np.float32)
     
-    # Apply very strong gaussian blur for blob-like appearance
-    final_sigma = max(2.0, closing_footprint_size * 0.2)
+    # Apply moderate gaussian blur for blob-like appearance (reduced to prevent tears)
+    final_sigma = max(1.5, closing_footprint_size * 0.15)  # Reduced sigma
     ultra_smooth = filters.gaussian(ultra_smooth, sigma=final_sigma)
     
-    # Use very low threshold for maximum roundness (includes more fuzzy boundary)
-    result = ultra_smooth > 0.2
+    # Use moderate threshold for good roundness without creating tears
+    result = ultra_smooth > 0.3  # Conservative threshold
     
-    # Step 4: Distance-based smoothing for perfectly round boundaries
+    # Step 4: Distance-based smoothing for perfectly round boundaries (tear-free)
     if np.any(result):
-        # Use distance transform to create perfectly smooth boundaries
+        # Use distance transform to create smooth boundaries without tears
         distance = ndimage.distance_transform_edt(~result)
-        smooth_boundary = distance < (closing_footprint_size * 0.1)
+        smooth_boundary_size = max(1, closing_footprint_size * 0.08)  # Reduced boundary size
+        smooth_boundary = distance < smooth_boundary_size
         result = result | smooth_boundary
     
-    # Step 5: Remove small holes with large threshold for blob-like continuity
-    hole_threshold = max(200, closing_footprint_size * 15)
+    # Step 5: Remove small holes with conservative threshold for blob-like continuity
+    hole_threshold = max(150, closing_footprint_size * 12)  # Reduced threshold
     result = morphology.remove_small_holes(result, area_threshold=hole_threshold)
     
-    # Step 6: Final ultra-gentle smoothing with large median filter  
-    median_size = min(5, max(2, closing_footprint_size // 8))
+    # Step 6: Final gentle smoothing with conservative median filter (tear prevention)
+    median_size = min(3, max(1, closing_footprint_size // 12))  # Smaller median filter
     if median_size > 1:
         result = ndimage.median_filter(result.astype(np.uint8), size=median_size).astype(bool)
     
-    # Step 7: Final round morphological operations - only circles for maximum roundness
-    final_round_size = min(3, max(1, closing_footprint_size // 15))
+    # Step 7: Final round morphological operations - minimal operations for tear prevention
+    final_round_size = min(2, max(1, closing_footprint_size // 20))  # Smaller operations
     if final_round_size > 0:
-        # Multiple passes of small circular operations for ultra-smooth boundaries
-        for _ in range(2):
-            final_footprint = morphology.disk(final_round_size)
-            result = morphology.binary_closing(result, final_footprint)
-            result = morphology.binary_opening(result, final_footprint)
+        # Single pass of small circular operations for tear-free boundaries
+        final_footprint = morphology.disk(final_round_size)
+        result = morphology.binary_closing(result, final_footprint)
+        # Skip opening to prevent creating tears
     
-    # Step 8: Final gaussian pass for blob-like smoothness
-    final_result = filters.gaussian(result.astype(np.float32), sigma=1.5)
-    result = final_result > 0.3
+    # Step 8: Final gentle gaussian pass for blob-like smoothness (tear-free)
+    final_result = filters.gaussian(result.astype(np.float32), sigma=1.0)  # Reduced from 1.5
+    result = final_result > 0.4  # More conservative threshold
     
     # Step 9: Remove small objects but keep size reasonable for continuity
-    min_object_size = max(50, closing_footprint_size * 3)
+    min_object_size = max(40, closing_footprint_size * 2)  # Reduced minimum size
     result = morphology.remove_small_objects(result, min_size=min_object_size)
     
     return result.astype(np.uint8)

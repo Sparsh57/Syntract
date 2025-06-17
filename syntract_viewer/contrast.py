@@ -9,11 +9,11 @@ from scipy import ndimage
 
 # Import Cornucopia integration with fallback
 try:
-    from .cornucopia_augmentation import augment_fiber_slice
+    from .improved_cornucopia import augment_fiber_slice
     CORNUCOPIA_INTEGRATION_AVAILABLE = True
 except ImportError:
     try:
-        from cornucopia_augmentation import augment_fiber_slice
+        from improved_cornucopia import augment_fiber_slice
         CORNUCOPIA_INTEGRATION_AVAILABLE = True
     except ImportError:
         CORNUCOPIA_INTEGRATION_AVAILABLE = False
@@ -218,29 +218,37 @@ def preprocess_quantized_data(slice_data, smooth_sigma=2.0, upscale_factor=2.0, 
     unique_count = len(np.unique(slice_data[slice_data > 0]))
 
     if unique_count < 200:  # Detect quantized data
-        print(f"   ⚠️  Quantized data detected ({unique_count} unique values), applying ultra-aggressive smoothing")
+        print(f"   ⚠️  Quantized data detected ({unique_count} unique values), applying tear-free smoothing")
 
         # Step 1: Convert to float for processing
         processed = slice_data.astype(np.float64)
 
         if aggressive:
-            # OPTIMIZED TILING-ELIMINATION PROCESSING
-            # (Reduced blur while maintaining tiling elimination)
+            # OPTIMIZED TILING-ELIMINATION PROCESSING (TEAR-FREE VERSION)
+            # Reduced aggressive operations to prevent tears while maintaining smoothness
 
-            # Step 2: Moderate Gaussian smoothing passes with controlled sigma
-            for i in range(3):  # Reduced to 3 passes for less blur
-                sigma = smooth_sigma + i * 0.3  # Smaller increments
+            # Step 2: Gentle progressive Gaussian smoothing (reduced passes)
+            for i in range(2):  # Reduced from 3 to 2 passes to minimize artifacts
+                sigma = smooth_sigma + i * 0.2  # Smaller increments to reduce discontinuities
                 processed = ndimage.gaussian_filter(processed, sigma=sigma)
 
-            # Step 3: Selective upscale/downscale cycles
-            for i in range(2):  # Reduced to 2 cycles for less blur
-                factor = upscale_factor + i * 0.25  # Smaller factors
-                upscaled = ndimage.zoom(processed, factor, order=3)
-                processed = ndimage.zoom(upscaled, 1.0/factor, order=3)
+            # Step 3: TEAR-FREE upscale/downscale cycles (modified approach)
+            # Use smaller factors and better interpolation to prevent tears
+            for i in range(1):  # Reduced to 1 cycle to minimize interpolation artifacts
+                factor = 1.5 + i * 0.1  # Much smaller factors (1.5 instead of 2.0+)
+                
+                # Use order=2 (quadratic) instead of order=3 (cubic) for less overshoot
+                # This reduces the "ringing" artifacts that can appear as tears
+                upscaled = ndimage.zoom(processed, factor, order=2, prefilter=True)
+                processed = ndimage.zoom(upscaled, 1.0/factor, order=2, prefilter=True)
+                
+                # Apply gentle smoothing after each cycle to eliminate any remaining artifacts
+                processed = ndimage.gaussian_filter(processed, sigma=0.3)
 
-            # Step 4: Light edge-preserving smoothing
-            smoothed = ndimage.gaussian_filter(processed, sigma=0.8)  # Single pass, smaller sigma
-            blend_factor = 0.5  # Reduced blend for less blur
+            # Step 4: Additional tear-prevention smoothing
+            # Apply very gentle edge-preserving smoothing
+            smoothed = ndimage.gaussian_filter(processed, sigma=0.5)  # Reduced from 0.8
+            blend_factor = 0.3  # Reduced from 0.5 for less blur
             processed = (1 - blend_factor) * processed + blend_factor * smoothed
 
         else:
@@ -248,15 +256,16 @@ def preprocess_quantized_data(slice_data, smooth_sigma=2.0, upscale_factor=2.0, 
             processed = ndimage.gaussian_filter(processed, sigma=smooth_sigma)
 
             if upscale_factor > 1.0:
-                upscaled = ndimage.zoom(processed, upscale_factor, order=3)
-                processed = ndimage.zoom(upscaled, 1.0/upscale_factor, order=3)
+                # Use gentler interpolation for non-aggressive mode too
+                upscaled = ndimage.zoom(processed, upscale_factor, order=2, prefilter=True)
+                processed = ndimage.zoom(upscaled, 1.0/upscale_factor, order=2, prefilter=True)
 
-        # Step 6: Preserve original value range
+        # Step 5: Preserve original value range
         if np.max(slice_data) > 0:
             processed = processed * (np.max(slice_data) / np.max(processed))
 
         final_unique = len(np.unique(processed[processed > 0]))
-        print(f"   ✅ Ultra-aggressive quantization processing complete: {unique_count} → {final_unique} unique values")
+        print(f"   ✅ Tear-free quantization processing complete: {unique_count} → {final_unique} unique values")
         
         return processed.astype(slice_data.dtype)
     else:

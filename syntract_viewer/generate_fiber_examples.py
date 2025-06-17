@@ -17,7 +17,10 @@ import argparse
 from pathlib import Path
 import tempfile
 
-from generation import generate_varied_examples, generate_enhanced_varied_examples
+try:
+    from .generation import generate_varied_examples, generate_enhanced_varied_examples
+except ImportError:
+    from generation import generate_varied_examples, generate_enhanced_varied_examples
 
 try:
     from .contrast import CORNUCOPIA_INTEGRATION_AVAILABLE
@@ -34,10 +37,13 @@ except ImportError:
 def generate_examples_original_mode(args, background_enhancement_available):
     """Generate examples using the original mode with automatic background enhancement and optional Cornucopia."""
     print("🎨 Running in Original Mode")
-    if background_enhancement_available:
-        print("🌟 Automatic background enhancement enabled (high-quality preset for pixelation reduction)")
-    if args.cornucopia_preset and ENHANCED_AVAILABLE:
-        print(f"🚀 Using Cornucopia augmentations with preset: {args.cornucopia_preset}")
+    if args.randomize:
+        print("🎲 Randomization enabled - parameters will vary per example")
+    else:
+        if background_enhancement_available:
+            print("🌟 Automatic background enhancement enabled (high-quality preset for pixelation reduction)")
+        if args.cornucopia_preset and ENHANCED_AVAILABLE:
+            print(f"🚀 Using Cornucopia augmentations with preset: {args.cornucopia_preset}")
     
     contrast_params = {
         'clip_limit': 0.04,
@@ -76,22 +82,26 @@ def generate_examples_original_mode(args, background_enhancement_available):
         use_high_density_masks=args.use_high_density_masks,
         contrast_method=args.contrast_method,
         contrast_params=contrast_params,
-        cornucopia_preset=args.cornucopia_preset,
+        cornucopia_preset=args.cornucopia_preset if not args.randomize else None,
         background_preset=args.background_preset if background_enhancement_available else None,
         enable_sharpening=args.enable_sharpening,
         sharpening_strength=args.sharpening_strength,
-        use_cornucopia_per_example=args.cornucopia_preset is not None,
-        use_background_enhancement=background_enhancement_available
+        use_cornucopia_per_example=args.cornucopia_preset is not None and not args.randomize,
+        use_background_enhancement=background_enhancement_available,
+        randomize=args.randomize
     )
 
 
 def generate_examples_with_spatial_subdivisions(args, background_enhancement_available):
     """Generate examples using spatial subdivisions of the NIfTI volume."""
     print("📐 Running in Spatial Subdivision Mode")
-    if background_enhancement_available:
-        print("🌟 Automatic background enhancement enabled (high-quality preset for pixelation reduction)")
-    if args.cornucopia_preset and ENHANCED_AVAILABLE:
-        print(f"🚀 Using Cornucopia augmentations with preset: {args.cornucopia_preset}")
+    if args.randomize:
+        print("🎲 Randomization enabled - parameters will vary per example")
+    else:
+        if background_enhancement_available:
+            print("🌟 Automatic background enhancement enabled (high-quality preset for pixelation reduction)")
+        if args.cornucopia_preset and ENHANCED_AVAILABLE:
+            print(f"🚀 Using Cornucopia augmentations with preset: {args.cornucopia_preset}")
     print("🔄 Creating spatial grid subdivisions of the NIfTI volume")
     
     try:
@@ -191,20 +201,24 @@ def generate_examples_with_spatial_subdivisions(args, background_enhancement_ava
                             use_high_density_masks=args.use_high_density_masks,
                             contrast_method=args.contrast_method,
                             contrast_params={'clip_limit': 0.01, 'tile_grid_size': (8, 8)},
-                            cornucopia_preset=args.cornucopia_preset,
+                            cornucopia_preset=args.cornucopia_preset if not args.randomize else None,
                             background_preset=args.background_preset if background_enhancement_available else None,
                             enable_sharpening=args.enable_sharpening,
                             sharpening_strength=args.sharpening_strength,
-                            use_cornucopia_per_example=args.cornucopia_preset is not None,
-                            use_background_enhancement=background_enhancement_available
+                            use_cornucopia_per_example=args.cornucopia_preset is not None and not args.randomize,
+                            use_background_enhancement=background_enhancement_available,
+                            randomize=args.randomize
                         )
                         
                         total_examples += args.examples
                         enhancements = []
-                        if background_enhancement_available:
-                            enhancements.append("background 'high_quality'")
-                        if args.cornucopia_preset and ENHANCED_AVAILABLE:
-                            enhancements.append(f"Cornucopia '{args.cornucopia_preset}'")
+                        if not args.randomize:
+                            if background_enhancement_available:
+                                enhancements.append("background 'high_quality'")
+                            if args.cornucopia_preset and ENHANCED_AVAILABLE:
+                                enhancements.append(f"Cornucopia '{args.cornucopia_preset}'")
+                        else:
+                            enhancements.append("randomized parameters")
                         
                         if enhancements:
                             print(f"      ✅ Generated {args.examples} examples with {' + '.join(enhancements)}")
@@ -426,7 +440,11 @@ def main():
     parser.add_argument('--sharpening_strength', type=float, default=0.5,
                         help='Sharpening strength (0.0-1.0, default: 0.5)')
     
-
+    # Randomization parameters
+    parser.add_argument('--randomize', action='store_true',
+                        help='Randomize parameters per example: min/max streamline percentage (5-30%% to 70-100%%), '
+                             'streamline appearance (linewidth 0.5-1.5), cornucopia preset (None/aggressive/clinical_simulation), '
+                             'and background effect (balanced/blockface_preserving)')
     
     args = parser.parse_args()
     
@@ -479,10 +497,18 @@ def main():
         print(f"- {args.n_subdivisions} spatial grid subdivisions of the NIfTI volume")
         print(f"- {args.examples} examples per subdivision")
         print(f"- Each subdivision contains a different spatial region of the brain")
+        if args.randomize:
+            print(f"- Randomized parameters: streamline percentages (5-30% to 70-100%), tract appearance, Cornucopia presets, background effects")
     else:
         print("The dataset includes:")
         print(f"- {args.examples} synthetic images with varying fiber densities")
         print(f"- Corresponding ground truth masks for segmentation")
+        if args.randomize:
+            print(f"- Randomized parameters per example:")
+            print(f"  • Min/max streamline percentages: 5-30% to 70-100%")
+            print(f"  • Tract linewidth: 0.5-1.5")
+            print(f"  • Cornucopia preset: None/aggressive/clinical_simulation")
+            print(f"  • Background effect: balanced/blockface_preserving")
         if args.label_bundles:
             print(f"- Labeled bundle visualizations with distinct colors for each bundle")
         if args.use_high_density_masks:
