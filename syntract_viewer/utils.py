@@ -51,27 +51,34 @@ def generate_tract_color_variation(base_color=(1.0, 0.8, 0.1), variation=0.2, ra
     return (r_var, g_var, b_var)
 
 
-def get_colormap(color_scheme='bw', blue_tint=0.3):
+def get_colormap(color_scheme='bw', blue_tint=0.1):
     """
-    Get appropriate colormap for dark field visualization with pure black background.
+    Returns a dark field-style colormap with added white and minimal blue tint.
+    'bw' gives pure black to lighter grey with some white.
+    'blue' gives a dark greyscale with very minimal blue tone (no red).
     """
     if color_scheme == 'blue':
+        # Very minimal blue tint with more brightness
         dark_field_cmap = LinearSegmentedColormap.from_list('dark_field_blue', [
-            (0.0, 0.0, 0.0),  # Pure black for zero values
-            (0.35, 0.35, 0.35 + blue_tint),
-            (0.55, 0.55, 0.55 + min(0.45, blue_tint * 1.5))
+            (0.0, (0.0, 0.0, 0.0)),                                    # pure black
+            (0.3, (0.08, 0.08, 0.08 + blue_tint * 0.08)),              # dark with very minimal blue
+            (0.6, (0.18, 0.18, 0.18 + blue_tint * 0.12)),              # medium-dark grey with slight blue
+            (0.85, (0.35, 0.35, 0.35 + blue_tint * 0.15)),             # lighter grey with minimal blue
+            (1.0, (0.55, 0.55, 0.55 + blue_tint * 0.18))               # light grey approaching white
         ], N=256)
     else:
+        # Black to light grey with more white (no color)
         dark_field_cmap = LinearSegmentedColormap.from_list('dark_field_bw', [
-            (0.0, 0.0, 0.0),  # Pure black for zero values
-            (0.4, 0.4, 0.4),
-            (0.7, 0.7, 0.7)
+            (0.0, (0.0, 0.0, 0.0)),      # pure black
+            (0.3, (0.08, 0.08, 0.08)),   # dark grey
+            (0.6, (0.18, 0.18, 0.18)),   # medium-dark grey
+            (0.85, (0.35, 0.35, 0.35)),  # lighter grey
+            (1.0, (0.55, 0.55, 0.55))    # light grey approaching white
         ], N=256)
-    
-    # Ensure the colormap has pure black at value 0
+
     dark_field_cmap.set_under('black')
     dark_field_cmap.set_bad('black')
-    
+
     return dark_field_cmap
 
 
