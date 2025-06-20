@@ -10,5 +10,5 @@ matplotlib==3.9.4
 
 # Cornucopia integration dependencies
 torch>=1.9.0
-git+https://github.com/neuroneural/cornucopia.git
+cornucopia
 scikit-image>=0.19.0
