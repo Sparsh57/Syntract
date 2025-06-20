@@ -5,40 +5,81 @@ A comprehensive package for visualizing NIfTI images with overlaid tractography 
 featuring dark field microscopy-style visualization and advanced augmentation capabilities.
 """
 
-from .core import (
-    visualize_nifti_with_trk,
-    visualize_nifti_with_trk_coronal,
-    visualize_multiple_views
-)
+try:
+    from .core import (
+        visualize_nifti_with_trk,
+        visualize_nifti_with_trk_coronal,
+        visualize_multiple_views
+    )
+except ImportError:
+    from core import (
+        visualize_nifti_with_trk,
+        visualize_nifti_with_trk_coronal,
+        visualize_multiple_views
+    )
 
-from .generation import (
-    generate_varied_examples,
-    generate_enhanced_varied_examples,
-    generate_enhanced_varied_examples_with_preserved_background
-)
+try:
+    from .generation import (
+        generate_varied_examples,
+        generate_enhanced_varied_examples,
+        generate_enhanced_varied_examples_with_preserved_background
+    )
+except ImportError:
+    from generation import (
+        generate_varied_examples,
+        generate_enhanced_varied_examples,
+        generate_enhanced_varied_examples_with_preserved_background
+    )
 
-from .masking import (
-    create_fiber_mask,
-    create_smart_brain_mask
-)
+try:
+    from .masking import (
+        create_fiber_mask,
+        create_smart_brain_mask
+    )
+except ImportError:
+    from masking import (
+        create_fiber_mask,
+        create_smart_brain_mask
+    )
 
-from .contrast import (
-    apply_contrast_enhancement,
-    apply_enhanced_contrast_and_augmentation,
-    apply_comprehensive_slice_processing
-)
+try:
+    from .contrast import (
+        apply_contrast_enhancement,
+        apply_enhanced_contrast_and_augmentation,
+        apply_comprehensive_slice_processing
+    )
+except ImportError:
+    from contrast import (
+        apply_contrast_enhancement,
+        apply_enhanced_contrast_and_augmentation,
+        apply_comprehensive_slice_processing
+    )
 
-from .effects import (
-    apply_balanced_dark_field_effect,
-    apply_blockface_preserving_dark_field_effect
-)
+try:
+    from .effects import (
+        apply_balanced_dark_field_effect,
+        apply_blockface_preserving_dark_field_effect
+    )
+except ImportError:
+    from effects import (
+        apply_balanced_dark_field_effect,
+        apply_blockface_preserving_dark_field_effect
+    )
 
-from .utils import (
-    select_random_streamlines,
-    densify_streamline,
-    generate_tract_color_variation,
-    get_colormap
-)
+try:
+    from .utils import (
+        select_random_streamlines,
+        densify_streamline,
+        generate_tract_color_variation,
+        get_colormap
+    )
+except ImportError:
+    from utils import (
+        select_random_streamlines,
+        densify_streamline,
+        generate_tract_color_variation,
+        get_colormap
+    )
 
 # Try to import background enhancement functionality
 try:

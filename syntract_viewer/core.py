@@ -13,7 +13,7 @@ import random
 
 try:
     from .contrast import apply_contrast_enhancement, apply_comprehensive_slice_processing
-    from .effects import apply_smart_dark_field_effect, apply_gentle_dark_field_effect, apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
+    from .effects import apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
     from .masking import create_fiber_mask
     from .utils import (
         densify_streamline,
