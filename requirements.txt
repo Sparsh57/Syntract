@@ -7,6 +7,7 @@ packaging==24.2
 scipy==1.13.1
 typing_extensions==4.12.2
 matplotlib==3.9.4
+dipy
 
 # Cornucopia integration dependencies
 torch>=1.9.0
