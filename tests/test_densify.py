@@ -1,5 +1,5 @@
 import numpy as np
-from densify import densify_streamline_subvoxel
+from synthesis.densify import densify_streamline_subvoxel
 
 def test_densify_single_point():
     streamline = np.array([[1.0, 2.0, 3.0]])
