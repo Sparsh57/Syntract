@@ -1,6 +1,6 @@
 import numpy as np
 import nibabel as nib
-from nifti_preprocessing import resample_nifti
+from synthesis.nifti_preprocessing import resample_nifti
 
 
 def test_resample_nifti():

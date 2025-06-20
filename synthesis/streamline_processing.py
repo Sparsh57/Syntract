@@ -3,7 +3,7 @@ import os
 import shutil
 import tempfile
 from joblib import Parallel, delayed
-from densify import densify_streamline_subvoxel, densify_streamlines_parallel
+from .densify import densify_streamline_subvoxel, densify_streamlines_parallel
 
 
 def clip_streamline_to_fov(stream, new_shape, use_gpu=True, epsilon=1e-6):
@@ -109,9 +109,9 @@ def interpolate_to_fov(p1, p2, new_shape, use_gpu=True):
     Parameters
     ----------
     p1 : array-like
-        First point (inside FOV).
+        First point.
     p2 : array-like
-        Second point (outside FOV).
+        Second point.
     new_shape : array-like
         Shape of the field of view.
     use_gpu : bool, optional
@@ -120,7 +120,7 @@ def interpolate_to_fov(p1, p2, new_shape, use_gpu=True):
     Returns
     -------
     array-like
-        Interpolated point, or None if no valid intersection.
+        Interpolated point at FOV boundary, or p1 if no valid intersection.
     """
     # Choose appropriate array library
     if use_gpu:
@@ -132,25 +132,40 @@ def interpolate_to_fov(p1, p2, new_shape, use_gpu=True):
     else:
         import numpy as xp
         
+    p1 = xp.asarray(p1, dtype=xp.float32)
+    p2 = xp.asarray(p2, dtype=xp.float32)
+    new_shape = xp.asarray(new_shape)
+        
     direction = p2 - p1
-    t_min = xp.inf
+    t_min = float('inf')
 
     for dim in range(3):
-        if direction[dim] != 0:
+        if abs(direction[dim]) > 1e-10:  # Avoid division by zero
+            # Check intersection with lower bound (0)
             if p2[dim] < 0:
                 t = (0 - p1[dim]) / direction[dim]
+                if 0 <= t <= 1 and t < t_min:
+                    t_min = t
+            # Check intersection with upper bound (new_shape[dim] - 1)
             elif p2[dim] >= new_shape[dim]:
                 t = (new_shape[dim] - 1 - p1[dim]) / direction[dim]
-            else:
-                continue
+                if 0 <= t <= 1 and t < t_min:
+                    t_min = t
 
-            if 0 <= t < t_min:
-                t_min = t
+    if t_min == float('inf') or t_min < 0:
+        # No valid intersection found, return the point closest to FOV
+        clipped_point = xp.clip(p1, 0, xp.asarray(new_shape) - 1)
+        return clipped_point
 
-    if t_min == xp.inf:
-        return None
-
-    return p1 + t_min * direction
+    intersection = p1 + t_min * direction
+    # Ensure the intersection is within bounds
+    intersection = xp.clip(intersection, 0, xp.asarray(new_shape) - 1)
+    
+    # Convert back to numpy if using cupy
+    if use_gpu and hasattr(xp, 'asnumpy'):
+        intersection = xp.asnumpy(intersection)
+    
+    return intersection
 
 
 def transform_streamline(s_mm, A_new_inv, use_gpu=True):

@@ -12,6 +12,9 @@ def select_random_streamlines(streamlines, percentage=10.0, random_state=None):
     """
     Randomly sample a subset of streamlines for visualization or analysis.
     """
+    if len(streamlines) == 0:
+        return streamlines
+        
     if percentage >= 100.0:
         return streamlines
     
