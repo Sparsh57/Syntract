@@ -15,13 +15,13 @@ try:
     from .core import visualize_nifti_with_trk, visualize_nifti_with_trk_coronal, visualize_multiple_views
     from .contrast import apply_enhanced_contrast_and_augmentation, CORNUCOPIA_INTEGRATION_AVAILABLE
     from .masking import create_aggressive_brain_mask, create_fiber_mask
-    from .effects import apply_smart_dark_field_effect, apply_gentle_dark_field_effect, apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
+    from .effects import apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
     from .utils import select_random_streamlines, densify_streamline, generate_tract_color_variation, get_colormap
 except ImportError:
     from core import visualize_nifti_with_trk, visualize_nifti_with_trk_coronal, visualize_multiple_views
     from contrast import apply_enhanced_contrast_and_augmentation, CORNUCOPIA_INTEGRATION_AVAILABLE
     from masking import create_aggressive_brain_mask, create_fiber_mask
-    from effects import apply_smart_dark_field_effect, apply_gentle_dark_field_effect, apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
+    from effects import apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
     from utils import select_random_streamlines, densify_streamline, generate_tract_color_variation, get_colormap
 
 

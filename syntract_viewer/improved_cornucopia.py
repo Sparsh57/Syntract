@@ -1,14 +1,5 @@
-""" 
+"""
 Improved Cornucopia augmentation for optical imaging simulation.
-
-This module enhances the existing cornucopia augmentation with:
-- Gamma noise (speckle) for optical imaging simulation
-- Smooth multiplicative fields for realistic intensity variations  
-- Debris simulation with random shapes and erosions/dilations
-- Better matching to real optical/medical imaging artifacts
-
-Based on feedback to use Gamma (speckle) for optical imaging and add 
-multiplicative fields and debris with random shapes.
 """
 
 import numpy as np
@@ -16,7 +7,6 @@ import random
 from typing import Dict, Any, Optional, Tuple
 import warnings
 
-# Import cornucopia with fallback
 try:
     import torch
     from cornucopia import GaussianNoiseTransform, ChiNoiseTransform
@@ -25,28 +15,17 @@ try:
     CORNUCOPIA_AVAILABLE = True
 except ImportError:
     CORNUCOPIA_AVAILABLE = False
-    warnings.warn("Cornucopia not available. Install with: pip install cornucopia")
 
-# Import scipy for fallback implementations
 try:
     from scipy import ndimage, interpolate
     from skimage import morphology, measure, filters
     SCIPY_AVAILABLE = True
 except ImportError:
     SCIPY_AVAILABLE = False
-    warnings.warn("Scipy/scikit-image not available. Limited functionality.")
 
 
 class ImprovedCornucopiaAugmenter:
-    """
-    Enhanced Cornucopia augmenter for optical imaging simulation.
-    
-    Features:
-    - Gamma noise (speckle) optimized for optical imaging
-    - Smooth multiplicative fields for realistic variations
-    - Debris simulation with random shapes
-    - Morphological operations for shape variations
-    """
+    """Enhanced Cornucopia augmenter for optical imaging simulation."""
     
     def __init__(self, device='auto', random_state=None):
         """Initialize the improved augmenter."""
