@@ -65,12 +65,8 @@ except ImportError:
 
 try:
     from syntract_viewer.effects import (
-        apply_dark_field_effect,
-        apply_smart_dark_field_effect,
-        apply_conservative_dark_field_effect,
-        apply_gentle_dark_field_effect,
-        apply_balanced_dark_field_effect,
-        apply_blockface_preserving_dark_field_effect
+            apply_balanced_dark_field_effect,
+    apply_blockface_preserving_dark_field_effect
     )
     EFFECTS_AVAILABLE = True
 except ImportError:
@@ -401,40 +397,7 @@ class TestEffects:
         # Some background
         self.test_slice[:10, :10] = 0.05
     
-    @pytest.mark.skipif(not EFFECTS_AVAILABLE, reason="Effects module not available")
-    def test_apply_dark_field_effect(self):
-        """Test basic dark field effect"""
-        intensity_params = {
-            'gamma': 1.0,
-            'threshold': 0.05,
-            'contrast_stretch': (1.0, 99.0),
-            'background_boost': 1.0,
-            'color_scheme': 'bw'
-        }
-        
-        dark_field = apply_dark_field_effect(
-            self.test_slice,
-            intensity_params=intensity_params,
-            random_state=42
-        )
-        
-        assert isinstance(dark_field, np.ndarray)
-        assert dark_field.shape == self.test_slice.shape
-        assert dark_field.dtype == np.float32
-    
-    @pytest.mark.skipif(not EFFECTS_AVAILABLE, reason="Effects module not available")
-    def test_apply_smart_dark_field_effect(self):
-        """Test smart dark field effect"""
-        smart_dark_field = apply_smart_dark_field_effect(
-            self.test_slice,
-            intensity_params=None,
-            mask_method='adaptive_morphology',
-            random_state=42
-        )
-        
-        assert isinstance(smart_dark_field, np.ndarray)
-        assert smart_dark_field.shape == self.test_slice.shape
-        assert smart_dark_field.dtype == np.float32
+
     
     @pytest.mark.skipif(not EFFECTS_AVAILABLE, reason="Effects module not available")
     def test_apply_balanced_dark_field_effect(self):

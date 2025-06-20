@@ -29,10 +29,6 @@ from .contrast import (
 )
 
 from .effects import (
-    apply_dark_field_effect,
-    apply_smart_dark_field_effect,
-    apply_conservative_dark_field_effect,
-    apply_gentle_dark_field_effect,
     apply_balanced_dark_field_effect,
     apply_blockface_preserving_dark_field_effect
 )
@@ -92,10 +88,6 @@ __all__ = [
     'apply_comprehensive_slice_processing',
     
     # Effects
-    'apply_dark_field_effect',
-    'apply_smart_dark_field_effect',
-    'apply_conservative_dark_field_effect',
-    'apply_gentle_dark_field_effect',
     'apply_balanced_dark_field_effect',
     'apply_blockface_preserving_dark_field_effect',
     
