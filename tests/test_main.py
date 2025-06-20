@@ -1,6 +1,6 @@
 import os
 import pytest
-from main import process_and_save
+from synthesis.main import process_and_save
 
 def test_process_pipeline(tmpdir):
     # Setup test inputs
@@ -9,12 +9,11 @@ def test_process_pipeline(tmpdir):
     output_prefix = str(tmpdir.join("test_output"))
 
     process_and_save(
-        old_nifti_path=test_nifti_path,
-        old_trk_path=test_trk_path,
-        new_voxel_size=0.5,
-        new_dim=(50, 50, 50),
-        output_prefix=output_prefix,
-        n_jobs=1
+        original_nifti_path=test_nifti_path,
+        original_trk_path=test_trk_path,
+        target_voxel_size=0.5,
+        target_dimensions=(50, 50, 50),
+        output_prefix=output_prefix
     )
 
     assert os.path.exists(output_prefix + ".nii.gz"), "Output NIfTI file was not created"

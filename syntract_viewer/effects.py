@@ -157,7 +157,7 @@ def apply_smart_dark_field_effect(slice_clahe, intensity_params=None, mask_metho
     
     # COMPREHENSIVE ARTIFACT REMOVAL - eliminate small isolated bright spots AND black dots
     if np.any(result > 0):
-        from skimage import measure, morphology
+        from skimage import measure
         
         # Remove small isolated bright spots
         bright_threshold = np.percentile(result[result > 0], 85) if np.any(result > 0) else 0
@@ -837,7 +837,6 @@ def apply_blockface_preserving_dark_field_effect(slice_clahe, intensity_params=N
     
     # Combine basic mask with bright areas for processing
     full_brain_mask = brain_mask_basic | bright_areas
-    from skimage import morphology
     # Apply aggressive morphological processing for clarity
     full_brain_mask = morphology.binary_closing(full_brain_mask, morphology.disk(3))
     full_brain_mask = morphology.remove_small_objects(full_brain_mask, min_size=100)
@@ -891,7 +890,7 @@ def apply_blockface_preserving_dark_field_effect(slice_clahe, intensity_params=N
     
         # STEP 3: Apply COMPREHENSIVE ARTIFACT REMOVAL (same as smart dark field)
     if np.any(result > 0):
-        from skimage import measure, morphology
+        from skimage import measure
         
         # Remove small isolated bright spots
         bright_threshold_removal = np.percentile(result[result > 0], 85) if np.any(result > 0) else 0

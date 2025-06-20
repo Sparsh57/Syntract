@@ -25,14 +25,14 @@ import sys
 import time
 import numpy as np
 import nibabel as nib
-from nifti_preprocessing import resample_nifti
-from transform import build_new_affine
-from streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
-from densify import densify_streamline_subvoxel
+from .nifti_preprocessing import resample_nifti
+from .transform import build_new_affine
+from .streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
+from .densify import densify_streamline_subvoxel
 from nibabel.streamlines import Tractogram, save as save_trk
 
 # Import the ANTs processing module
-from ants_transform import process_with_ants
+from .ants_transform import process_with_ants
 
 def process_and_save(
         original_nifti_path,

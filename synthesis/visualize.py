@@ -48,10 +48,10 @@ def overlay_streamlines_on_blockface_coronal(
     else:
         plt.show()
 
-# Example usage:
-overlay_streamlines_on_blockface_coronal(
-    trk_file="multi_new2.trk",
-    blockface_nifti_file="multi_new2.nii.gz")
+# Example usage (commented out):
+# overlay_streamlines_on_blockface_coronal(
+#     trk_file="multi_new2.trk",
+#     blockface_nifti_file="multi_new2.nii.gz")
 
 
 def visualize_trk_with_nifti(trk_file, nifti_file, save_path=None):
@@ -112,5 +112,5 @@ def visualize_trk_with_nifti(trk_file, nifti_file, save_path=None):
         plt.show()
 
 
-# Example usage:
-visualize_trk_with_nifti("find_new.trk", "find_new.nii.gz")
+# Example usage (commented out):
+# visualize_trk_with_nifti("find_new.trk", "find_new.nii.gz")
