@@ -3,8 +3,10 @@ import os
 import shutil
 import tempfile
 from joblib import Parallel, delayed
-from .densify import densify_streamline_subvoxel, densify_streamlines_parallel
-
+try:
+    from .densify import densify_streamline_subvoxel, densify_streamlines_parallel
+except ImportError:
+    from densify import densify_streamline_subvoxel, densify_streamlines_parallel
 
 def clip_streamline_to_fov(stream, new_shape, use_gpu=True, epsilon=1e-6):
     """Clip a streamline to the field of view."""

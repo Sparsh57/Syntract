@@ -14,9 +14,6 @@ The pipeline supports:
 
 Usage:
     python main.py --input brain.nii.gz --trk fibers.trk [options]
-
-Authors: Sparsh Makharia, LINC Team
-License: MIT
 """
 
 import argparse
@@ -25,13 +22,20 @@ import sys
 import time
 import numpy as np
 import nibabel as nib
-from .nifti_preprocessing import resample_nifti
-from .transform import build_new_affine
-from .streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
-from .densify import densify_streamline_subvoxel
+try:
+    from .nifti_preprocessing import resample_nifti
+    from .transform import build_new_affine
+    from .streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
+    from .densify import densify_streamline_subvoxel
+    from .ants_transform import process_with_ants
+except ImportError:
+    from nifti_preprocessing import resample_nifti
+    from transform import build_new_affine
+    from streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
+    from densify import densify_streamline_subvoxel
+    from ants_transform import process_with_ants
 from nibabel.streamlines import Tractogram, save as save_trk
 
-from .ants_transform import process_with_ants
 
 def process_and_save(
         original_nifti_path,
@@ -428,8 +432,8 @@ if __name__ == "__main__":
     parser.add_argument("--use_gpu", type=lambda x: str(x).lower() != 'false', nargs='?', const=True, default=True,
                         help="Use GPU acceleration (default: True). Set to False with --use_gpu=False")
     parser.add_argument("--cpu", action="store_true", help="Force CPU processing (disables GPU).")
-    parser.add_argument("--interp", type=str, choices=["hermite", "linear", "rbf"], default="hermite",
-                        help="Interpolation method for streamlines (default: hermite).")
+    parser.add_argument("--interp", type=str, choices=["hermite", "linear", "rbf"], default="rbf",
+                        help="Interpolation method for streamlines (default: rbf).")
     parser.add_argument("--step_size", type=float, default=0.5, 
                         help="Step size for streamline densification (default: 0.5).")
     parser.add_argument("--max_gb", type=float, default=64.0,
