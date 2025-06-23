@@ -94,27 +94,27 @@ def generate_examples_original_mode(args, background_enhancement_available):
 
 def generate_examples_with_spatial_subdivisions(args, background_enhancement_available):
     """Generate examples using spatial subdivisions of the NIfTI volume."""
-    print("📐 Running in Spatial Subdivision Mode")
+    print("Running in Spatial Subdivision Mode")
     if args.randomize:
-        print("🎲 Randomization enabled - parameters will vary per example")
+        print("Randomization enabled - parameters will vary per example")
     else:
         if background_enhancement_available:
-            print("🌟 Automatic background enhancement enabled (high-quality preset for pixelation reduction)")
+            print("Automatic background enhancement enabled (high-quality preset for pixelation reduction)")
         if args.cornucopia_preset and ENHANCED_AVAILABLE:
-            print(f"🚀 Using Cornucopia augmentations with preset: {args.cornucopia_preset}")
-    print("🔄 Creating spatial grid subdivisions of the NIfTI volume")
+            print(f"Using Cornucopia augmentations with preset: {args.cornucopia_preset}")
+    print("Creating spatial grid subdivisions of the NIfTI volume")
     
     try:
         import nibabel as nib
         import numpy as np
         from nibabel.streamlines import load, save, Tractogram
     except ImportError:
-        print("❌ Error: nibabel and numpy are required for spatial subdivision mode")
+        print("Error: nibabel and numpy are required for spatial subdivision mode")
         print("Please install: pip install nibabel numpy")
         return
     
     # Load data
-    print(f"📂 Loading data...")
+    print(f"Loading data...")
     nifti_img = nib.load(args.nifti)
     nifti_data = nifti_img.get_fdata()
     trk_file_obj = load(args.trk)
@@ -146,14 +146,14 @@ def generate_examples_with_spatial_subdivisions(args, background_enhancement_ava
         print(f"      Found {len(region_streamlines)} streamlines")
         
         if len(region_streamlines) < args.min_streamlines_per_region:
-            print(f"      ⏭️  Skipping (too few streamlines)")
+            print(f"Skipping (too few streamlines)")
             continue
         
         sub_id = len(valid_subdivisions)
         sub_dir = output_path / f"subdivision_{sub_id:03d}"
         sub_dir.mkdir(exist_ok=True)
         
-        print(f"   ✅ Processing subdivision {sub_id}: {region_data.shape}, {len(region_streamlines)} streamlines")
+        print(f"Processing subdivision {sub_id}: {region_data.shape}, {len(region_streamlines)} streamlines")
         
         # Create temporary files
         with tempfile.NamedTemporaryFile(suffix='.nii.gz', delete=False) as temp_nifti:
@@ -221,12 +221,12 @@ def generate_examples_with_spatial_subdivisions(args, background_enhancement_ava
                             enhancements.append("randomized parameters")
                         
                         if enhancements:
-                            print(f"      ✅ Generated {args.examples} examples with {' + '.join(enhancements)}")
+                            print(f"Generated {args.examples} examples with {' + '.join(enhancements)}")
                         else:
-                            print(f"      ✅ Generated {args.examples} examples")
+                            print(f"Generated {args.examples} examples")
                         
                     except Exception as e:
-                        print(f"      ❌ Failed to generate examples: {str(e)}")
+                        print(f"Failed to generate examples: {str(e)}")
                 
                 finally:
                     try:
@@ -374,7 +374,7 @@ def _save_subdivision_summary(output_path, subdivisions, total_examples, args):
     with open(summary_path, 'w') as f:
         json.dump(summary, f, indent=2)
     
-    print(f"📊 Summary saved to: {summary_path}")
+    print(f"Summary saved to: {summary_path}")
 
 
 def main():
@@ -450,25 +450,25 @@ def main():
     
     # Check availability of requested features
     if args.cornucopia_preset and not CORNUCOPIA_INTEGRATION_AVAILABLE:
-        print("⚠️  Warning: Cornucopia augmentation requested but not available.")
+        print("Warning: Cornucopia augmentation requested but not available.")
         print("   Install cornucopia: pip install cornucopia")
         print("   Falling back to standard augmentations.")
         args.cornucopia_preset = None
     elif args.cornucopia_preset and CORNUCOPIA_INTEGRATION_AVAILABLE:
-        print(f"✅ Cornucopia augmentation enabled with preset: {args.cornucopia_preset}")
+        print(f"Cornucopia augmentation enabled with preset: {args.cornucopia_preset}")
     
     # Background enhancement is now enabled by default for pixelation reduction
     try:
         from background_enhancement import enhance_slice_background
-        print("✅ Quantized data preprocessing enabled (eliminates tiling artifacts)")
-        print("ℹ️  Your data has few unique values - using smooth processing to prevent tiling")
+        print(" Quantized data preprocessing enabled (eliminates tiling artifacts)")
+        print("️  Your data has few unique values - using smooth processing to prevent tiling")
         background_enhancement_available = True
     except ImportError:
-        print("⚠️  Background enhancement module not found. Pixelation reduction disabled.")
+        print("️  Background enhancement module not found. Pixelation reduction disabled.")
         background_enhancement_available = False
     
     args.contrast_method = 'clahe'
-    print(f"🎨 Using contrast method: {args.contrast_method}")
+    print(f" Using contrast method: {args.contrast_method}")
     
     # Check input files
     if not os.path.exists(args.nifti):
@@ -480,16 +480,16 @@ def main():
     
     os.makedirs(args.output_dir, exist_ok=True)
     
-    print(f"📁 Input NIfTI: {args.nifti}")
-    print(f"📁 Input TRK: {args.trk}")
-    print(f"📁 Output Directory: {args.output_dir}")
+    print(f" Input NIfTI: {args.nifti}")
+    print(f" Input TRK: {args.trk}")
+    print(f" Output Directory: {args.output_dir}")
     
     if args.spatial_subdivisions:
         generate_examples_with_spatial_subdivisions(args, background_enhancement_available)
     else:
         generate_examples_original_mode(args, background_enhancement_available)
     
-    print("\n🎉 Dataset generation complete!")
+    print("\n Dataset generation complete!")
     
     # Show what was generated
     if args.spatial_subdivisions:
