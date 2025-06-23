@@ -302,7 +302,7 @@ def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir,
             'tile_grid_size': (8, 8)
         }
 
-    print(f"🚀 Generating {n_examples} enhanced examples with advanced processing")
+    print(f" Generating {n_examples} enhanced examples with advanced processing")
     print(f"   Randomize mode: {randomize}")
     if not randomize:
         print(f"   Contrast method: {contrast_method}")
@@ -316,7 +316,7 @@ def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir,
     if randomize or \
        (use_cornucopia_per_example and CORNUCOPIA_INTEGRATION_AVAILABLE and augmentation_config is not None) or \
        (use_background_enhancement and background_config is not None):
-        print("🎨 Generating examples with comprehensive slice processing...")
+        print(" Generating examples with comprehensive slice processing...")
 
         base_results = _generate_examples_with_comprehensive_processing(
             nifti_file=nifti_file,
@@ -549,7 +549,7 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
         
         # Safety check
         if np.all(enhanced_slice == 0) or np.std(enhanced_slice) < 1e-6:
-            print(f"   ⚠️  Enhanced slice is empty, using original slice data")
+            print(f"     Enhanced slice is empty, using original slice data")
             enhanced_slice = slice_data.copy()
             try:
                 from .contrast import apply_contrast_enhancement
@@ -943,7 +943,7 @@ def generate_enhanced_varied_examples_with_preserved_background(nifti_file, trk_
     dict
         Summary of generation results
     """
-    print(f"🎨 Generating {n_examples} examples with PRESERVED bright background areas")
+    print(f" Generating {n_examples} examples with PRESERVED bright background areas")
     print(f"   Preserve bright background: {preserve_bright_background}")
     print(f"   Apply background cleanup: {apply_background_cleanup}")
     
