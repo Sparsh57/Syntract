@@ -645,7 +645,7 @@ class ImprovedCornucopiaAugmenter:
             return np.clip(result, original_min, original_max).astype(image.dtype)
             
         except Exception as e:
-            print(f"   ⚠️  Optical augmentation failed: {e}, returning original")
+            print(f"   ️  Optical augmentation failed: {e}, returning original")
             return image
 
 
@@ -724,33 +724,33 @@ def augment_fiber_slice(slice_data: np.ndarray,
         Augmented slice data
     """
     # Print debug information about Cornucopia settings
-    print(f"🎨 Applying Cornucopia augmentation:")
-    print(f"   📋 Preset: '{preset}'")
-    print(f"   🔧 Cornucopia available: {CORNUCOPIA_AVAILABLE}")
+    print(f" Applying Cornucopia augmentation:")
+    print(f"    Preset: '{preset}'")
+    print(f"    Cornucopia available: {CORNUCOPIA_AVAILABLE}")
     if custom_config:
-        print(f"   ⚙️  Custom config: {custom_config}")
+        print(f"   ️  Custom config: {custom_config}")
     
     augmenter = ImprovedCornucopiaAugmenter(random_state=random_state)
     
     if custom_config is not None:
         config = custom_config
-        print(f"   🎯 Using custom configuration")
+        print(f"    Using custom configuration")
     else:
         presets = create_optical_presets()
         if preset in presets:
             config = presets[preset]
-            print(f"   ✅ Using preset '{preset}': {config}")
+            print(f"    Using preset '{preset}': {config}")
         else:
             available_presets = list(presets.keys())
-            print(f"   ⚠️  Unknown preset '{preset}', available: {available_presets}")
+            print(f"   ️  Unknown preset '{preset}', available: {available_presets}")
             config = presets['clean_optical']
-            print(f"   🔄 Falling back to 'clean_optical': {config}")
+            print(f"    Falling back to 'clean_optical': {config}")
     
     result = augmenter.apply_optical_augmentation(slice_data, config)
     
     if np.array_equal(result, slice_data):
-        print(f"   ⚠️  Cornucopia had no effect (result identical to input)")
+        print(f"   ️  Cornucopia had no effect (result identical to input)")
     else:
-        print(f"   ✅ Cornucopia augmentation applied successfully")
+        print(f"    Cornucopia augmentation applied successfully")
     
     return result 
