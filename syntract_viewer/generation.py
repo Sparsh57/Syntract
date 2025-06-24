@@ -485,7 +485,7 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
             # 3. Randomize cornucopia preset
             current_cornucopia_preset = random.choice(cornucopia_options)
             current_cornucopia_config = cornucopia_configs.get(current_cornucopia_preset, None)
-            
+
             print(f"Example {i+1} randomized parameters:")
             print(f"   Background effect: {current_background_effect}")
             print(f"   Fiber range: {random_min_fiber:.1f}% - {random_max_fiber:.1f}% (using {fiber_pct:.1f}%)")
@@ -571,7 +571,7 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
                 background_areas = ~brain_mask.astype(bool)
                 
                 # Instead of forcing to pure black, just dim the background
-                background_dimming_factor = kwargs.get('background_dimming_factor', 0.3)
+                background_dimming_factor = kwargs.get('background_dimming_factor', 0.4)
                 enhanced_slice[background_areas] *= background_dimming_factor
         
         # Generate visualization with randomized background effect
@@ -602,7 +602,7 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
         'color_scheme': random.choice(['bw', 'blue']),
         'blue_tint': random.uniform(0.1, 0.4)
     }
-    
+
     # Apply the specified background effect
     if background_effect == 'blockface_preserving':
         dark_field_slice = apply_blockface_preserving_dark_field_effect(
@@ -628,7 +628,7 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
             background_areas = ~brain_mask.astype(bool)
             
             # Instead of forcing to pure black, just dim the background
-            background_dimming_factor = kwargs.get('background_dimming_factor', 0.3)
+            background_dimming_factor = kwargs.get('background_dimming_factor', 0.4)
             dark_field_slice[background_areas] *= background_dimming_factor
     
     # Create visualization
@@ -719,11 +719,11 @@ def _add_streamlines_to_plot(ax, streamlines, slice_mode, slice_idx, dims, tract
     # Adjust base opacity based on background effect
     if background_effect == 'blockface_preserving':
         # Higher opacity for blockface preserving to make fibers more visible against preserved bright areas
-        opacity_multiplier = 2  # Increase opacity by 50%
+        opacity_multiplier = 1.4
         print(f"   Using higher fiber opacity for blockface_preserving effect")
     else:  # 'balanced' or other effects
         # Current opacity level for balanced effect
-        opacity_multiplier = 1.0
+        opacity_multiplier = 0.7
     
     for sl in streamlines:
         sl_dense = densify_streamline(sl)
