@@ -1,13 +1,46 @@
-# Syntract: Advanced NIfTI Tractography Visualization and Processing
+# MRISynth: Advanced MRI Processing and Tractography Visualization Suite
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
 
-A comprehensive Python package for advanced tractography visualization with dark field microscopy effects and machine learning dataset generation. Features high-performance NIfTI processing pipelines and sophisticated augmentation capabilities for neuroimaging research.
+A comprehensive Python package for advanced MRI processing, tractography synthesis, and dark field microscopy-style visualization. Features high-performance processing pipelines, sophisticated augmentation capabilities, and a unified command-line interface for neuroimaging research.
+
+## 🚀 New: Combined Pipeline
+
+**MRISynth now includes a unified CLI that seamlessly combines MRI processing with advanced visualization in a single command!**
+
+```bash
+# Process MRI data and generate visualizations in one step
+python syntract.py \
+  --input brain.nii.gz \
+  --trk fibers.trk \
+  --output processed_data \
+  --new_dim 256 256 256 \
+  --voxel_size 0.5 \
+  --viz_output_dir visualization_dataset \
+  --n_examples 50 \
+  --save_masks
+```
 
 ## Features
 
-### Syntract Viewer - Core Visualization Engine
+### 🔄 Combined Pipeline - One Command, Complete Workflow
+- **Unified processing and visualization** in a single command
+- **Automatic file handling** between synthesis and visualization stages  
+- **Complete parameter mapping** from both synthesis and syntract_viewer
+- **End-to-end workflow** from raw data to publication-ready visualizations
+- **ANTs integration support** for spatial transformations
+- **Flexible output control** with intermediate file retention options
+
+### 🧠 Synthesis - High-Performance Processing Pipeline
+- **GPU-accelerated processing** with CUDA/CuPy support and automatic CPU fallback
+- **Advanced streamline interpolation** (Linear, Hermite, RBF) with sub-voxel precision
+- **Intelligent NIfTI resampling** to arbitrary dimensions and voxel sizes
+- **ANTs integration** for spatial transformations and registration workflows
+- **Memory-efficient processing** with automatic chunking for large datasets
+- **Parallel processing** with configurable job counts and resource optimization
+
+### 🎨 Syntract Viewer - Advanced Visualization Engine
 - **Dark field microscopy-style visualization** with publication-ready image generation
 - **Multi-orientation support** (axial, coronal, sagittal) with intelligent slice selection
 - **Ground truth mask generation** for machine learning training with bundle labeling
@@ -19,27 +52,13 @@ A comprehensive Python package for advanced tractography visualization with dark
 - **Smart fiber bundle detection** with morphological operations and gap closing
 - **Customizable color schemes** including blue-tinted dark field effects
 
-### Synthesis - High-Performance Processing Pipeline
-- **GPU-accelerated processing** with CUDA/CuPy support and automatic CPU fallback
-- **Advanced streamline interpolation** (Linear, Hermite, RBF) with sub-voxel precision
-- **Intelligent NIfTI resampling** to arbitrary dimensions and voxel sizes
-- **ANTs integration** for spatial transformations and registration workflows
-- **Memory-efficient processing** with automatic chunking for large datasets
-- **Parallel processing** with configurable job counts and resource optimization
-
 ## Installation
 
 ### Basic Installation
 
 ```bash
-pip install syntract
-```
-
-### Development Installation
-
-```bash
-git clone https://github.com/your-repo/syntract.git
-cd syntract
+git clone https://github.com/yourusername/MRISynth.git
+cd MRISynth
 pip install -e .
 ```
 
@@ -47,21 +66,98 @@ pip install -e .
 
 ```bash
 # With GPU acceleration
-pip install syntract[gpu]
+pip install cupy-cuda11x  # or cupy-cuda12x depending on your CUDA version
 
 # With Cornucopia medical imaging augmentations
-pip install syntract[cornucopia]
+pip install cornucopia-pytorch
 
 # With ANTs registration support
-pip install syntract[ants]
-
-# Complete installation
-pip install syntract[all]
+# Install ANTs separately: https://github.com/ANTsX/ANTs
 ```
 
 ## Quick Start
 
-### Dark Field Tractography Visualization
+### 🔄 Combined Pipeline (Recommended)
+
+Process MRI data and generate visualizations in one command:
+
+```bash
+# Basic combined processing
+python syntract.py \
+  --input brain.nii.gz \
+  --trk streamlines.trk \
+  --output resampled_data \
+  --viz_output_dir fiber_visualizations \
+  --n_examples 20
+
+# Advanced processing with ANTs transforms
+python syntract.py \
+  --input subject_brain.nii.gz \
+  --trk subject_tracts.trk \
+  --output processed_subject \
+  --new_dim 800 20 800 \
+  --voxel_size 0.05 0.05 0.05 \
+  --patch_center 83 24 37 \
+  --use_ants \
+  --ants_warp warp_field.nii.gz \
+  --ants_iwarp inverse_warp.nii.gz \
+  --ants_aff affine_transform.mat \
+  --viz_output_dir subject_visualizations \
+  --n_examples 5 \
+  --close_gaps \
+  --min_bundle_size 800 \
+  --density_threshold 0.1 \
+  --save_masks
+```
+
+### 🧠 Synthesis Only
+
+High-performance MRI and tractography processing:
+
+```bash
+python synthesis/main.py \
+  --input brain.nii.gz \
+  --trk streamlines.trk \
+  --output processed \
+  --new_dim 256 256 256 \
+  --voxel_size 0.5 \
+  --interp hermite \
+  --use_gpu
+```
+
+### 🎨 Visualization Only
+
+Generate dark field microscopy-style visualizations:
+
+```bash
+python syntract_viewer/generate_fiber_examples.py \
+  --nifti brain.nii.gz \
+  --trk streamlines.trk \
+  --output_dir visualizations \
+  --examples 50 \
+  --save_masks \
+  --label_bundles
+```
+
+### Python API Usage
+
+#### Combined Processing
+```python
+from combined_pipeline import process_and_visualize
+
+# Process and visualize in one call
+results = process_and_visualize(
+    input_nifti="brain.nii.gz",
+    input_trk="streamlines.trk",
+    output_prefix="processed",
+    target_dimensions=(256, 256, 256),
+    viz_output_dir="visualizations",
+    n_examples=25,
+    save_masks=True
+)
+```
+
+#### Dark Field Tractography Visualization
 
 ```python
 from syntract_viewer import visualize_nifti_with_trk
@@ -77,7 +173,7 @@ visualize_nifti_with_trk(
 )
 ```
 
-### Machine Learning Dataset Generation
+#### Machine Learning Dataset Generation
 
 ```python
 from syntract_viewer import generate_varied_examples
@@ -96,23 +192,7 @@ generate_varied_examples(
 )
 ```
 
-### Advanced Medical Imaging Augmentations
-
-```python
-from syntract_viewer import generate_enhanced_varied_examples
-
-# Generate augmented dataset with Cornucopia
-generate_enhanced_varied_examples(
-    nifti_file="brain.nii.gz",
-    trk_file="tracts.trk",
-    output_dir="./augmented_dataset",
-    cornucopia_preset="clinical_simulation",
-    n_examples=200,
-    save_masks=True
-)
-```
-
-### High-Performance Processing
+#### High-Performance Processing
 
 ```python
 from synthesis import process_and_save
@@ -128,64 +208,74 @@ process_and_save(
 )
 ```
 
-### Command Line Usage
-
-```bash
-# Generate fiber visualization dataset
-generate-fiber-examples \
-    --nifti brain.nii.gz \
-    --trk tracts.trk \
-    --output_dir ./fiber_dataset \
-    --examples 500 \
-    --save_masks \
-    --label_bundles \
-    --cornucopia_preset clinical_simulation
-
-# Spatial subdivision dataset
-generate-fiber-examples \
-    --nifti brain.nii.gz \
-    --trk tracts.trk \
-    --spatial_subdivisions \
-    --n_subdivisions 27 \
-    --output_dir ./spatial_dataset
-
-# High-performance processing
-python -m synthesis.main \
-    --input brain.nii.gz \
-    --trk streamlines.trk \
-    --output processed \
-    --voxel_size 0.5 \
-    --use_gpu \
-    --interp hermite
-```
-
 ## Package Architecture
 
 ```
-Syntract/
-├── syntract_viewer/              # Main visualization and dataset generation
-│   ├── core.py                  # Core visualization functions
-│   ├── generation.py            # Dataset generation with variations
-│   ├── contrast.py              # CLAHE and adaptive contrast methods
-│   ├── masking.py               # Smart brain and fiber masking
-│   ├── effects.py               # Dark field microscopy effects
-│   ├── utils.py                 # Utilities and color mapping
-│   ├── cornucopia_augmentation.py # Medical imaging augmentations
-│   └── generate_fiber_examples.py # Command-line interface
-└── synthesis/                   # High-performance processing pipeline
-    ├── main.py                  # Main processing workflow
-    ├── nifti_preprocessing.py   # NIfTI resampling with memory management
-    ├── streamline_processing.py # Streamline transformation and clipping
-    ├── densify.py               # Advanced interpolation algorithms
-    ├── ants_transform.py        # ANTs integration
-    └── compare_interpolation.py # Method comparison tools
+MRISynth/
+├── combined_pipeline.py            # 🔄 Unified CLI for complete workflow
+├── synthesis/                      # 🧠 High-performance processing pipeline
+│   ├── main.py                    # Main processing workflow
+│   ├── nifti_preprocessing.py     # NIfTI resampling with memory management
+│   ├── streamline_processing.py   # Streamline transformation and clipping
+│   ├── densify.py                 # Advanced interpolation algorithms
+│   ├── ants_transform.py          # ANTs integration
+│   └── compare_interpolation.py   # Method comparison tools
+└── syntract_viewer/               # 🎨 Visualization and dataset generation
+    ├── core.py                    # Core visualization functions
+    ├── generation.py              # Dataset generation with variations
+    ├── contrast.py                # CLAHE and adaptive contrast methods
+    ├── masking.py                 # Smart brain and fiber masking
+    ├── effects.py                 # Dark field microscopy effects
+    ├── utils.py                   # Utilities and color mapping
+    ├── cornucopia_augmentation.py # Medical imaging augmentations
+    └── generate_fiber_examples.py # Command-line interface
 ```
 
-## Core Syntract Features
+## Command-Line Reference
+
+### Combined Pipeline Options
+
+```bash
+python syntract.py [options]
+
+# Input/Output
+--input PATH              Input NIfTI file
+--trk PATH               Input TRK file  
+--output PREFIX          Output prefix for processed files
+--viz_output_dir DIR     Output directory for visualizations
+
+# Processing Parameters
+--new_dim X Y Z          Target dimensions (default: 116 140 96)
+--voxel_size SIZE        Target voxel size (default: 0.5)
+--patch_center X Y Z     Patch center in mm (optional)
+--interp METHOD          Interpolation method: hermite|linear|rbf
+--step_size FLOAT        Densification step size (default: 0.5)
+
+# ANTs Integration
+--use_ants               Enable ANTs transforms
+--ants_warp PATH         ANTs warp field file
+--ants_iwarp PATH        ANTs inverse warp file
+--ants_aff PATH          ANTs affine transform file
+
+# Visualization Options
+--n_examples N           Number of examples to generate (default: 5)
+--save_masks             Save fiber masks
+--label_bundles          Label distinct bundles
+--close_gaps             Close gaps in fiber masks
+--min_bundle_size N      Minimum bundle size (default: 20)
+--density_threshold F    Density threshold (default: 0.15)
+
+# Performance
+--use_gpu               Enable GPU acceleration (default: True)
+--jobs N                Number of parallel jobs (default: 8)
+--max_gb FLOAT          Memory limit in GB (default: 64)
+```
+
+## Core Features
 
 ### Dark Field Microscopy Visualization
 
-Syntract's signature feature creates stunning dark field microscopy-style images:
+MRISynth's signature feature creates stunning dark field microscopy-style images:
 
 ```python
 # Custom dark field parameters
@@ -227,62 +317,7 @@ fig, axes, masks, labeled_masks = visualize_nifti_with_trk(
 )
 ```
 
-### Spatial Subdivision Processing
-
-Generate datasets from spatial grid subdivisions:
-
-```python
-# Command line spatial subdivision
-generate-fiber-examples \
-    --nifti brain.nii.gz \
-    --trk tracts.trk \
-    --spatial_subdivisions \
-    --n_subdivisions 64 \
-    --examples 25 \
-    --min_streamlines_per_region 100 \
-    --output_dir ./spatial_grid_dataset
-```
-
-### Multi-View Visualization
-
-```python
-from syntract_viewer import visualize_multiple_views
-
-# Generate all three orientations
-visualize_multiple_views(
-    nifti_file="brain.nii.gz",
-    trk_file="tracts.trk",
-    output_file="multi_view.png",
-    save_masks=True,
-    streamline_percentage=75.0
-)
-```
-
-## Cornucopia Medical Imaging Augmentations
-
-When available, Syntract integrates sophisticated medical imaging augmentations:
-
-```python
-# Available augmentation presets
-presets = {
-    'clinical_simulation': {
-        'spatial': {'type': 'affine_medical'},
-        'intensity': {'type': 'bias_field'},
-        'noise': {'type': 'rician_noise', 'intensity': 0.2},
-        'contrast': {'type': 'adaptive_contrast'}
-    },
-    'aggressive': {
-        'spatial': {'type': 'elastic_deformation'},
-        'intensity': {'type': 'bias_field'},
-        'noise': {'type': 'rician_noise', 'intensity': 0.6},
-        'contrast': {'type': 'local_contrast'}
-    }
-}
-```
-
-## Processing Pipeline Features
-
-### GPU-Accelerated Resampling
+### GPU-Accelerated Processing
 
 ```python
 # Automatic GPU detection and utilization
@@ -307,22 +342,6 @@ metrics = compare_interpolations(
     step_size=0.3,
     methods=['linear', 'hermite', 'rbf'],
     num_streamlines=5000
-)
-```
-
-### ANTs Registration Integration
-
-```python
-# Process with ANTs transformations
-process_and_save(
-    original_nifti_path="subject.nii.gz",
-    original_trk_path="subject_tracts.trk",
-    use_ants=True,
-    ants_warp_path="subject_to_mni_warp.nii.gz",
-    ants_iwarp_path="mni_to_subject_warp.nii.gz",
-    ants_aff_path="subject_to_mni_affine.mat",
-    target_dimensions=(182, 218, 182),
-    transform_mri_with_ants=True
 )
 ```
 
@@ -364,16 +383,64 @@ process_and_save(
 - **Memory Optimization**: Handle large datasets within memory constraints
 - **Batch Processing**: Automated processing pipelines
 
+## Examples and Tutorials
+
+### Example 1: Basic Processing and Visualization
+```bash
+# Download example data (replace with your data)
+# Process and visualize in one command
+python syntract.py \
+  --input example_brain.nii.gz \
+  --trk example_tracts.trk \
+  --output example_processed \
+  --viz_output_dir example_viz \
+  --n_examples 10 \
+  --save_masks \
+  --label_bundles
+```
+
+### Example 2: High-Resolution Processing with ANTs
+```bash
+# For data with ANTs registration
+python syntract.py \
+  --input high_res_brain.nii.gz \
+  --trk high_res_tracts.trk \
+  --output hr_processed \
+  --new_dim 512 512 512 \
+  --voxel_size 0.25 \
+  --use_ants \
+  --ants_warp warp_field.nii.gz \
+  --ants_iwarp inverse_warp.nii.gz \
+  --ants_aff affine.mat \
+  --viz_output_dir hr_visualizations \
+  --n_examples 25
+```
+
+### Example 3: Machine Learning Dataset Generation
+```bash
+# Generate large training dataset
+python syntract.py \
+  --input training_brain.nii.gz \
+  --trk training_tracts.trk \
+  --output training_processed \
+  --viz_output_dir ml_dataset \
+  --n_examples 500 \
+  --save_masks \
+  --label_bundles \
+  --min_fiber_percentage 5 \
+  --max_fiber_percentage 100 \
+  --close_gaps
+```
 
 ## Contributing
 
-We welcome contributions to Syntract! Please see our [Contributing Guidelines](CONTRIBUTING.md).
+We welcome contributions to MRISynth! Please see our [Contributing Guidelines](CONTRIBUTING.md).
 
 ### Development Setup
 
 ```bash
-git clone https://github.com/Sparsh57/syntract.git
-cd syntract
+git clone https://github.com/yourusername/MRISynth.git
+cd MRISynth
 pip install -e ".[dev]"
 pre-commit install
 ```
@@ -383,9 +450,8 @@ pre-commit install
 ```bash
 pytest tests/
 python -m synthesis.compare_interpolation
+python syntract.py --help
 ```
-
-
 
 ## Related Projects
 
@@ -396,11 +462,15 @@ python -m synthesis.compare_interpolation
 - [CuPy](https://cupy.dev/) - GPU-accelerated computing
 
 ## Support
-- **Issues**: [GitHub Issues](https://github.com/your-repo/syntract/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/your-repo/syntract/discussions)
+- **Issues**: [GitHub Issues](https://github.com/yourusername/MRISynth/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/yourusername/MRISynth/discussions)
+
+## License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ---
 
-*Syntract is developed by the LINC Team to advance tractography visualization and machine learning in neuroimaging.*
+*MRISynth is developed by the LINC Team to advance MRI processing, tractography synthesis, and visualization in neuroimaging research.*
 
 
