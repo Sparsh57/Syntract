@@ -715,15 +715,8 @@ def _add_streamlines_to_plot(ax, streamlines, slice_mode, slice_idx, dims, tract
     
     segments = []
     colors = []
-    
-    # Adjust base opacity based on background effect
-    if background_effect == 'blockface_preserving':
-        # Higher opacity for blockface preserving to make fibers more visible against preserved bright areas
-        opacity_multiplier = 1.4
-        print(f"   Using higher fiber opacity for blockface_preserving effect")
-    else:  # 'balanced' or other effects
-        # Current opacity level for balanced effect
-        opacity_multiplier = 0.7
+
+    opacity_multiplier = 0.5
     
     for sl in streamlines:
         sl_dense = densify_streamline(sl)
