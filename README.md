@@ -143,7 +143,7 @@ python syntract_viewer/generate_fiber_examples.py \
 
 #### Combined Processing
 ```python
-from combined_pipeline import process_and_visualize
+from syntract import process_and_visualize
 
 # Process and visualize in one call
 results = process_and_visualize(
@@ -363,25 +363,7 @@ metrics = compare_interpolations(
 - numba >= 0.50.0 (CUDA kernels)
 - ants (spatial transformations and registration)
 
-## Research Applications
 
-### Machine Learning
-- **Training Dataset Generation**: Create large, diverse datasets with ground truth masks
-- **Data Augmentation**: Realistic medical imaging variations with Cornucopia
-- **Quality Control**: Validate model outputs against fiber visualizations
-- **Comparative Studies**: Evaluate different tractography algorithms
-
-### Clinical Neuroimaging
-- **Surgical Planning**: High-quality visualizations for neurosurgical guidance
-- **Patient Education**: Clear, understandable brain connectivity visualizations
-- **Research Publications**: Publication-ready figures with dark field aesthetics
-- **Multi-Modal Integration**: Combine structural and diffusion MRI data
-
-### High-Performance Computing
-- **Large Cohort Studies**: Process thousands of subjects efficiently
-- **Cloud Computing**: Scalable processing with GPU acceleration
-- **Memory Optimization**: Handle large datasets within memory constraints
-- **Batch Processing**: Automated processing pipelines
 
 ## Examples and Tutorials
 
