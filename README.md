@@ -1,4 +1,4 @@
-# MRISynth: Advanced MRI Processing and Tractography Visualization Suite
+# Syntract: Advanced MRI Processing and Tractography Visualization Suite
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
@@ -7,7 +7,7 @@ A comprehensive Python package for advanced MRI processing, tractography synthes
 
 ## 🚀 New: Combined Pipeline
 
-**MRISynth now includes a unified CLI that seamlessly combines MRI processing with advanced visualization in a single command!**
+**Syntract now includes a unified CLI that seamlessly combines MRI processing with advanced visualization in a single command!**
 
 ```bash
 # Process MRI data and generate visualizations in one step
@@ -453,6 +453,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-*MRISynth is developed by the LINC Team to advance MRI processing, tractography synthesis, and visualization in neuroimaging research.*
+*Syntract is developed by the LINC Team to advance MRI processing, tractography synthesis, and visualization in neuroimaging research.*
 
 
