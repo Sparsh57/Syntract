@@ -12,10 +12,7 @@ def clip_streamline_to_fov(stream, new_shape, use_gpu=True, epsilon=1e-6):
     """Clip a streamline to the field of view."""
     if use_gpu:
         try:
-            from .gpu_utils import get_array_module, has_gpu_support
-            xp = get_array_module(prefer_gpu=True)
-            if not has_gpu_support():
-                use_gpu = False
+            import cupy as xp
         except ImportError:
             import numpy as xp
             use_gpu = False
@@ -120,13 +117,8 @@ def transform_streamline(s_mm, A_new_inv, use_gpu=True):
     """Transform a streamline from mm space to voxel space."""
     if use_gpu:
         try:
-            from .gpu_utils import try_gpu_import
-            gpu_imports = try_gpu_import()
-            xp = gpu_imports['xp']
-            cuda = gpu_imports['cuda']
-            
-            if not gpu_imports['cupy_available'] or not gpu_imports['numba_available']:
-                raise ImportError("Partial GPU support - falling back to CPU")
+            import cupy as xp
+            from numba import cuda
             
             s_mm_gpu = xp.asarray(s_mm, dtype=xp.float32)
             output = xp.zeros_like(s_mm_gpu)

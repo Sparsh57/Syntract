@@ -27,11 +27,7 @@ def build_new_affine(old_affine, old_shape, new_voxel_size, new_shape, patch_cen
     """
     if use_gpu:
         try:
-            from .gpu_utils import get_array_module, has_gpu_support
-            xp = get_array_module(prefer_gpu=True)
-            if not has_gpu_support():
-                import numpy as xp
-                use_gpu = False
+            import cupy as xp
             xp.array([1, 2, 3])
         except (ImportError, RuntimeError):
             import numpy as xp
