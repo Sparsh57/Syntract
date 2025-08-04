@@ -3,13 +3,13 @@ requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "SynTract"
+name = "MRISynth"
 description = "MRI synthesis and tractography processing tools"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
-    {name = "SynTract Contributors"}
+    {name = "MRISynth Contributors"}
 ]
 classifiers = [
     "Development Status :: 4 - Beta",

@@ -1,36 +1,39 @@
 #!/usr/bin/env python
 """
-High-performance SynTract pipeline for processing NIfTI and streamline data.
+Main Syntract Processing Pipeline
 
-Key features:
-- Multi-threaded processing with automatic CPU core detection  
-- Memory-mapped file support for large datasets
-- ANTs integration for advanced registration
-- Flexible interpolation methods (linear, hermite, cubic)
+This script serves as the entry point for the Syntract tractography synthesis pipeline.
+It orchestrates the complete workflow from raw NIfTI and TRK files to processed,
+resampled, and transformed outputs suitable for analysis and visualization.
+
+The pipeline supports:
+- Advanced streamline interpolation (Linear, Hermite, RBF)
 - GPU-accelerated processing with automatic CPU fallback
+- ANTs-based spatial transformations
+- Flexible output formatting and memory management
 
-This pipeline handles both NIfTI resampling and streamline transformation/densification
-in a unified workflow, with comprehensive error handling and resource management.
+Usage:
+    python main.py --input brain.nii.gz --trk fibers.trk [options]
 """
 
-import gc
+import argparse
 import os
+import sys
 import time
-import tempfile
 import numpy as np
 import nibabel as nib
-from pathlib import Path
-from joblib import Parallel, delayed
-
-# Import GPU utilities with graceful fallback
-from .gpu_utils import get_gpu_support, initialize_gpu_support
-
-# Rest of imports
-from .transform import build_new_affine
-from .nifti_preprocessing import resample_nifti
-from .streamline_processing import transform_and_densify_streamlines
-from .densify import densify_streamlines_parallel
-
+try:
+    from .nifti_preprocessing import resample_nifti
+    from .transform import build_new_affine
+    from .streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
+    from .densify import densify_streamline_subvoxel
+    from .ants_transform import process_with_ants
+except ImportError:
+    from nifti_preprocessing import resample_nifti
+    from transform import build_new_affine
+    from streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
+    from densify import densify_streamline_subvoxel
+    from ants_transform import process_with_ants
 from nibabel.streamlines import Tractogram, save as save_trk
 
 
@@ -56,18 +59,18 @@ def process_and_save(
 ):
     """Process and save NIfTI and streamline data with new parameters."""
     
-    # Initialize GPU support
-    gpu_support = initialize_gpu_support(verbose=True)
-    
     if use_gpu:
-        if gpu_support.has_partial_gpu_support():
-            print(f"Using GPU acceleration: {gpu_support.get_gpu_status_string()}")
-            # We'll let individual functions decide what they can accelerate
-        else:
-            print("Warning: No GPU libraries available. Falling back to CPU.")
+        try:
+            import cupy as xp
+            from numba import cuda
+            print("Using GPU acceleration")
+        except ImportError:
+            print("Warning: Could not import GPU libraries. Falling back to CPU.")
+            import numpy as xp
             use_gpu = False
     else:
-        print("Using CPU processing (GPU disabled by user)")
+        import numpy as xp
+        print("Using CPU processing")
 
     if use_ants:
         if not all([ants_warp_path, ants_iwarp_path, ants_aff_path]):
@@ -168,8 +171,7 @@ def process_and_save(
 
     if reduction_method:
         print(f"\n=== Applying Reduction: {reduction_method} ===")
-        if reduction_method:
-            xp = gpu_support.get_array_module(prefer_gpu=use_gpu)
+        if use_gpu:
             if reduction_method == 'mip':
                 reduced_data = xp.max(new_data, axis=1)
             elif reduction_method == 'mean':
@@ -179,11 +181,23 @@ def process_and_save(
             
             reduced_data = reduced_data[..., xp.newaxis]
             new_data = reduced_data
+        else:
+            if reduction_method == 'mip':
+                reduced_data = np.max(new_data, axis=1)
+            elif reduction_method == 'mean':
+                reduced_data = np.mean(new_data, axis=1)
+            else:
+                raise ValueError(f"Unsupported reduction method: {reduction_method}")
+            
+            reduced_data = reduced_data[..., np.newaxis]
+            new_data = reduced_data
             
         target_dimensions = (target_dimensions[0], 1, target_dimensions[2])
 
-    # Convert GPU arrays back to numpy if needed
-    new_data_np = gpu_support.convert_to_numpy(new_data)
+    if use_gpu:
+        new_data_np = xp.asnumpy(new_data)
+    else:
+        new_data_np = new_data
     
     print(f"Final data shape before saving: {new_data_np.shape}")
         

@@ -74,13 +74,8 @@ def resample_nifti(old_img, new_affine, new_shape, chunk_size=(64, 64, 64), n_jo
     
     if use_gpu:
         try:
-            from .gpu_utils import try_gpu_import
-            gpu_imports = try_gpu_import()
-            xp = gpu_imports['xp']
-            cuda = gpu_imports['cuda']
-            
-            if not gpu_imports['cupy_available'] or not gpu_imports['numba_available']:
-                raise ImportError("Partial GPU support - falling back to CPU")
+            import cupy as xp
+            from numba import cuda
             
             @cuda.jit
             def resample_kernel(new_data, data_in, new_affine, old_affine_inv, new_shape):

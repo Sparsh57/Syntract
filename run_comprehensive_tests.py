@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Comprehensive Test Runner for Syntract Project
+Comprehensive Test Runner for MRISynth Project
 
 This script systematically tests all modules in the synthesis/ and syntract_viewer/ folders.
 It runs tests step by step and provides detailed feedback on the testing progress.
@@ -68,7 +68,7 @@ def setup_test_environment():
     sys.path.insert(0, str(project_root))
     
     # Create temporary directory for test files
-    temp_dir = tempfile.mkdtemp(prefix="syntract_test_")
+    temp_dir = tempfile.mkdtemp(prefix="mrisynth_test_")
     print(f"Created temporary directory: {temp_dir}")
     
     return temp_dir
@@ -516,7 +516,7 @@ def test_integration():
 def main():
     """Main test runner"""
     print("="*60)
-    print("COMPREHENSIVE TEST RUNNER FOR SynTract")
+    print("COMPREHENSIVE TEST RUNNER FOR MRISYNTH")
     print("="*60)
     print("Testing all modules in synthesis/ and syntract_viewer/ folders")
     print("This will run step-by-step comprehensive tests...")

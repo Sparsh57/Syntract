@@ -574,11 +574,7 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
 
         if use_gpu:
             try:
-                from .gpu_utils import get_array_module, has_gpu_support
-                xp = get_array_module(prefer_gpu=True)
-                if not has_gpu_support():
-                    import numpy as xp
-                    use_gpu = False
+                import cupy as xp
                 if not isinstance(streamline, np.ndarray):
                     streamline = np.array(streamline, dtype=np.float32)
                 try:
