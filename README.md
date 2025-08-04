@@ -1,4 +1,4 @@
-# MRISynth: Advanced MRI Processing and Tractography Visualization Suite
+# SynTract: Advanced MRI Processing and Tractography Visualization Suite
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Python 3.7+](https://img.shields.io/badge/python-3.7+-blue.svg)](https://www.python.org/downloads/)
@@ -7,7 +7,7 @@ A comprehensive Python package for advanced MRI processing, tractography synthes
 
 ## 🚀 New: Combined Pipeline
 
-**MRISynth now includes a unified CLI that seamlessly combines MRI processing with advanced visualization in a single command!**
+**SynTract now includes a unified CLI that seamlessly combines MRI processing with advanced visualization in a single command!**
 
 ```bash
 # Process MRI data and generate visualizations in one step
@@ -57,8 +57,8 @@ python syntract.py \
 ### Basic Installation
 
 ```bash
-git clone https://github.com/yourusername/MRISynth.git
-cd MRISynth
+git clone https://github.com/yourusername/SynTract.git
+cd SynTract
 pip install -e .
 ```
 
@@ -139,9 +139,121 @@ python syntract_viewer/generate_fiber_examples.py \
   --label_bundles
 ```
 
+## 🐍 Programmatic Interface for ML Pipelines
+
+**New!** Use SynTract directly in your Python code for ML dataset generation and research workflows:
+
+### Basic Single Subject Processing
+```python
+from syntract import process_mri_data
+
+# Process single subject with default settings
+result = process_mri_data(
+    input_nifti="brain.nii.gz",
+    input_trk="fibers.trk",
+    output="processed_subject",
+    n_examples=5,
+    save_masks=True
+)
+
+if result['success']:
+    print(f"Visualizations: {result['viz_output_dir']}")
+```
+
+### ML Dataset Creation
+```python
+from syntract import create_ml_dataset
+
+# Create dataset from multiple subjects
+input_pairs = [
+    ("subject1_brain.nii.gz", "subject1_fibers.trk"),
+    ("subject2_brain.nii.gz", "subject2_fibers.trk"),
+    ("subject3_brain.nii.gz", "subject3_fibers.trk"),
+]
+
+results = create_ml_dataset(
+    input_pairs=input_pairs,
+    output_dir="ml_training_dataset",
+    n_examples_per_pair=8,
+    use_spatial_subdivisions=True,
+    save_masks=True,
+    background_preset="high_quality"
+)
+```
+
+### Preset Configurations
+```python
+from syntract import process_single_subject
+
+# Quick mode for testing
+result = process_single_subject(
+    nifti_path="brain.nii.gz",
+    trk_path="fibers.trk",
+    output_dir="test_output",
+    quick_mode=True
+)
+
+# High quality mode for final datasets
+result = process_single_subject(
+    nifti_path="brain.nii.gz",
+    trk_path="fibers.trk", 
+    output_dir="final_output",
+    high_quality=True
+)
+```
+
+### Batch Processing
+```python
+from syntract import batch_process_directory
+
+# Process all NIfTI/TRK pairs in a directory
+results = batch_process_directory(
+    input_dir="raw_data/",
+    output_dir="processed_dataset/",
+    n_examples_per_pair=5,
+    save_masks=True
+)
+```
+
+### Custom ML Pipeline
+```python
+from syntract import process_mri_data
+
+# Full control over all parameters
+result = process_mri_data(
+    input_nifti="brain.nii.gz",
+    input_trk="fibers.trk",
+    output="custom_output",
+    
+    # Standardize dimensions and resolution
+    voxel_size=0.5,
+    new_dim=(128, 128, 96),
+    
+    # Generate diverse examples
+    n_examples=10,
+    use_spatial_subdivisions=True,
+    n_subdivisions=12,
+    
+    # ML-ready outputs
+    save_masks=True,
+    label_bundles=True,
+    use_high_density_masks=True,
+    
+    # Reproducible results
+    random_state=42,
+    
+    # Quality enhancement
+    background_preset="high_quality",
+    close_gaps=True,
+    
+    # Keep intermediate files
+    keep_processed=True
+)
+```
+
 ### Python API Usage
 
-#### Combined Processing
+#### Combined Processing (Legacy)
 ```python
 from syntract import process_and_visualize
 
@@ -211,16 +323,16 @@ process_and_save(
 ## Package Architecture
 
 ```
-MRISynth/
-├── combined_pipeline.py            # 🔄 Unified CLI for complete workflow
-├── synthesis/                      # 🧠 High-performance processing pipeline
+SynTract/
+├── syntract.py                    # Unified CLI for complete workflow
+├── synthesis/                     # High-performance processing pipeline
 │   ├── main.py                    # Main processing workflow
 │   ├── nifti_preprocessing.py     # NIfTI resampling with memory management
 │   ├── streamline_processing.py   # Streamline transformation and clipping
 │   ├── densify.py                 # Advanced interpolation algorithms
 │   ├── ants_transform.py          # ANTs integration
 │   └── compare_interpolation.py   # Method comparison tools
-└── syntract_viewer/               # 🎨 Visualization and dataset generation
+└── syntract_viewer/               # Visualization and dataset generation
     ├── core.py                    # Core visualization functions
     ├── generation.py              # Dataset generation with variations
     ├── contrast.py                # CLAHE and adaptive contrast methods
@@ -275,7 +387,7 @@ python syntract.py [options]
 
 ### Dark Field Microscopy Visualization
 
-MRISynth's signature feature creates stunning dark field microscopy-style images:
+SynTract's signature feature creates stunning dark field microscopy-style images:
 
 ```python
 # Custom dark field parameters
@@ -416,13 +528,13 @@ python syntract.py \
 
 ## Contributing
 
-We welcome contributions to MRISynth! Please see our [Contributing Guidelines](CONTRIBUTING.md).
+We welcome contributions to SynTract! Please see our [Contributing Guidelines](CONTRIBUTING.md).
 
 ### Development Setup
 
 ```bash
-git clone https://github.com/yourusername/MRISynth.git
-cd MRISynth
+git clone https://github.com/yourusername/SynTract.git
+cd SynTract
 pip install -e ".[dev]"
 pre-commit install
 ```
@@ -444,8 +556,8 @@ python syntract.py --help
 - [CuPy](https://cupy.dev/) - GPU-accelerated computing
 
 ## Support
-- **Issues**: [GitHub Issues](https://github.com/yourusername/MRISynth/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/yourusername/MRISynth/discussions)
+- **Issues**: [GitHub Issues](https://github.com/yourusername/SynTract/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/yourusername/SynTract/discussions)
 
 ## License
 
@@ -453,6 +565,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-*MRISynth is developed by the LINC Team to advance MRI processing, tractography synthesis, and visualization in neuroimaging research.*
+*SynTract is developed by the LINC Team to advance MRI processing, tractography synthesis, and visualization in neuroimaging research.*
 
 
