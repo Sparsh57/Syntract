@@ -133,7 +133,7 @@ def generate_examples_with_spatial_subdivisions(args, background_enhancement_ava
     valid_subdivisions = []
     total_examples = 0
     
-    for i, (bounds, region_data) in enumerate(grid_subdivisions):
+    for i, (bounds, _) in enumerate(grid_subdivisions):
         x_start, x_end, y_start, y_end, z_start, z_end = bounds
         
         print(f"   Processing region {i+1}/{len(grid_subdivisions)}: ({x_start}:{x_end}, {y_start}:{y_end}, {z_start}:{z_end})")
@@ -148,6 +148,14 @@ def generate_examples_with_spatial_subdivisions(args, background_enhancement_ava
         if len(region_streamlines) < args.min_streamlines_per_region:
             print(f"Skipping (too few streamlines)")
             continue
+        
+        # Skip empty regions if requested
+        if hasattr(args, 'skip_empty_regions') and args.skip_empty_regions and len(region_streamlines) == 0:
+            print(f"Skipping (empty region)")
+            continue
+        
+        # Extract region data from the loaded nifti_data
+        region_data = nifti_data[x_start:x_end, y_start:y_end, z_start:z_end]
         
         sub_id = len(valid_subdivisions)
         sub_dir = output_path / f"subdivision_{sub_id:03d}"
@@ -285,17 +293,9 @@ def _calculate_grid_subdivisions(nifti_shape, n_subdivisions):
                 z_start = k * sub_z
                 z_end = min((k + 1) * sub_z, z_max)
                 
-                try:
-                    import nibabel as nib
-                    nifti_img = nib.load(sys.argv[sys.argv.index('--nifti') + 1])
-                    nifti_data = nifti_img.get_fdata()
-                    region_data = nifti_data[x_start:x_end, y_start:y_end, z_start:z_end]
-                    
-                    bounds = (x_start, x_end, y_start, y_end, z_start, z_end)
-                    subdivisions.append((bounds, region_data))
-                except:
-                    bounds = (x_start, x_end, y_start, y_end, z_start, z_end)
-                    subdivisions.append((bounds, None))
+                # Skip the data extraction in grid calculation - we'll do it in the main function
+                bounds = (x_start, x_end, y_start, y_end, z_start, z_end)
+                subdivisions.append((bounds, None))
             
             if len(subdivisions) >= n_subdivisions:
                 break

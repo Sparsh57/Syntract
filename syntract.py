@@ -144,6 +144,8 @@ def run_visualization_stage(nifti_file, trk_file, args):
     viz_args.spatial_subdivisions = args.use_spatial_subdivisions
     viz_args.n_subdivisions = args.n_subdivisions
     viz_args.max_streamlines_per_region = args.max_streamlines_per_subdivision
+    viz_args.min_streamlines_per_region = args.min_streamlines_per_region
+    viz_args.skip_empty_regions = args.skip_empty_regions
     
     # Import background enhancement availability
     try:
@@ -182,6 +184,184 @@ def copy_final_outputs(temp_dir, args):
         if os.path.exists(processed_trk):
             shutil.copy2(processed_trk, final_trk)
             print(f"Saved processed TRK: {final_trk}")
+
+
+def process_syntract(input_nifti, input_trk, output_base=None, **kwargs):
+    """
+    Programmatic interface for the syntract pipeline.
+    
+    Args:
+        input_nifti (str): Path to input NIfTI file
+        input_trk (str): Path to input TRK file  
+        output_base (str): Base name for output files (default: auto-generated)
+        **kwargs: Additional parameters (see main() function for all options)
+        
+    Returns:
+        dict: Dictionary containing output paths and status
+        
+    Example:
+        result = process_syntract(
+            input_nifti="brain.nii.gz",
+            input_trk="fibers.trk",
+            output_base="my_output",
+            n_examples=3,
+            viz_prefix="fiber_",
+            skip_synthesis=False
+        )
+    """
+    import argparse
+    
+    # Set default output_base if not provided
+    if output_base is None:
+        base_name = os.path.splitext(os.path.basename(input_trk))[0]
+        output_base = f"processed_{base_name}"
+    
+    # Create argparse namespace with defaults
+    args = argparse.Namespace()
+    
+    # Required arguments
+    args.input = input_nifti
+    args.trk = input_trk
+    args.output = output_base
+    
+    # Set defaults for all parameters
+    args.skip_synthesis = kwargs.get('skip_synthesis', False)
+    args.skip_visualization = kwargs.get('skip_visualization', False)
+    args.keep_processed = kwargs.get('keep_processed', True)
+    
+    # Synthesis parameters
+    args.voxel_size = kwargs.get('voxel_size', [0.5])
+    args.new_dim = kwargs.get('new_dim', [116, 140, 96])
+    args.jobs = kwargs.get('jobs', 8)
+    args.patch_center = kwargs.get('patch_center', None)
+    args.reduction = kwargs.get('reduction', None)
+    args.use_gpu = kwargs.get('use_gpu', True)
+    args.cpu = kwargs.get('cpu', False)
+    args.interp = kwargs.get('interp', 'hermite')
+    args.step_size = kwargs.get('step_size', 0.5)
+    args.max_gb = kwargs.get('max_gb', 64.0)
+    
+    # ANTs parameters
+    args.use_ants = kwargs.get('use_ants', False)
+    args.ants_warp = kwargs.get('ants_warp', None)
+    args.ants_iwarp = kwargs.get('ants_iwarp', None)
+    args.ants_aff = kwargs.get('ants_aff', None)
+    args.force_dimensions = kwargs.get('force_dimensions', False)
+    args.transform_mri_with_ants = kwargs.get('transform_mri_with_ants', False)
+    
+    # Visualization parameters
+    args.viz_output_dir = kwargs.get('viz_output_dir', f"{output_base}_visualizations")
+    args.n_examples = kwargs.get('n_examples', 5)
+    args.viz_prefix = kwargs.get('viz_prefix', 'synthetic_')
+    args.slice_mode = kwargs.get('slice_mode', 'coronal')
+    args.specific_slice = kwargs.get('specific_slice', None)
+    args.streamline_percentage = kwargs.get('streamline_percentage', 100.0)
+    args.tract_linewidth = kwargs.get('tract_linewidth', 1.0)
+    args.save_masks = kwargs.get('save_masks', False)
+    args.use_high_density_masks = kwargs.get('use_high_density_masks', False)
+    args.label_bundles = kwargs.get('label_bundles', False)
+    args.mask_thickness = kwargs.get('mask_thickness', 1)
+    args.min_fiber_percentage = kwargs.get('min_fiber_percentage', 10.0)
+    args.max_fiber_percentage = kwargs.get('max_fiber_percentage', 100.0)
+    args.min_bundle_size = kwargs.get('min_bundle_size', 20)
+    args.density_threshold = kwargs.get('density_threshold', 0.15)
+    
+    # Enhancement parameters
+    args.contrast_method = kwargs.get('contrast_method', 'clahe')
+    args.background_preset = kwargs.get('background_preset', 'preserve_edges')
+    args.cornucopia_preset = kwargs.get('cornucopia_preset', None)
+    args.enable_sharpening = kwargs.get('enable_sharpening', True)
+    args.sharpening_strength = kwargs.get('sharpening_strength', 0.5)
+    args.close_gaps = kwargs.get('close_gaps', False)
+    args.closing_footprint_size = kwargs.get('closing_footprint_size', 5)
+    
+    # Spatial subdivisions parameters
+    args.use_spatial_subdivisions = kwargs.get('use_spatial_subdivisions', False)
+    args.n_subdivisions = kwargs.get('n_subdivisions', 8)
+    args.max_streamlines_per_subdivision = kwargs.get('max_streamlines_per_subdivision', 50000)
+    args.min_streamlines_per_region = kwargs.get('min_streamlines_per_region', 10)
+    args.skip_empty_regions = kwargs.get('skip_empty_regions', True)
+    
+    # Miscellaneous parameters
+    args.randomize_viz = kwargs.get('randomize_viz', False)
+    args.random_state = kwargs.get('random_state', None)
+    args.temp_dir = kwargs.get('temp_dir', None)
+    
+    # Validate arguments
+    if args.skip_synthesis and args.skip_visualization:
+        raise ValueError("Cannot skip both synthesis and visualization stages")
+    
+    if args.use_ants and not all([args.ants_warp, args.ants_iwarp, args.ants_aff]):
+        raise ValueError("When use_ants=True, ants_warp, ants_iwarp, and ants_aff must be provided")
+    
+    # Set up temporary directory
+    if args.temp_dir:
+        temp_dir = args.temp_dir
+        os.makedirs(temp_dir, exist_ok=True)
+        cleanup_temp = False
+    else:
+        temp_dir = tempfile.mkdtemp(prefix="mri_pipeline_")
+        cleanup_temp = True
+    
+    result = {
+        'success': False,
+        'output_base': output_base,
+        'visualization_dir': args.viz_output_dir,
+        'processed_nifti': None,
+        'processed_trk': None,
+        'error': None
+    }
+    
+    try:
+        print(f"Combined MRI Processing and Visualization Pipeline")
+        print(f"Input NIfTI: {args.input}")
+        print(f"Input TRK: {args.trk}")
+        print(f"Temporary directory: {temp_dir}")
+        print(f"Final output base: {args.output}")
+        print(f"Visualization output: {args.viz_output_dir}")
+        
+        # Determine which files to use for visualization
+        if args.skip_synthesis:
+            print("\nSkipping synthesis stage - using original files")
+            viz_nifti = args.input
+            viz_trk = args.trk
+        else:
+            # Run synthesis stage
+            viz_nifti, viz_trk = run_synthesis_stage(args, temp_dir)
+            
+        # Run visualization stage
+        if not args.skip_visualization:
+            run_visualization_stage(viz_nifti, viz_trk, args)
+        
+        # Copy final outputs if requested
+        if not args.skip_synthesis and args.keep_processed:
+            copy_final_outputs(temp_dir, args)
+            result['processed_nifti'] = args.output + "_processed.nii.gz"
+            result['processed_trk'] = args.output + "_processed.trk"
+        
+        print("\n" + "="*60)
+        print("PIPELINE COMPLETED SUCCESSFULLY!")
+        print("="*60)
+        
+        if not args.skip_visualization:
+            print(f"Visualizations saved to: {args.viz_output_dir}")
+        if not args.skip_synthesis and args.keep_processed:
+            print(f"Processed files saved with prefix: {args.output}_processed")
+            
+        result['success'] = True
+        
+    except Exception as e:
+        error_msg = f"Error in pipeline: {e}"
+        print(error_msg)
+        result['error'] = str(e)
+    
+    finally:
+        # Clean up temporary directory if we created it
+        if cleanup_temp and os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+            print(f"Cleaned up temporary directory: {temp_dir}")
+    
+    return result
 
 
 def main():
