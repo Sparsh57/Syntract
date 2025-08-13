@@ -59,18 +59,25 @@ def process_and_save(
 ):
     """Process and save NIfTI and streamline data with new parameters."""
     
+    # Use the centralized GPU utilities for proper GPU detection
+    from .gpu_utils import try_gpu_import, get_gpu_support
+    
     if use_gpu:
-        try:
-            import cupy as xp
-            from numba import cuda
-            print("Using GPU acceleration")
-        except ImportError:
-            print("Warning: Could not import GPU libraries. Falling back to CPU.")
-            import numpy as xp
-            use_gpu = False
+        # Initialize GPU support and get the best available array module
+        gpu_support = get_gpu_support()
+        gpu_result = try_gpu_import()
+        
+        xp = gpu_result['xp']
+        use_gpu = gpu_result['cupy_available']
+        
+        if use_gpu:
+            print("✓ Using GPU acceleration with CuPy")
+        else:
+            print("ℹ Using CPU processing (GPU libraries not available)")
+            # Note: No warning since this is expected when GPU libraries aren't installed
     else:
         import numpy as xp
-        print("Using CPU processing")
+        print("ℹ Using CPU processing (GPU disabled by user)")
 
     if use_ants:
         if not all([ants_warp_path, ants_iwarp_path, ants_aff_path]):
