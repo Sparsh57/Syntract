@@ -28,6 +28,12 @@ from .ants_transform import (
     process_with_ants
 )
 from .compare_interpolation import compare_interpolations
+from .slice_selection import (
+    extract_coronal_slices_and_streamlines,
+    ensure_ras_orientation,
+    compute_brain_mask,
+    stratified_random_selection
+)
 
 __version__ = "1.0.0"
 __author__ = "LINC Team"
@@ -64,5 +70,11 @@ __all__ = [
     'process_with_ants',
     
     # Comparison tools
-    'compare_interpolations'
+    'compare_interpolations',
+    
+    # Slice selection
+    'extract_coronal_slices_and_streamlines',
+    'ensure_ras_orientation',
+    'compute_brain_mask',
+    'stratified_random_selection'
 ]

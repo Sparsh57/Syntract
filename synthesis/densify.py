@@ -261,18 +261,27 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
                 densified.append(result)
                 success_count += 1
             except Exception as e:
-                print(f"Error densifying streamline {i}: {e}")
+                print(f"Error densifying streamline {i}: {type(e).__name__}: {e}")
+                if os.environ.get("DEBUG_DENSIFY", "0") == "1":
+                    import traceback
+                    traceback.print_exc()
                 
         print(f"Densified {success_count}/{total_count} streamlines successfully")
+        
         # Final unconditional enforcement for all results
         densified = [np.array(s, dtype=np.float32) if not isinstance(s, np.ndarray) else s for s in densified]
+        
+        # Cleanup after serial processing
+        gc.collect()
+        
         return densified
     else:
         # Import numpy here to ensure it's available in both code paths
         import numpy as np
         
-        # Parallel processing
+        # Parallel processing with better memory management
         from joblib import Parallel, delayed
+        import gc
         
         def _process_one(streamline, idx, total):
             if idx % 1000 == 0:
@@ -339,13 +348,35 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
                     except Exception as e:
                         print(f"Error converting densified streamline to numpy array: {e}")
                         return None
+                
+                # Explicit cleanup in worker process
+                if idx % 100 == 0:  # Periodic cleanup
+                    gc.collect()
+                
                 return d
             except Exception as e:
-                print(f"Error densifying streamline {idx}: {e}")
+                print(f"Error densifying streamline {idx}: {type(e).__name__}: {e}")
+                if os.environ.get("DEBUG_DENSIFY", "0") == "1":
+                    import traceback
+                    traceback.print_exc()
+                # Cleanup on error
+                gc.collect()
                 return None
         
         total = len(streamlines)
-        results = Parallel(n_jobs=n_jobs)(
+        
+        # Configure joblib for better memory management
+        parallel_config = {
+            'n_jobs': n_jobs,
+            'batch_size': min(50, max(1, total // (n_jobs * 4))),  # Smaller batches
+            'max_nbytes': '100M',  # Limit shared memory
+            'backend': 'loky',  # Use robust backend
+            'verbose': 0
+        }
+        
+        print(f"Running parallel processing with {n_jobs} workers, batch_size={parallel_config['batch_size']}")
+        
+        results = Parallel(**parallel_config)(
             delayed(_process_one)(streamline, idx, total) 
             for idx, streamline in enumerate(streamlines)
         )
@@ -368,8 +399,14 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
         
         # Report on densification results
         print(f"Densified {len(densified)}/{total} streamlines successfully")
+        
         # Final unconditional enforcement for all results
         densified = [np.array(s, dtype=np.float32) if not isinstance(s, np.ndarray) else s for s in densified]
+        
+        # Cleanup after parallel processing
+        del results  # Release parallel results memory
+        gc.collect()
+        
         return densified
 
 def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', epsilon=None, xp=np, preserve_length=True):
@@ -574,7 +611,7 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
 
         if use_gpu:
             try:
-                import cupy as xp
+                import cupy as xp  # Optional GPU dependency
                 if not isinstance(streamline, np.ndarray):
                     streamline = np.array(streamline, dtype=np.float32)
                 try:
@@ -736,8 +773,44 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                         
         return densified_streamline
     except Exception as e:
-        result = np.zeros((2, 3), dtype=np.float32)
-        return result
+        # Improved error reporting for debugging
+        import traceback
+        error_details = {
+            'function': 'densify_streamline_subvoxel',
+            'error_type': type(e).__name__,
+            'error_message': str(e),
+            'streamline_shape': getattr(streamline, 'shape', 'unknown'),
+            'streamline_type': type(streamline).__name__,
+            'step_size': step_size,
+            'interp_method': interp_method,
+            'use_gpu': use_gpu,
+            'voxel_size': voxel_size
+        }
+        
+        print(f"ERROR in densify_streamline_subvoxel:")
+        print(f"  Type: {error_details['error_type']}")
+        print(f"  Message: {error_details['error_message']}")
+        print(f"  Streamline shape: {error_details['streamline_shape']}")
+        print(f"  Streamline type: {error_details['streamline_type']}")
+        print(f"  Parameters: step_size={step_size}, method={interp_method}, gpu={use_gpu}")
+        
+        if debug_tangents or os.environ.get("DEBUG_DENSIFY", "0") == "1":
+            print(f"  Full traceback:")
+            traceback.print_exc()
+        
+        # Return a minimal valid streamline instead of zeros
+        if hasattr(streamline, 'shape') and len(streamline) >= 2:
+            # Return original streamline if densification fails
+            if not isinstance(streamline, np.ndarray):
+                try:
+                    return np.array(streamline, dtype=np.float32)
+                except:
+                    pass
+            else:
+                return streamline.astype(np.float32)
+        
+        # Fallback: minimal valid streamline
+        return np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
 
 
 # Test the interpolation functions with a simple case when module is run directly

@@ -5,6 +5,7 @@ import tempfile
 import gc
 import math
 from joblib import Parallel, delayed
+from scipy.ndimage import map_coordinates
 
 def estimate_memory_usage(shape, dtype=np.float32):
     """
@@ -29,7 +30,7 @@ def estimate_memory_usage(shape, dtype=np.float32):
 
 def resample_nifti(old_img, new_affine, new_shape, chunk_size=(64, 64, 64), n_jobs=-1, use_gpu=True, max_output_gb=64):
     """
-    Resample a NIfTI image to a new resolution and shape using GPU or CPU.
+    Resample a NIfTI image to a new resolution and shape using GPU or CPU with memory management.
 
     Parameters
     ----------
@@ -53,7 +54,14 @@ def resample_nifti(old_img, new_affine, new_shape, chunk_size=(64, 64, 64), n_jo
     np.ndarray
         Resampled image data.
     str
-        Path to temporary memory-mapped file.
+        Path to temporary memory-mapped file (None if not used).
+    
+    Notes
+    -----
+    This function implements proper memory management:
+    - Uses memory mapping for large outputs (>10GB)
+    - Explicit garbage collection between chunks
+    - Automatic cleanup of GPU memory
     """
     est_memory_gb = estimate_memory_usage(new_shape)
     
@@ -74,8 +82,8 @@ def resample_nifti(old_img, new_affine, new_shape, chunk_size=(64, 64, 64), n_jo
     
     if use_gpu:
         try:
-            import cupy as xp
-            from numba import cuda
+            import cupy as xp  # Optional GPU dependency
+            from numba import cuda  # Optional GPU dependency
             
             @cuda.jit
             def resample_kernel(new_data, data_in, new_affine, old_affine_inv, new_shape):
@@ -180,16 +188,47 @@ def resample_nifti(old_img, new_affine, new_shape, chunk_size=(64, 64, 64), n_jo
             new_data = np.zeros(new_shape, dtype=np.float32)
         
         def resample_chunk(start_x, end_x, start_y, end_y, start_z, end_z):
-            chunk_data = np.zeros((end_x - start_x, end_y - start_y, end_z - start_z), dtype=np.float32)
-            for x in range(start_x, end_x):
-                for y in range(start_y, end_y):
-                    for z in range(start_z, end_z):
-                        out_vox = np.array([x, y, z, 1], dtype=np.float32)
-                        xyz_mm = new_affine @ out_vox
-                        xyz_old_vox = old_affine_inv @ xyz_mm
-                        i, j, k = int(xyz_old_vox[0]), int(xyz_old_vox[1]), int(xyz_old_vox[2])
-                        if 0 <= i < data_in.shape[0] and 0 <= j < data_in.shape[1] and 0 <= k < data_in.shape[2]:
-                            chunk_data[x - start_x, y - start_y, z - start_z] = data_in[i, j, k]
+            chunk_shape = (end_x - start_x, end_y - start_y, end_z - start_z)
+            chunk_data = np.zeros(chunk_shape, dtype=np.float32)
+            
+            # Create coordinate grids for this chunk
+            x_coords = np.arange(start_x, end_x)
+            y_coords = np.arange(start_y, end_y)
+            z_coords = np.arange(start_z, end_z)
+            
+            # Create meshgrid of output coordinates
+            x_grid, y_grid, z_grid = np.meshgrid(x_coords, y_coords, z_coords, indexing='ij')
+            
+            # Flatten for batch processing
+            flat_coords = np.stack([
+                x_grid.ravel(),
+                y_grid.ravel(), 
+                z_grid.ravel(),
+                np.ones(x_grid.size)
+            ], axis=0)
+            
+            # Transform to world space then to input voxel space
+            world_coords = new_affine @ flat_coords
+            input_coords = old_affine_inv @ world_coords
+            
+            # Extract just the spatial coordinates (drop homogeneous coord)
+            input_spatial = input_coords[:3, :]
+            
+            # Reshape back to 3D grid format for map_coordinates
+            input_i = input_spatial[0, :].reshape(chunk_shape)
+            input_j = input_spatial[1, :].reshape(chunk_shape) 
+            input_k = input_spatial[2, :].reshape(chunk_shape)
+            
+            # Use trilinear interpolation via map_coordinates
+            chunk_data = map_coordinates(
+                data_in, 
+                [input_i, input_j, input_k],
+                order=1,  # Linear interpolation
+                mode='constant',
+                cval=0.0,
+                prefilter=False
+            )
+            
             return chunk_data, start_x, end_x, start_y, end_y, start_z, end_z
         
         chunks = []
@@ -201,18 +240,47 @@ def resample_nifti(old_img, new_affine, new_shape, chunk_size=(64, 64, 64), n_jo
                     z_end = min(z_start + chunk_size[2], new_shape[2])
                     chunks.append((x_start, x_end, y_start, y_end, z_start, z_end))
         
-        results = Parallel(n_jobs=n_jobs)(
+        # Configure parallel processing for memory efficiency  
+        parallel_config = {
+            'n_jobs': n_jobs,
+            'batch_size': min(10, max(1, len(chunks) // n_jobs)),  # Smaller batches for large chunks
+            'max_nbytes': '200M',  # Limit shared memory for image data
+            'backend': 'loky',
+            'verbose': 0
+        }
+        
+        results = Parallel(**parallel_config)(
             delayed(resample_chunk)(x_s, x_e, y_s, y_e, z_s, z_e) 
             for x_s, x_e, y_s, y_e, z_s, z_e in chunks
         )
         
         for chunk_data, x_s, x_e, y_s, y_e, z_s, z_e in results:
             new_data[x_s:x_e, y_s:y_e, z_s:z_e] = chunk_data
+        
+        # Cleanup parallel processing results
+        del results
+        gc.collect()
     
+    # Explicit memory management and cleanup
     if output_mmap is not None:
         output_mmap.flush()
+        # Don't close mmap here since it's returned for external use
     
+    # Clean up GPU memory if used
+    if use_gpu and 'xp' in locals():
+        try:
+            # Clear GPU memory cache if using CuPy
+            if hasattr(xp, 'get_default_memory_pool'):
+                mempool = xp.get_default_memory_pool()
+                mempool.free_all_blocks()
+        except Exception:
+            pass  # Graceful degradation if cleanup fails
+    
+    # Ensure CPU return format
     if use_gpu and isinstance(new_data, type(xp.zeros(1))):
         new_data = xp.asnumpy(new_data)
     
-    return new_data, mmap_file if output_mmap is not None else tempfile.NamedTemporaryFile(delete=False).name
+    # Explicit garbage collection after large operations
+    gc.collect()
+    
+    return new_data, mmap_file if output_mmap is not None else None
