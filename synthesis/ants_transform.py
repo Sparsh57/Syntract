@@ -20,10 +20,21 @@ def load_ants_warp(path):
 def load_ants_aff(path):
     """Load ANTs affine and convert it into a RAS2RAS matrix."""
     f = loadmat(path)
-    mat33 = f.get(
-        "AffineTransform_double_3_3",
-        f.get("AffineTransform_float_3_3")
-    )
+    
+    # Try common ANTs affine matrix key names
+    mat33 = f.get("AffineTransform_double_3_3", 
+                  f.get("AffineTransform_float_3_3", None))
+    
+    if mat33 is None:
+        # List available keys for debugging
+        available_keys = list(f.keys())
+        raise KeyError(f"Could not find ANTs affine matrix in {path}. "
+                      f"Available keys: {available_keys}. "
+                      f"Expected 'AffineTransform_double_3_3' or 'AffineTransform_float_3_3'")
+    
+    if 'fixed' not in f:
+        raise KeyError(f"Could not find 'fixed' key in ANTs affine file {path}")
+    
     mat = np.eye(4)
     mat[:3, :3] = mat33[:-3].reshape([3, 3])
     mat[:3, -1] = mat33[-3:].flatten()
@@ -50,7 +61,7 @@ def load_volume(path):
 
 def check_affine_orientation(affine):
     """
-    Check the orientation of an affine matrix to determine if it's RAS or LPS.
+    Check the orientation of an affine matrix using nibabel orientation codes.
 
     Parameters
     ----------
@@ -62,9 +73,14 @@ def check_affine_orientation(affine):
     tuple
         Tuple containing (x_flipped, y_flipped, z_flipped) booleans
     """
-    x_flipped = affine[0, 0] < 0
-    y_flipped = affine[1, 1] < 0
-    z_flipped = affine[2, 2] < 0
+    # Use nibabel's robust orientation detection
+    ornt = nib.orientations.io_orientation(affine)
+    
+    # Extract flip information from orientation
+    # ornt is array of [axis, flip] pairs where flip is 1 or -1
+    x_flipped = ornt[0, 1] < 0
+    y_flipped = ornt[1, 1] < 0 
+    z_flipped = ornt[2, 1] < 0
 
     return x_flipped, y_flipped, z_flipped
 

@@ -3,21 +3,28 @@ import os
 import shutil
 import tempfile
 from joblib import Parallel, delayed
+# Robust import handling
 try:
-    from .densify import densify_streamline_subvoxel, densify_streamlines_parallel
+    from synthesis.densify import densify_streamline_subvoxel, densify_streamlines_parallel
 except ImportError:
-    from densify import densify_streamline_subvoxel, densify_streamlines_parallel
+    try:
+        from .densify import densify_streamline_subvoxel, densify_streamlines_parallel
+    except ImportError:
+        from densify import densify_streamline_subvoxel, densify_streamlines_parallel
 
 def clip_streamline_to_fov(stream, new_shape, use_gpu=True, epsilon=1e-6):
     """Clip a streamline to the field of view."""
-    if use_gpu:
+    # Use centralized GPU utilities
+    try:
+        from synthesis.gpu_utils import get_array_module
+    except ImportError:
         try:
-            import cupy as xp
+            from .gpu_utils import get_array_module
         except ImportError:
-            import numpy as xp
-            use_gpu = False
-    else:
-        import numpy as xp
+            from gpu_utils import get_array_module
+    
+    xp = get_array_module(prefer_gpu=use_gpu)
+    use_gpu = (xp.__name__ == 'cupy') if hasattr(xp, '__name__') else False
         
     if len(stream) == 0:
         return []
@@ -53,34 +60,36 @@ def clip_streamline_to_fov(stream, new_shape, use_gpu=True, epsilon=1e-6):
     if len(current_segment) >= 2:
         segments.append(xp.array(current_segment, dtype=xp.float32))
 
-    if use_gpu:
-        try:
-            import numpy as np
-            numpy_segments = []
-            for segment in segments:
-                if hasattr(xp, 'asnumpy'):
-                    numpy_segments.append(np.array(xp.asnumpy(segment), dtype=np.float32))
-                else:
-                    numpy_segments.append(np.array(segment, dtype=np.float32))
-            return numpy_segments
-        except Exception:
-            return segments
-    else:
-        import numpy as np
-        return [np.array(segment, dtype=np.float32) if not isinstance(segment, np.ndarray) else segment 
-                for segment in segments]
+    # Always return NumPy arrays regardless of processing path
+    import numpy as np
+    numpy_segments = []
+    for segment in segments:
+        if hasattr(segment, 'get'):  # CuPy array
+            numpy_segments.append(np.array(segment.get(), dtype=np.float32))
+        elif hasattr(xp, 'asnumpy') and hasattr(segment, 'asnumpy'):  # Other GPU arrays
+            numpy_segments.append(np.array(segment.asnumpy(), dtype=np.float32))
+        elif not isinstance(segment, np.ndarray):
+            numpy_segments.append(np.array(segment, dtype=np.float32))
+        else:
+            # Already NumPy, ensure correct dtype
+            numpy_segments.append(segment.astype(np.float32))
+    
+    return numpy_segments
 
 
 def interpolate_to_fov(p1, p2, new_shape, use_gpu=True):
     """Interpolate a point on the boundary of the field of view."""
-    if use_gpu:
+    # Use centralized GPU utilities
+    try:
+        from synthesis.gpu_utils import get_array_module
+    except ImportError:
         try:
-            import cupy as xp
+            from .gpu_utils import get_array_module
         except ImportError:
-            import numpy as xp
-            use_gpu = False
-    else:
-        import numpy as xp
+            from gpu_utils import get_array_module
+    
+    xp = get_array_module(prefer_gpu=use_gpu)
+    use_gpu = (xp.__name__ == 'cupy') if hasattr(xp, '__name__') else False
         
     p1 = xp.asarray(p1, dtype=xp.float32)
     p2 = xp.asarray(p2, dtype=xp.float32)
@@ -115,41 +124,52 @@ def interpolate_to_fov(p1, p2, new_shape, use_gpu=True):
 
 def transform_streamline(s_mm, A_new_inv, use_gpu=True):
     """Transform a streamline from mm space to voxel space."""
+    # Use centralized GPU utilities
+    try:
+        from synthesis.gpu_utils import get_array_module, try_gpu_import
+    except ImportError:
+        try:
+            from .gpu_utils import get_array_module, try_gpu_import
+        except ImportError:
+            from gpu_utils import get_array_module, try_gpu_import
+    
     if use_gpu:
         try:
-            import cupy as xp
-            from numba import cuda
+            gpu_result = try_gpu_import()
+            xp = gpu_result['xp']
+            cuda = gpu_result['cuda']
+            use_gpu = gpu_result['cupy_available'] and gpu_result['numba_available']
             
-            s_mm_gpu = xp.asarray(s_mm, dtype=xp.float32)
-            output = xp.zeros_like(s_mm_gpu)
-            
-            @cuda.jit
-            def transform_kernel(s_mm, A_new_inv, output):
-                idx = cuda.grid(1)
-                if idx < s_mm.shape[0]:
-                    hom_mm = xp.zeros(4, dtype=xp.float32)
-                    hom_mm[0] = s_mm[idx, 0]
-                    hom_mm[1] = s_mm[idx, 1]
-                    hom_mm[2] = s_mm[idx, 2]
-                    hom_mm[3] = 1.0
-                    
-                    result = xp.zeros(3, dtype=xp.float32)
-                    for i in range(3):
-                        for j in range(4):
-                            result[i] += A_new_inv[i, j] * hom_mm[j]
-                    
-                    output[idx, 0] = result[0]
-                    output[idx, 1] = result[1]
-                    output[idx, 2] = result[2]
-            
-            threads_per_block = 256
-            blocks_per_grid = (s_mm_gpu.shape[0] + threads_per_block - 1) // threads_per_block
-            transform_kernel[blocks_per_grid, threads_per_block](s_mm_gpu, A_new_inv, output)
-            
-            return output
-            
-        except ImportError:
-            import numpy as xp
+            if use_gpu:
+                s_mm_gpu = xp.asarray(s_mm, dtype=xp.float32)
+                output = xp.zeros_like(s_mm_gpu)
+                
+                @cuda.jit
+                def transform_kernel(s_mm, A_new_inv, output):
+                    idx = cuda.grid(1)
+                    if idx < s_mm.shape[0]:
+                        hom_mm = xp.zeros(4, dtype=xp.float32)
+                        hom_mm[0] = s_mm[idx, 0]
+                        hom_mm[1] = s_mm[idx, 1]
+                        hom_mm[2] = s_mm[idx, 2]
+                        hom_mm[3] = 1.0
+                        
+                        result = xp.zeros(3, dtype=xp.float32)
+                        for i in range(3):
+                            for j in range(4):
+                                result[i] += A_new_inv[i, j] * hom_mm[j]
+                        
+                        output[idx, 0] = result[0]
+                        output[idx, 1] = result[1]
+                        output[idx, 2] = result[2]
+                
+                threads_per_block = 256
+                blocks_per_grid = (s_mm_gpu.shape[0] + threads_per_block - 1) // threads_per_block
+                transform_kernel[blocks_per_grid, threads_per_block](s_mm_gpu, A_new_inv, output)
+                
+                return output
+        except (ImportError, Exception):
+            # Fallback to CPU processing
             use_gpu = False
     
     if not use_gpu:
