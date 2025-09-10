@@ -48,11 +48,13 @@ def clip_streamline_to_fov(stream, new_shape, use_gpu=True, epsilon=1e-6):
 
             if i > 0 and inside[i - 1]:
                 p1, p2 = stream[i - 1], stream[i]
+                # Use original FOV bounds for interpolation, not extended bounds
                 clipped_point = interpolate_to_fov(p1, p2, new_shape, use_gpu)
                 if clipped_point is not None:
                     segments.append(xp.array([p1, clipped_point], dtype=xp.float32))
             elif i < len(stream) - 1 and inside[i + 1]:
                 p1, p2 = stream[i], stream[i + 1]
+                # Use original FOV bounds for interpolation, not extended bounds  
                 clipped_point = interpolate_to_fov(p2, p1, new_shape, use_gpu)
                 if clipped_point is not None:
                     segments.append(xp.array([clipped_point, p2], dtype=xp.float32))
@@ -198,11 +200,18 @@ def transform_and_densify_streamlines(
     inv_A = np.linalg.inv(new_affine)
     voxel_size = np.sqrt(np.sum(new_affine[:3, :3] ** 2, axis=0))
     
+    # Auto-adjust step size for very fine voxel sizes to improve retention
+    min_voxel_size = min(voxel_size)
+    if step_size > min_voxel_size * 5:  # If step size is much larger than voxel size
+        adjusted_step_size = min_voxel_size * 2  # Use 2x voxel size for better sampling
+        print(f"Auto-adjusting step size from {step_size:.3f} to {adjusted_step_size:.3f} for fine voxel resolution")
+        step_size = adjusted_step_size
+    
     print(f"\n[STREAMLINE DEBUG] Transform diagnostics:")
     print(f"Voxel size from affine: {voxel_size}")
     print(f"New shape: {new_shape}")
     print(f"Step size: {step_size}")
-    print(f"FOV clipping: ENABLED")
+    print(f"Smart FOV clipping: ENABLED for pass-through streamline retention")
         
     # Transform from mm space to voxel space
     transformed_streams = []
@@ -213,20 +222,30 @@ def transform_and_densify_streamlines(
     
     total_streamlines = len(transformed_streams)
     
-    # Apply clipping
+    # Apply smart clipping that preserves pass-through streamlines
     clipped_streams = []
+    
     for s in transformed_streams:
-        mask = np.all((s >= 0) & (s < np.array(new_shape)), axis=1)
-        if np.any(mask):
-            if np.sum(mask) >= 2:
-                filtered_array = s[mask]
-                clipped_streams.append(filtered_array)
+        # Check if any part of the streamline intersects the FOV
+        inside_mask = np.all((s >= 0) & (s < np.array(new_shape)), axis=1)
+        
+        if np.any(inside_mask):
+            # Instead of just keeping inside points, clip the streamline properly
+            # This preserves connectivity for streamlines passing through the volume
+            clipped_segments = clip_streamline_to_fov(s, new_shape, use_gpu=False)
+            
+            # Add all valid segments from this streamline
+            for segment in clipped_segments:
+                if len(segment) >= 2:  # Only keep segments with at least 2 points
+                    clipped_streams.append(segment)
     
     clipped_count = len(clipped_streams)
     
-    print(f"Clipping Stats: {clipped_count}/{total_streamlines} streamlines retained after FOV clipping ({clipped_count/total_streamlines*100:.1f}%)")
-    if clipped_count < total_streamlines * 0.5:
-        print(f"WARNING: Over 50% of streamlines were clipped!")
+    print(f"Smart Clipping Stats: {clipped_count} segments from {total_streamlines} original streamlines")
+    print(f"  - Retention ratio: {clipped_count/total_streamlines:.1f}x (segments/original streamlines)")
+    print(f"  - Pass-through streamlines preserved with proper boundary interpolation")
+    if clipped_count < total_streamlines * 0.1:
+        print(f"WARNING: Very few streamline segments retained!")
     if clipped_count == 0:
         print("ERROR: All streamlines were clipped!")
         return []

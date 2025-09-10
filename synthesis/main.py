@@ -369,16 +369,13 @@ def process_and_save(
     print("\n=== Saving Final Synthesized .trk File ===")
     
     if len(densified_vox) > 0:
-        print(f"Converting {len(densified_vox)} streamlines from voxel to RAS coordinates...")
-        ras_streamlines = []
-        for streamline in densified_vox:
-            ras_streamline = np.dot(streamline, A_new[:3, :3].T) + A_new[:3, 3]
-            ras_streamlines.append(ras_streamline)
-            
-        new_tractogram = Tractogram(ras_streamlines, affine_to_rasmm=np.eye(4))
+        print(f"Saving {len(densified_vox)} streamlines in voxel coordinates (consistent with header)...")
+        # Keep streamlines in voxel coordinates to match the voxel_to_rasmm header
+        # This ensures consistency between streamline coordinates and the header affine
+        new_tractogram = Tractogram(densified_vox, affine_to_rasmm=A_new)
     else:
         print("WARNING: No valid streamlines to save after processing!")
-        new_tractogram = Tractogram([], affine_to_rasmm=np.eye(4))
+        new_tractogram = Tractogram([], affine_to_rasmm=A_new)
     
     out_trk_path = output_prefix + ".trk"
     save_trk(new_tractogram, out_trk_path, header=new_trk_header)

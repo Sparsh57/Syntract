@@ -295,7 +295,7 @@ def extract_coronal_slices_and_streamlines(
     output_dir,
     target_dimensions,  # Target dimensions (x, y, z) - required
     target_voxel_size=None,
-    slab_half_thickness=1.0,
+    slab_half_thickness=None,  # Will auto-calculate if None
     margin_slices=5,
     n_slices=50,
     use_stratified_sampling=True
@@ -315,8 +315,9 @@ def extract_coronal_slices_and_streamlines(
         Target dimensions (x, y, z) for resampling
     target_voxel_size : float or tuple, optional
         Target voxel size for resampling
-    slab_half_thickness : float
-        Half-thickness of slab for streamline filtering (mm)
+    slab_half_thickness : float, optional
+        Half-thickness of slab for streamline filtering (mm).
+        If None, automatically calculated as half the voxel size in Y direction.
     margin_slices : int
         Number of slices to exclude from edges when using stratified sampling
     n_slices : int
@@ -384,6 +385,15 @@ def extract_coronal_slices_and_streamlines(
     print(f"Final image shape: {img_resampled.shape[:3]}")
     print(f"Final voxel sizes: {img_resampled.header.get_zooms()[:3]}")
     
+    # Auto-calculate slab thickness if not provided
+    if slab_half_thickness is None:
+        voxel_size_y = img_resampled.header.get_zooms()[1]
+        slab_half_thickness = voxel_size_y / 2.0
+        print(f"Auto-calculated slab half-thickness: {slab_half_thickness:.3f}mm (= voxel_size_y/2)")
+        print(f"This matches the actual slice thickness for precise alignment")
+    else:
+        print(f"Using provided slab half-thickness: {slab_half_thickness:.3f}mm")
+    
     # Select slices based on mode
     if use_stratified_sampling:
         print(f"\n=== Computing Brain Mask for Slice Selection ===")
@@ -413,40 +423,34 @@ def extract_coronal_slices_and_streamlines(
     streamlines = trk_obj.streamlines
     print(f"Loaded {len(streamlines)} streamlines")
     
-    # Transform streamlines to resampled coordinate space for proper filtering
-    print(f"=== Transforming Streamlines to Resampled Space ===")
+    # Get TRK coordinate information
+    print(f"=== Loading TRK Coordinate Information ===")
     original_trk_affine = trk_obj.header.get('vox_to_ras', trk_obj.header.get('voxel_to_rasmm', np.eye(4)))
     resampled_affine = img_resampled.affine
     
-    print(f"Original TRK coordinate space (first streamline Y): {streamlines[0][:,1].min():.2f} to {streamlines[0][:,1].max():.2f}")
-    print(f"Resampled image coordinate space (Y slices): {world_y_coords.min():.2f} to {world_y_coords.max():.2f}")
-    
-    # Since streamlines and resampled image may be in different coordinate systems,
-    # we don't need to transform - we'll use each in their native space
-    # The key is that slice world_y coordinates come from resampled space
-    # and streamlines are in their original space - filtering will properly handle this
+    print(f"TRK header affine (voxel_to_rasmm):\n{original_trk_affine}")
+    print(f"Resampled image affine:\n{resampled_affine}")
     
     if len(streamlines) > 0:
-        sample_stream = streamlines[0]
-        if len(sample_stream) > 0:
-            coord_ranges = [
-                (np.min(sample_stream[:, i]), np.max(sample_stream[:, i])) 
-                for i in range(3)
-            ]
-            print(f"Streamline coordinate ranges: X={coord_ranges[0]}, Y={coord_ranges[1]}, Z={coord_ranges[2]}")
+        sample_streamline = streamlines[0]
+        if len(sample_streamline) > 0:
+            print(f"Sample streamline coordinate range:")
+            print(f"  X: {sample_streamline[:,0].min():.2f} to {sample_streamline[:,0].max():.2f}")
+            print(f"  Y: {sample_streamline[:,1].min():.2f} to {sample_streamline[:,1].max():.2f}")
+            print(f"  Z: {sample_streamline[:,2].min():.2f} to {sample_streamline[:,2].max():.2f}")
             
-            # Check for overlap between streamline and resampled coordinate spaces
-            streamline_y_range = (coord_ranges[1][0], coord_ranges[1][1])
-            resampled_y_range = (world_y_coords.min(), world_y_coords.max())
-            
-            overlap = not (streamline_y_range[1] < resampled_y_range[0] or 
-                          streamline_y_range[0] > resampled_y_range[1])
-            
-            if not overlap:
-                print(f"WARNING: No Y-coordinate overlap between streamlines and resampled slices!")
-                print(f"Consider adjusting slab_half_thickness or checking coordinate systems.")
+            # Check coordinate scale to determine if streamlines are in voxel or world coordinates
+            max_coord = np.abs(sample_streamline).max()
+            if max_coord < 1000:  # Typical voxel coordinates are < 1000
+                print("✓ Streamlines appear to be in voxel coordinates (standard TRK format)")
+                streamlines_are_in_ras = False
             else:
-                print(f"Y-coordinate overlap detected: filtering should work correctly.")
+                print("⚠ Streamlines appear to be in world/RAS coordinates (non-standard)")
+                streamlines_are_in_ras = True
+        else:
+            streamlines_are_in_ras = False
+    else:
+        streamlines_are_in_ras = False
     
     # Process each slice
     print(f"\n=== Processing Slices ===")
@@ -459,30 +463,48 @@ def extract_coronal_slices_and_streamlines(
         slice_dir = os.path.join(output_dir, f"slice_{slice_idx:03d}")
         os.makedirs(slice_dir, exist_ok=True)
         
-        # Filter streamlines in resampled voxel space (Option A - robust approach)
-        # Transform streamlines to resampled image voxel space for accurate filtering
+        # Filter streamlines based on their coordinate system
         A = img_resampled.affine
         A_inv = np.linalg.inv(A)
         
-        # Convert slab thickness from mm to voxel units (robust to rotation/shear)
-        voxel_size_y_mm = img_resampled.header.get_zooms()[1]
-        slab_vox_half = slab_half_thickness / voxel_size_y_mm
-        
         intersecting_indices = []
-        for idx, streamline in enumerate(streamlines):
-            if len(streamline) == 0:
-                continue
-                
-            # Transform streamline points to resampled voxel space
-            # streamline is in mm coordinates, transform to voxel coordinates
-            homogeneous = np.hstack([streamline, np.ones((len(streamline), 1))])
-            voxel_coords = homogeneous @ A_inv.T
-            p_vox = voxel_coords[:, :3]
+        
+        if streamlines_are_in_ras:
+            # Streamlines are already in RAS/world coordinates - filter directly in world space
+            print(f"  Filtering streamlines in world/RAS coordinates")
+            y_min_slab = world_y - slab_half_thickness
+            y_max_slab = world_y + slab_half_thickness
             
-            # Check if any point is within the slice slab
-            y_vox_coords = p_vox[:, 1]
-            if np.any(np.abs(y_vox_coords - slice_idx) <= slab_vox_half):
-                intersecting_indices.append(idx)
+            for idx, streamline in enumerate(streamlines):
+                if len(streamline) == 0:
+                    continue
+                    
+                # Get Y coordinates directly (already in world space)
+                y_coords = streamline[:, 1]
+                
+                # Check if any point falls within the world-space slab
+                if np.any((y_coords >= y_min_slab) & (y_coords <= y_max_slab)):
+                    intersecting_indices.append(idx)
+        else:
+            # Streamlines are in voxel coordinates - transform to voxel space for filtering
+            print(f"  Filtering streamlines by transforming to voxel coordinates")
+            # Convert slab thickness from mm to voxel units
+            voxel_size_y_mm = img_resampled.header.get_zooms()[1]
+            slab_vox_half = slab_half_thickness / voxel_size_y_mm
+            
+            for idx, streamline in enumerate(streamlines):
+                if len(streamline) == 0:
+                    continue
+                    
+                # Transform streamline points to resampled voxel space
+                homogeneous = np.hstack([streamline, np.ones((len(streamline), 1))])
+                voxel_coords = homogeneous @ A_inv.T
+                p_vox = voxel_coords[:, :3]
+                
+                # Check if any point is within the slice slab
+                y_vox_coords = p_vox[:, 1]
+                if np.any(np.abs(y_vox_coords - slice_idx) <= slab_vox_half):
+                    intersecting_indices.append(idx)
         
         per_slice_trk_indices.append(intersecting_indices)
         print(f"  Found {len(intersecting_indices)} intersecting streamlines")
@@ -515,24 +537,49 @@ def extract_coronal_slices_and_streamlines(
             slice_streamlines_raw = [streamlines[idx] for idx in intersecting_indices]
             
             # Convert streamlines to the slice's voxel coordinate system for consistency
-            # This ensures both NIfTI and TRK use the same voxel-to-world transformation
             slice_affine_inv = np.linalg.inv(slice_affine)
             
             slice_streamlines_voxel = []
             for streamline in slice_streamlines_raw:
-                # Transform from world mm to slice voxel coordinates
-                homogeneous = np.hstack([streamline, np.ones((len(streamline), 1))])
-                voxel_coords = homogeneous @ slice_affine_inv.T
-                slice_streamlines_voxel.append(voxel_coords[:, :3].astype(np.float32))
+                if streamlines_are_in_ras:
+                    # Streamlines are already in RAS/world coordinates - convert to voxel
+                    homogeneous = np.hstack([streamline, np.ones((len(streamline), 1))])
+                    voxel_coords = homogeneous @ slice_affine_inv.T
+                    slice_streamlines_voxel.append(voxel_coords[:, :3].astype(np.float32))
+                else:
+                    # Streamlines are in original voxel space - transform them properly to slice coordinates
+                    # First convert from original volume voxel space to world space
+                    homogeneous = np.hstack([streamline, np.ones((len(streamline), 1))])
+                    world_coords = homogeneous @ original_trk_affine.T
+                    
+                    # Then convert from world space to slice voxel space
+                    world_homogeneous = np.hstack([world_coords[:, :3], np.ones((len(world_coords), 1))])
+                    slice_voxel_coords = world_homogeneous @ slice_affine_inv.T
+                    
+                    # For the Y coordinate, center it in the slice (Y dimension = 1)
+                    # The slice represents a single plane, so all Y coordinates should be 0.0 in voxel space
+                    # This ensures that when transformed by the slice affine, they map to the correct world Y
+                    # For the Y coordinate, center it in the slice (Y dimension = 1)
+                    # The slice represents a single plane, so all Y coordinates should be 0.0 in voxel space
+                    slice_voxel_coords[:, 1] = 0.0
+                    slice_streamlines_voxel.append(slice_voxel_coords[:, :3].astype(np.float32))
             
-            # Create tractogram in voxel coordinates with matching affine
-            slice_tractogram = Tractogram(slice_streamlines_voxel, affine_to_rasmm=slice_affine)
+            # Convert voxel coordinates to world coordinates explicitly for proper TRK format
+            # This ensures streamlines are in world coordinates with identity affine
+            world_streamlines = []
+            for streamline_vox in slice_streamlines_voxel:
+                homogeneous = np.hstack([streamline_vox, np.ones((len(streamline_vox), 1))])
+                world_coords = homogeneous @ slice_affine.T
+                world_streamlines.append(world_coords[:, :3].astype(np.float32))
             
-            # Create header that matches the slice NIfTI exactly
+            # Create tractogram with identity affine since streamlines are already in world coordinates
+            slice_tractogram = Tractogram(world_streamlines, affine_to_rasmm=np.eye(4))
+            
+            # Create header with identity affine since streamlines are in world coordinates
             slice_header = {
                 'voxel_sizes': np.array(img_resampled.header.get_zooms()[:3], dtype=np.float32),
                 'dimensions': np.array(slice_3d.shape[:3], dtype=np.int16),
-                'voxel_to_rasmm': slice_affine.astype(np.float32),
+                'voxel_to_rasmm': np.eye(4).astype(np.float32),  # Identity since streamlines are in world coords
                 'voxel_order': 'RAS'
             }
             
@@ -608,9 +655,16 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=str, required=True, help="Output directory")
     parser.add_argument("--target_dim", type=int, nargs=3, required=True, help="Target dimensions (x, y, z)")
     parser.add_argument("--voxel_size", type=float, default=None, help="Target voxel size for resampling")
-    parser.add_argument("--slab_thickness", type=float, default=2.0, help="Full thickness of slab for streamline filtering (mm)")
+    parser.add_argument("--slab_thickness", type=float, default=None, 
+                        help="Full thickness of slab for streamline filtering (mm). If not provided, auto-calculated as voxel size.")
     
     args = parser.parse_args()
+    
+    # Handle slab thickness argument
+    if args.slab_thickness is not None:
+        slab_half_thickness = args.slab_thickness / 2.0
+    else:
+        slab_half_thickness = None  # Will be auto-calculated
     
     extract_coronal_slices_and_streamlines(
         nifti_path=args.nifti,
@@ -618,5 +672,5 @@ if __name__ == "__main__":
         output_dir=args.output,
         target_dimensions=tuple(args.target_dim),
         target_voxel_size=args.voxel_size,
-        slab_half_thickness=args.slab_thickness / 2.0
+        slab_half_thickness=slab_half_thickness
     )
