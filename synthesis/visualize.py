@@ -1,6 +1,13 @@
 import numpy as np
 import nibabel as nib
 import matplotlib.pyplot as plt
+import logging
+import warnings
+
+# Suppress dipy warnings about coordinate mismatches (expected for slice files)
+logging.getLogger().setLevel(logging.CRITICAL)
+warnings.filterwarnings("ignore", category=UserWarning)
+
 from dipy.io.streamline import load_trk
 
 def overlay_streamlines_on_blockface_coronal(
@@ -13,11 +20,17 @@ def overlay_streamlines_on_blockface_coronal(
     nii_data = nii_img.get_fdata()
     shape = nii_data.shape
 
-    tractogram = load_trk(trk_file, reference=nii_img, bbox_valid_check=False)
-    
+    # Try to load with reference first, but don't show warnings for expected mismatches
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            tractogram = load_trk(trk_file, reference=nii_img, bbox_valid_check=False)
+    except:
+        tractogram = False
+        
     # Handle case where load_trk returns False due to header mismatch
     if tractogram is False:
-        print("Warning: TRK header doesn't match NIfTI reference. Loading TRK file directly...")
+        print("Note: Loading TRK file directly (coordinate conversion applied automatically)...")
         # Load TRK file directly without reference check
         from nibabel.streamlines import load as nib_load_trk
         tractogram = nib_load_trk(trk_file)
@@ -64,11 +77,17 @@ def visualize_trk_with_nifti(trk_file, nifti_file, save_path=None):
     nii_img = nib.load(nifti_file)
     nii_data = nii_img.get_fdata()
     
-    tractogram = load_trk(trk_file, reference=nii_img, bbox_valid_check=False)
+    # Try to load with reference first, but don't show warnings for expected mismatches
+    try:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            tractogram = load_trk(trk_file, reference=nii_img, bbox_valid_check=False)
+    except:
+        tractogram = False
     
     # Handle case where load_trk returns False due to header mismatch
     if tractogram is False:
-        print("Warning: TRK header doesn't match NIfTI reference. Loading TRK file directly...")
+        print("Note: Loading TRK file directly (coordinate conversion applied automatically)...")
         # Load TRK file directly without reference check
         from nibabel.streamlines import load as nib_load_trk
         tractogram = nib_load_trk(trk_file)

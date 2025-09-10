@@ -217,26 +217,28 @@ def apply_ants_transform_to_streamlines(path_iwarp, path_aff, path_trk, output_p
         if len(streamline_segment) < 2:
             continue
         
+        # Use smart clipping that preserves pass-through streamlines
         inside_mask = np.all((streamline_segment >= 0) & (streamline_segment < fixed_shape), axis=1)
         
         if not np.any(inside_mask):
             continue
         
-        if np.sum(inside_mask) >= 2:
-            valid_segments = []
-            current_segment = []
-            
-            for j, is_inside in enumerate(inside_mask):
-                if is_inside:
-                    current_segment.append(streamline_segment[j])
-                elif len(current_segment) >= 2:
-                    valid_segments.append(np.array(current_segment, dtype=np.float32))
-                    current_segment = []
-            
-            if len(current_segment) >= 2:
-                valid_segments.append(np.array(current_segment, dtype=np.float32))
-            
-            streamlines_list.extend(valid_segments)
+        # Import the smart clipping function from streamline_processing
+        try:
+            from synthesis.streamline_processing import clip_streamline_to_fov
+        except ImportError:
+            try:
+                from .streamline_processing import clip_streamline_to_fov
+            except ImportError:
+                from streamline_processing import clip_streamline_to_fov
+        
+        # Apply smart clipping for ANTs-processed streamlines
+        clipped_segments = clip_streamline_to_fov(streamline_segment, fixed_shape, use_gpu=False)
+        
+        # Add all valid segments
+        for segment in clipped_segments:
+            if len(segment) >= 2:
+                streamlines_list.append(segment.astype(np.float32))
     
     if len(streamlines_list) == 0:
         print("WARNING: No valid streamlines found after ANTs transformation and clipping!")
