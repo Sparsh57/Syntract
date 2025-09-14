@@ -238,7 +238,6 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
                         print(f"Error densifying streamline {i}: Failed to convert list to array: {e}")
                         continue
                 elif not isinstance(streamline, np.ndarray):
-                    print(f"[DEBUG] Problematic streamline value: {streamline}, type: {type(streamline)}")
                     print(f"Error densifying streamline {i}: Unsupported type {type(streamline)}")
                     continue
                     
@@ -253,7 +252,10 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
                 if not isinstance(result, np.ndarray):
                     try:
                         print(f"Converting result for streamline {i} from {type(result)} to numpy array")
-                        result = np.array(result, dtype=np.float32)
+                        if hasattr(result, 'get'):  # CuPy array
+                            result = result.get()
+                        else:
+                            result = np.array(result, dtype=np.float32)
                     except Exception as e:
                         print(f"Error converting result to numpy array: {e}")
                         continue
@@ -261,27 +263,25 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
                 densified.append(result)
                 success_count += 1
             except Exception as e:
-                print(f"Error densifying streamline {i}: {type(e).__name__}: {e}")
-                if os.environ.get("DEBUG_DENSIFY", "0") == "1":
-                    import traceback
-                    traceback.print_exc()
+                print(f"Error densifying streamline {i}: {e}")
                 
         print(f"Densified {success_count}/{total_count} streamlines successfully")
-        
         # Final unconditional enforcement for all results
-        densified = [np.array(s, dtype=np.float32) if not isinstance(s, np.ndarray) else s for s in densified]
-        
-        # Cleanup after serial processing
-        gc.collect()
-        
-        return densified
+        final_densified = []
+        for s in densified:
+            if isinstance(s, np.ndarray):
+                final_densified.append(s)
+            elif hasattr(s, 'get'):  # CuPy array
+                final_densified.append(s.get())
+            else:
+                final_densified.append(np.array(s, dtype=np.float32))
+        return final_densified
     else:
         # Import numpy here to ensure it's available in both code paths
         import numpy as np
         
-        # Parallel processing with better memory management
+        # Parallel processing
         from joblib import Parallel, delayed
-        import gc
         
         def _process_one(streamline, idx, total):
             if idx % 1000 == 0:
@@ -348,35 +348,13 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
                     except Exception as e:
                         print(f"Error converting densified streamline to numpy array: {e}")
                         return None
-                
-                # Explicit cleanup in worker process
-                if idx % 100 == 0:  # Periodic cleanup
-                    gc.collect()
-                
                 return d
             except Exception as e:
-                print(f"Error densifying streamline {idx}: {type(e).__name__}: {e}")
-                if os.environ.get("DEBUG_DENSIFY", "0") == "1":
-                    import traceback
-                    traceback.print_exc()
-                # Cleanup on error
-                gc.collect()
+                print(f"Error densifying streamline {idx}: {e}")
                 return None
         
         total = len(streamlines)
-        
-        # Configure joblib for better memory management
-        parallel_config = {
-            'n_jobs': n_jobs,
-            'batch_size': min(50, max(1, total // (n_jobs * 4))),  # Smaller batches
-            'max_nbytes': '100M',  # Limit shared memory
-            'backend': 'loky',  # Use robust backend
-            'verbose': 0
-        }
-        
-        print(f"Running parallel processing with {n_jobs} workers, batch_size={parallel_config['batch_size']}")
-        
-        results = Parallel(**parallel_config)(
+        results = Parallel(n_jobs=n_jobs)(
             delayed(_process_one)(streamline, idx, total) 
             for idx, streamline in enumerate(streamlines)
         )
@@ -390,7 +368,10 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
             # Additional check to ensure numpy array type
             if not isinstance(r, np.ndarray):
                 try:
-                    r = np.array(r, dtype=np.float32)
+                    if hasattr(r, 'get'):  # CuPy array
+                        r = r.get()
+                    else:
+                        r = np.array(r, dtype=np.float32)
                 except Exception as e:
                     print(f"Error: Skipping invalid result - {e}")
                     continue
@@ -399,15 +380,16 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
         
         # Report on densification results
         print(f"Densified {len(densified)}/{total} streamlines successfully")
-        
         # Final unconditional enforcement for all results
-        densified = [np.array(s, dtype=np.float32) if not isinstance(s, np.ndarray) else s for s in densified]
-        
-        # Cleanup after parallel processing
-        del results  # Release parallel results memory
-        gc.collect()
-        
-        return densified
+        final_densified = []
+        for s in densified:
+            if isinstance(s, np.ndarray):
+                final_densified.append(s)
+            elif hasattr(s, 'get'):  # CuPy array
+                final_densified.append(s.get())
+            else:
+                final_densified.append(np.array(s, dtype=np.float32))
+        return final_densified
 
 def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', epsilon=None, xp=np, preserve_length=True):
     """
@@ -441,10 +423,10 @@ def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', eps
     t_new = xp.linspace(0, cumulative_lengths[-1], n_steps)
 
     # RBF interpolation requires scipy - convert to CPU if necessary
-    if hasattr(xp, 'asnumpy'):  # Check if using CuPy
-        t_cpu = xp.asnumpy(cumulative_lengths)
-        streamline_cpu = xp.asnumpy(streamline)
-        t_new_cpu = xp.asnumpy(t_new)
+    if hasattr(cumulative_lengths, 'get'):  # Check if using CuPy
+        t_cpu = cumulative_lengths.get()
+        streamline_cpu = streamline.get()
+        t_new_cpu = t_new.get()
     else:
         t_cpu = cumulative_lengths
         streamline_cpu = streamline
@@ -611,7 +593,7 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
 
         if use_gpu:
             try:
-                import cupy as xp  # Optional GPU dependency
+                import cupy as xp
                 if not isinstance(streamline, np.ndarray):
                     streamline = np.array(streamline, dtype=np.float32)
                 try:
@@ -692,7 +674,10 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                     xp=xp
                 )
                 if not isinstance(densified_streamline, np.ndarray):
-                    densified_streamline = np.array(densified_streamline, dtype=np.float32)
+                    if hasattr(densified_streamline, 'get'):  # CuPy array
+                        densified_streamline = densified_streamline.get()
+                    else:
+                        densified_streamline = np.array(densified_streamline, dtype=np.float32)
                 return densified_streamline
             except Exception:
                 interp_method = 'linear'
@@ -709,15 +694,22 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                 if interp_method == 'hermite':
                     if use_gpu:
                         import numpy as np
-                        if hasattr(xp, 'asnumpy'):
-                            t_values = xp.asnumpy(normalized_distances)
-                            interp_points = xp.asnumpy(xi)
-                            y_values = xp.asnumpy(y)
-                            tangent_values = xp.asnumpy(tangents[:, dim])
+                        # Convert all arrays to NumPy for scipy interpolation
+                        if hasattr(normalized_distances, 'get'):
+                            t_values = normalized_distances.get()
                         else:
                             t_values = np.array(normalized_distances)
+                        if hasattr(xi, 'get'):
+                            interp_points = xi.get()
+                        else:
                             interp_points = np.array(xi)
+                        if hasattr(y, 'get'):
+                            y_values = y.get()
+                        else:
                             y_values = np.array(y)
+                        if hasattr(tangents, 'get'):
+                            tangent_values = tangents[:, dim].get()
+                        else:
                             tangent_values = np.array(tangents[:, dim])
                         from scipy.interpolate import CubicHermiteSpline
                         interpolator = CubicHermiteSpline(t_values, y_values, tangent_values)
@@ -736,13 +728,16 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
             except Exception as e:
                 raise
                 
-        if use_gpu and hasattr(xp, 'asnumpy'):
-            densified_streamline = xp.asnumpy(result_array)
+        if use_gpu and hasattr(result_array, 'get'):
+            densified_streamline = result_array.get()
         else:
             densified_streamline = result_array
             
         if not isinstance(densified_streamline, np.ndarray):
-            densified_streamline = np.array(densified_streamline, dtype=np.float32)
+            if hasattr(densified_streamline, 'get'):  # CuPy array
+                densified_streamline = densified_streamline.get()
+            else:
+                densified_streamline = np.array(densified_streamline, dtype=np.float32)
             
         if debug_tangents:
             print(f"[DENSIFY] Original points: {len(streamline)}, Densified points: {len(densified_streamline)}")
@@ -773,44 +768,8 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                         
         return densified_streamline
     except Exception as e:
-        # Improved error reporting for debugging
-        import traceback
-        error_details = {
-            'function': 'densify_streamline_subvoxel',
-            'error_type': type(e).__name__,
-            'error_message': str(e),
-            'streamline_shape': getattr(streamline, 'shape', 'unknown'),
-            'streamline_type': type(streamline).__name__,
-            'step_size': step_size,
-            'interp_method': interp_method,
-            'use_gpu': use_gpu,
-            'voxel_size': voxel_size
-        }
-        
-        print(f"ERROR in densify_streamline_subvoxel:")
-        print(f"  Type: {error_details['error_type']}")
-        print(f"  Message: {error_details['error_message']}")
-        print(f"  Streamline shape: {error_details['streamline_shape']}")
-        print(f"  Streamline type: {error_details['streamline_type']}")
-        print(f"  Parameters: step_size={step_size}, method={interp_method}, gpu={use_gpu}")
-        
-        if debug_tangents or os.environ.get("DEBUG_DENSIFY", "0") == "1":
-            print(f"  Full traceback:")
-            traceback.print_exc()
-        
-        # Return a minimal valid streamline instead of zeros
-        if hasattr(streamline, 'shape') and len(streamline) >= 2:
-            # Return original streamline if densification fails
-            if not isinstance(streamline, np.ndarray):
-                try:
-                    return np.array(streamline, dtype=np.float32)
-                except:
-                    pass
-            else:
-                return streamline.astype(np.float32)
-        
-        # Fallback: minimal valid streamline
-        return np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0]], dtype=np.float32)
+        result = np.zeros((2, 3), dtype=np.float32)
+        return result
 
 
 # Test the interpolation functions with a simple case when module is run directly

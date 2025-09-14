@@ -1,13 +1,6 @@
 import numpy as np
 import nibabel as nib
 import matplotlib.pyplot as plt
-import logging
-import warnings
-
-# Suppress dipy warnings about coordinate mismatches (expected for slice files)
-logging.getLogger().setLevel(logging.CRITICAL)
-warnings.filterwarnings("ignore", category=UserWarning)
-
 from dipy.io.streamline import load_trk
 
 def overlay_streamlines_on_blockface_coronal(
@@ -20,21 +13,7 @@ def overlay_streamlines_on_blockface_coronal(
     nii_data = nii_img.get_fdata()
     shape = nii_data.shape
 
-    # Try to load with reference first, but don't show warnings for expected mismatches
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            tractogram = load_trk(trk_file, reference=nii_img, bbox_valid_check=False)
-    except:
-        tractogram = False
-        
-    # Handle case where load_trk returns False due to header mismatch
-    if tractogram is False:
-        print("Note: Loading TRK file directly (coordinate conversion applied automatically)...")
-        # Load TRK file directly without reference check
-        from nibabel.streamlines import load as nib_load_trk
-        tractogram = nib_load_trk(trk_file)
-    
+    tractogram = load_trk(trk_file, reference=nii_img, bbox_valid_check=False)
     streamlines = tractogram.streamlines
 
     axis = 1
@@ -77,62 +56,7 @@ def visualize_trk_with_nifti(trk_file, nifti_file, save_path=None):
     nii_img = nib.load(nifti_file)
     nii_data = nii_img.get_fdata()
     
-    # Try to load with reference first, but don't show warnings for expected mismatches
-    try:
-        with warnings.catch_warnings():
-            warnings.simplefilter("ignore")
-            tractogram = load_trk(trk_file, reference=nii_img, bbox_valid_check=False)
-    except:
-        tractogram = False
-    
-    # Handle case where load_trk returns False due to header mismatch
-    if tractogram is False:
-        print("Note: Loading TRK file directly (coordinate conversion applied automatically)...")
-        # Load TRK file directly without reference check
-        from nibabel.streamlines import load as nib_load_trk
-        tractogram = nib_load_trk(trk_file)
-        
-        # When loading directly, streamlines are in the space defined by the TRK header
-        # We need to transform them to the NIfTI's coordinate space for visualization
-        trk_affine = tractogram.header.get('voxel_to_rasmm', np.eye(4))
-        nii_affine = nii_img.affine
-        
-        # Check if coordinate spaces are different
-        if not np.allclose(trk_affine, nii_affine, atol=1e-3):
-            print(f"Converting streamlines from TRK space to NIfTI space...")
-            
-            # Handle the case where TRK uses identity matrix (streamlines in world coords)
-            # and NIfTI uses a real affine (slice coordinate system)
-            if np.allclose(trk_affine, np.eye(4), atol=1e-3):
-                # TRK streamlines are in world coordinates, transform to NIfTI voxel space
-                nii_affine_inv = np.linalg.inv(nii_affine)
-                
-                transformed_streamlines = []
-                for stream in tractogram.streamlines:
-                    # Transform from world to NIfTI voxel coordinates
-                    homogeneous = np.hstack([stream, np.ones((len(stream), 1))])
-                    voxel_coords = homogeneous @ nii_affine_inv.T
-                    transformed_streamlines.append(voxel_coords[:, :3])
-                
-                # Create new tractogram with transformed streamlines
-                from nibabel.streamlines.tractogram import Tractogram
-                tractogram = Tractogram(transformed_streamlines, affine_to_rasmm=nii_affine)
-                
-            else:
-                # General case: transform between two non-identity affines
-                transform_matrix = np.linalg.inv(nii_affine) @ trk_affine
-                
-                transformed_streamlines = []
-                for stream in tractogram.streamlines:
-                    # Apply transformation to each streamline
-                    homogeneous = np.hstack([stream, np.ones((len(stream), 1))])
-                    transformed = homogeneous @ transform_matrix.T
-                    transformed_streamlines.append(transformed[:, :3])
-                
-                # Create new tractogram with transformed streamlines
-                from nibabel.streamlines.tractogram import Tractogram
-                tractogram = Tractogram(transformed_streamlines, affine_to_rasmm=nii_affine)
-    
+    tractogram = load_trk(trk_file, reference=nii_img, bbox_valid_check=False)
     streamlines = tractogram.streamlines
     
     sagittal_mip = np.max(nii_data, axis=0)
@@ -140,19 +64,7 @@ def visualize_trk_with_nifti(trk_file, nifti_file, save_path=None):
     axial_mip = np.max(nii_data, axis=2)
 
     affine_inv = np.linalg.inv(nii_img.affine)
-    streamlines_vox = []
-    
-    # Check if this is a single slice (Y dimension = 1)
-    is_single_slice = nii_data.shape[1] == 1
-    
-    for s in streamlines:
-        s_vox = np.dot(affine_inv[:3, :3], s.T).T + affine_inv[:3, 3]
-        
-        # For single slice visualization, project all streamlines to the slice plane (Y=0)
-        if is_single_slice:
-            s_vox[:, 1] = 0.0  # Project all Y coordinates to the slice plane
-            
-        streamlines_vox.append(s_vox)
+    streamlines_vox = [np.dot(affine_inv[:3, :3], s.T).T + affine_inv[:3, 3] for s in streamlines]
 
     plt.figure(figsize=(12, 4))
 
@@ -189,6 +101,3 @@ if __name__ == "__main__":
     import sys
     if len(sys.argv) == 3:
         visualize_trk_with_nifti(sys.argv[1], sys.argv[2])
-    else:
-        print("Usage: python visualize.py <trk_file> <nifti_file>")
-        print("Example: python visualize.py slice_002_streamlines.trk slice_002.nii.gz")
