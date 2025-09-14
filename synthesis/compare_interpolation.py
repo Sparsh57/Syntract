@@ -26,10 +26,16 @@ from joblib import Parallel, delayed
 
 # Import your local densify functions and metrics.
 # Make sure these are in your Python path or same folder.
-from .densify import (
-    densify_streamline_subvoxel,
-    calculate_streamline_metrics,
-)
+try:
+    from .densify import (
+        densify_streamline_subvoxel,
+        calculate_streamline_metrics,
+    )
+except ImportError:
+    from densify import (
+        densify_streamline_subvoxel,
+        calculate_streamline_metrics,
+    )
 
 ###############################################################################
 #                           STREAMLINE PROCESSING                             #

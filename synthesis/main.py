@@ -22,36 +22,18 @@ import sys
 import time
 import numpy as np
 import nibabel as nib
-
-# Add current directory to path for script usage
-if __name__ == "__main__":
-    sys.path.insert(0, os.path.dirname(__file__))
-
 try:
-    # Try package-style imports first
-    from synthesis.nifti_preprocessing import resample_nifti
-    from synthesis.transform import build_new_affine
-    from synthesis.streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
-    from synthesis.densify import densify_streamline_subvoxel
-    from synthesis.ants_transform import process_with_ants
-    from synthesis.slice_selection import extract_coronal_slices_and_streamlines
+    from .nifti_preprocessing import resample_nifti
+    from .transform import build_new_affine
+    from .streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
+    from .densify import densify_streamline_subvoxel
+    from .ants_transform import process_with_ants
 except ImportError:
-    try:
-        # Try relative imports for package usage
-        from .nifti_preprocessing import resample_nifti
-        from .transform import build_new_affine
-        from .streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
-        from .densify import densify_streamline_subvoxel
-        from .ants_transform import process_with_ants
-        from .slice_selection import extract_coronal_slices_and_streamlines
-    except ImportError:
-        # Fallback to direct imports for script usage
-        from nifti_preprocessing import resample_nifti
-        from transform import build_new_affine
-        from streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
-        from densify import densify_streamline_subvoxel
-        from ants_transform import process_with_ants
-        from slice_selection import extract_coronal_slices_and_streamlines
+    from nifti_preprocessing import resample_nifti
+    from transform import build_new_affine
+    from streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
+    from densify import densify_streamline_subvoxel
+    from ants_transform import process_with_ants
 from nibabel.streamlines import Tractogram, save as save_trk
 
 
@@ -73,12 +55,7 @@ def process_and_save(
         ants_iwarp_path=None,
         ants_aff_path=None,
         force_dimensions=False,
-        transform_mri_with_ants=False,
-        extract_slices=False,
-        slice_output_dir=None,
-        slab_half_thickness=1.0,
-        n_slices=50,
-        use_stratified_sampling=True
+        transform_mri_with_ants=False
 ):
     """Process and save NIfTI and streamline data with new parameters."""
     
@@ -227,8 +204,8 @@ def process_and_save(
             
         target_dimensions = (target_dimensions[0], 1, target_dimensions[2])
 
-    if use_gpu:
-        new_data_np = xp.asnumpy(new_data)
+    if hasattr(new_data, 'get'):
+        new_data_np = new_data.get()
     else:
         new_data_np = new_data
     
@@ -238,21 +215,8 @@ def process_and_save(
     out_nifti_path = output_prefix + ".nii.gz"
     nib.save(new_img, out_nifti_path)
 
-    # Cleanup temporary memory-mapped files
-    if tmp_mmap and os.path.exists(tmp_mmap):
-        try:
-            os.remove(tmp_mmap)
-        except OSError as e:
-            print(f"Warning: Could not remove temporary file {tmp_mmap}: {e}")
-    
-    # Explicit cleanup for large data
-    if 'old_img' in locals():
-        try:
-            # Close nibabel image to free memory
-            if hasattr(old_img, '_data'):
-                old_img._data = None
-        except Exception:
-            pass
+    if tmp_mmap is not None and os.path.exists(tmp_mmap):
+        os.remove(tmp_mmap)
 
     print(f"Saved new NIfTI => {out_nifti_path}")
 
@@ -289,7 +253,6 @@ def process_and_save(
         def process_streamline(streamline):
             try:
                 clipped_segments = clip_streamline_to_fov(streamline, target_dimensions, use_gpu=use_gpu)
-                
                 densified_segments = []
                 for segment in clipped_segments:
                     if len(segment) >= 2:
@@ -303,34 +266,17 @@ def process_and_save(
                         except Exception as e:
                             print(f"Error densifying segment: {e}")
                             densified_segments.append(segment)
-                            
                 return densified_segments
             except Exception as e:
                 print(f"Error processing streamline: {e}")
                 return []
         
-        # Configure parallel processing for streamlines with memory management
-        parallel_config = {
-            'n_jobs': num_jobs,
-            'batch_size': min(20, max(1, len(voxel_streamlines) // (num_jobs * 2))),
-            'max_nbytes': '150M',
-            'backend': 'loky',
-            'verbose': 0
-        }
-        
-        print(f"Processing {len(voxel_streamlines)} streamlines with {num_jobs} workers")
-        
-        results = Parallel(**parallel_config)(
+        results = Parallel(num_jobs)(
             delayed(process_streamline)(streamline) for streamline in voxel_streamlines
         )
         
         for result in results:
             densified_vox.extend(result)
-        
-        # Cleanup parallel processing results
-        del results
-        import gc
-        gc.collect()
             
         print(f"Processed {len(voxel_streamlines)} streamlines into {len(densified_vox)} segments")
     else:
@@ -353,66 +299,43 @@ def process_and_save(
     print(f"Change in point count: {total_points_new - total_points} ({(total_points_new - total_points)/total_points*100:.1f}%)")
 
     if use_ants:
+        # Convert A_new to NumPy if it's a CuPy array
+        A_new_np = A_new.get() if hasattr(A_new, 'get') else A_new
         new_trk_header = {
             "dimensions": np.array(target_dimensions, dtype=np.int16),
-            "voxel_sizes": np.sqrt(np.sum(A_new[:3, :3] ** 2, axis=0)).astype(np.float32),
-            "voxel_to_rasmm": A_new.astype(np.float32)
+            "voxel_sizes": np.sqrt(np.sum(A_new_np[:3, :3] ** 2, axis=0)).astype(np.float32),
+            "voxel_to_rasmm": A_new_np.astype(np.float32)
         }
     else:
         trk_obj = nib.streamlines.load(original_trk_path)
         new_trk_header = trk_obj.header.copy()
         new_trk_header["dimensions"] = np.array(target_dimensions, dtype=np.int16)
-        new_voxsize = np.sqrt(np.sum(A_new[:3, :3] ** 2, axis=0))
+        # Convert A_new to NumPy if it's a CuPy array
+        A_new_np = A_new.get() if hasattr(A_new, 'get') else A_new
+        new_voxsize = np.sqrt(np.sum(A_new_np[:3, :3] ** 2, axis=0))
         new_trk_header["voxel_sizes"] = new_voxsize.astype(np.float32)
-        new_trk_header["voxel_to_rasmm"] = A_new.astype(np.float32)
+        new_trk_header["voxel_to_rasmm"] = A_new_np.astype(np.float32)
 
     print("\n=== Saving Final Synthesized .trk File ===")
     
     if len(densified_vox) > 0:
-        print(f"Saving {len(densified_vox)} streamlines in voxel coordinates (consistent with header)...")
-        # Keep streamlines in voxel coordinates to match the voxel_to_rasmm header
-        # This ensures consistency between streamline coordinates and the header affine
-        new_tractogram = Tractogram(densified_vox, affine_to_rasmm=A_new)
+        print(f"Converting {len(densified_vox)} streamlines from voxel to RAS coordinates...")
+        ras_streamlines = []
+        for streamline in densified_vox:
+            ras_streamline = np.dot(streamline, A_new[:3, :3].T) + A_new[:3, 3]
+            ras_streamlines.append(ras_streamline)
+            
+        new_tractogram = Tractogram(ras_streamlines, affine_to_rasmm=np.eye(4))
     else:
         print("WARNING: No valid streamlines to save after processing!")
-        new_tractogram = Tractogram([], affine_to_rasmm=A_new)
+        new_tractogram = Tractogram([], affine_to_rasmm=np.eye(4))
     
     out_trk_path = output_prefix + ".trk"
     save_trk(new_tractogram, out_trk_path, header=new_trk_header)
 
     print(f"Saved new .trk => {out_trk_path}")
     print(f"Number of streamlines in final .trk file: {len(new_tractogram)}")
-    
-    # Extract coronal slices if requested (AFTER synthesis pipeline)
-    if extract_slices:
-        print("\n=== Extracting Coronal Slices from Synthesized Data ===")
-        print("This extraction uses the fully processed, blockface-transformed data")
-        
-        if slice_output_dir is None:
-            slice_output_dir = output_prefix + "_slices"
-        
-        # Use the synthesized NIfTI and TRK files as input for slice extraction
-        synthesized_nifti = output_prefix + ".nii.gz"
-        synthesized_trk = output_prefix + ".trk"
-        
-        # Extract slices from the synthesized data (already in blockface space)
-        slice_result = extract_coronal_slices_and_streamlines(
-            nifti_path=synthesized_nifti,
-            trk_path=synthesized_trk,
-            output_dir=slice_output_dir,
-            target_dimensions=target_dimensions,  # Use same dimensions as synthesis
-            target_voxel_size=None,  # Let it use the synthesized voxel size
-            slab_half_thickness=slab_half_thickness,
-            n_slices=n_slices,
-            use_stratified_sampling=use_stratified_sampling
-        )
-        
-        print(f"\n=== Slice Extraction Complete ===")
-        print(f"Extracted {len(slice_result['selected_slice_indices'])} slices to: {slice_output_dir}")
-        print("All slices are now in the same blockface coordinate system as the synthesis pipeline")
-    
     print("\n==== Synthesis Process Completed Successfully! ====")
-
 
 def main():
     """Main entry point for the mri-synthesis console script."""
@@ -425,10 +348,6 @@ def _run_main_with_args(args=None):
     import argparse
     
     parser = argparse.ArgumentParser(description="Process and resample NIfTI and streamline tractography data.")
-    
-    # Add mode selection
-    parser.add_argument("--mode", type=str, choices=["synthesis", "slice_extraction"], default="synthesis",
-                        help="Processing mode: synthesis (default) or slice_extraction")
 
     parser.add_argument("--input", type=str, required=True, help="Path to input NIfTI (.nii or .nii.gz) file.")
     parser.add_argument("--trk", type=str, required=True, help="Path to input TRK (.trk) file.")
@@ -457,34 +376,11 @@ def _run_main_with_args(args=None):
     parser.add_argument("--ants_aff", type=str, default=None, help="Path to ANTs affine file (required if use_ants is True).")
     parser.add_argument("--force_dimensions", action="store_true", help="Force using the specified new_dim even when using ANTs")
     parser.add_argument("--transform_mri_with_ants", action="store_true", help="Also transform MRI with ANTs (default: only transforms streamlines)")
-    
-    # Slice extraction specific arguments
-    parser.add_argument("--slab_thickness", type=float, default=2.0, help="Full thickness of slab for streamline filtering in mm")
-    parser.add_argument("--extract_slices", action="store_true", help="Extract coronal slices after synthesis pipeline")
-    parser.add_argument("--slice_output_dir", type=str, default=None, help="Output directory for extracted slices (default: <output>_slices)")
-    parser.add_argument("--n_slices", type=int, default=50, help="Number of diverse slices to extract (default: 50)")
-    parser.add_argument("--extract_all_slices", action="store_true", help="Extract ALL slices instead of using stratified sampling")
 
     if args is None:
         args = parser.parse_args()
     else:
         args = parser.parse_args(args)
-    
-    # Handle different modes
-    if args.mode == "slice_extraction":
-        # Convert output prefix to output directory for slice extraction
-        output_dir = args.output if os.path.isdir(args.output) or not os.path.exists(args.output) else args.output + "_slices"
-        
-        result = extract_coronal_slices_and_streamlines(
-            nifti_path=args.input,
-            trk_path=args.trk,
-            output_dir=output_dir,
-            target_dimensions=tuple(args.new_dim),
-            target_voxel_size=args.voxel_size[0] if len(args.voxel_size) == 1 else None,
-            slab_half_thickness=args.slab_thickness / 2.0
-        )
-        print("\n=== Slice Extraction Complete ===")
-        return result
 
     requested_dim = tuple(args.new_dim)
     if np.prod(requested_dim) > 100_000_000:
@@ -527,14 +423,83 @@ def _run_main_with_args(args=None):
         ants_iwarp_path=args.ants_iwarp,
         ants_aff_path=args.ants_aff,
         force_dimensions=args.force_dimensions,
-        transform_mri_with_ants=args.transform_mri_with_ants,
-        extract_slices=args.extract_slices,
-        slice_output_dir=args.slice_output_dir,
-        slab_half_thickness=args.slab_thickness / 2.0,
-        n_slices=args.n_slices,
-        use_stratified_sampling=not args.extract_all_slices
+        transform_mri_with_ants=args.transform_mri_with_ants
     )
 
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Process and resample NIfTI and streamline tractography data.")
+
+    parser.add_argument("--input", type=str, required=True, help="Path to input NIfTI (.nii or .nii.gz) file.")
+    parser.add_argument("--trk", type=str, required=True, help="Path to input TRK (.trk) file.")
+    parser.add_argument("--output", type=str, default="resampled", help="Prefix for output files.")
+    parser.add_argument("--voxel_size", type=float, nargs='+', default=[0.5],
+                        help="New voxel size: either a single value for isotropic or three values for anisotropic")
+    parser.add_argument("--new_dim", type=int, nargs=3, default=[116, 140, 96], 
+                        help="New image dimensions (x, y, z). When using --use_ants, these dimensions will be used for the final output.")
+    parser.add_argument("--jobs", type=int, default=8, help="Number of parallel jobs (-1 for all CPUs).")
+    parser.add_argument("--patch_center", type=float, nargs=3, default=None, help="Optional patch center in mm.")
+    parser.add_argument("--reduction", type=str, choices=["mip", "mean"], default=None,
+                        help="Optional reduction along z-axis.")
+    parser.add_argument("--use_gpu", type=lambda x: str(x).lower() != 'false', nargs='?', const=True, default=True,
+                        help="Use GPU acceleration (default: True). Set to False with --use_gpu=False")
+    parser.add_argument("--cpu", action="store_true", help="Force CPU processing (disables GPU).")
+    parser.add_argument("--interp", type=str, choices=["hermite", "linear", "rbf"], default="rbf",
+                        help="Interpolation method for streamlines (default: rbf).")
+    parser.add_argument("--step_size", type=float, default=0.5, 
+                        help="Step size for streamline densification (default: 0.5).")
+    parser.add_argument("--max_gb", type=float, default=64.0,
+                        help="Maximum output size in GB (default: 64.0).")
+    
+    parser.add_argument("--use_ants", action="store_true", help="Use ANTs transforms for processing.")
+    parser.add_argument("--ants_warp", type=str, default=None, help="Path to ANTs warp file (required if use_ants is True).")
+    parser.add_argument("--ants_iwarp", type=str, default=None, help="Path to ANTs inverse warp file (required if use_ants is True).")
+    parser.add_argument("--ants_aff", type=str, default=None, help="Path to ANTs affine file (required if use_ants is True).")
+    parser.add_argument("--force_dimensions", action="store_true", help="Force using the specified new_dim even when using ANTs")
+    parser.add_argument("--transform_mri_with_ants", action="store_true", help="Also transform MRI with ANTs (default: only transforms streamlines)")
+
+    args = parser.parse_args()
+
+    requested_dim = tuple(args.new_dim)
+    if np.prod(requested_dim) > 100_000_000:
+        print(f"WARNING: Requested dimensions {requested_dim} are very large!")
+        print(f"Consider using lower-resolution dimensions or smaller voxel size.")
+    
+    use_gpu = not args.cpu and args.use_gpu
+    
+    print(f"Processing mode: {'CPU' if not use_gpu else 'GPU'}")
+    
+    original_nifti_path = args.input
+    original_trk_path = args.trk
+    output_prefix = args.output
+    
+    if len(args.voxel_size) == 1:
+        voxel_size = args.voxel_size[0]
+    elif len(args.voxel_size) == 3:
+        voxel_size = tuple(args.voxel_size)
+    else:
+        raise ValueError("--voxel_size must be either one value (isotropic) or three values (anisotropic)")
+    
+    if args.use_ants and not all([args.ants_warp, args.ants_iwarp, args.ants_aff]):
+        parser.error("When --use_ants is specified, --ants_warp, --ants_iwarp, and --ants_aff must be provided.")
+    
+    process_and_save(
+        original_nifti_path=original_nifti_path,
+        original_trk_path=original_trk_path,
+        target_voxel_size=voxel_size,
+        target_dimensions=tuple(args.new_dim),
+        output_prefix=output_prefix,
+        num_jobs=args.jobs,
+        patch_center=tuple(args.patch_center) if args.patch_center else None,
+        reduction_method=args.reduction,
+        use_gpu=use_gpu,
+        interpolation_method=args.interp,
+        step_size=args.step_size,
+        max_output_gb=args.max_gb,
+        use_ants=args.use_ants,
+        ants_warp_path=args.ants_warp,
+        ants_iwarp_path=args.ants_iwarp,
+        ants_aff_path=args.ants_aff,
+        force_dimensions=args.force_dimensions,
+        transform_mri_with_ants=args.transform_mri_with_ants
+    )

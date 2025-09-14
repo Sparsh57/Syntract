@@ -3,34 +3,42 @@ import os
 import shutil
 import tempfile
 from joblib import Parallel, delayed
-# Robust import handling
 try:
-    from synthesis.densify import densify_streamline_subvoxel, densify_streamlines_parallel
+    from .densify import densify_streamline_subvoxel, densify_streamlines_parallel
 except ImportError:
-    try:
-        from .densify import densify_streamline_subvoxel, densify_streamlines_parallel
-    except ImportError:
-        from densify import densify_streamline_subvoxel, densify_streamlines_parallel
+    from densify import densify_streamline_subvoxel, densify_streamlines_parallel
+
+def to_backend(x, xp):
+    if xp.__name__ == "cupy":
+        import cupy
+        return cupy.asarray(x)
+    else:
+        import numpy as np
+        return np.asarray(x)
 
 def clip_streamline_to_fov(stream, new_shape, use_gpu=True, epsilon=1e-6):
     """Clip a streamline to the field of view."""
-    # Use centralized GPU utilities
-    try:
-        from synthesis.gpu_utils import get_array_module
-    except ImportError:
+    if use_gpu:
         try:
-            from .gpu_utils import get_array_module
+            import cupy as xp
+            # Convert numpy array to cupy array if needed
+            if hasattr(stream, 'get'):  # Already a cupy array
+                stream_gpu = stream
+            else:
+                stream_gpu = xp.asarray(stream, dtype=xp.float32)
         except ImportError:
-            from gpu_utils import get_array_module
-    
-    xp = get_array_module(prefer_gpu=use_gpu)
-    use_gpu = (xp.__name__ == 'cupy') if hasattr(xp, '__name__') else False
+            import numpy as xp
+            use_gpu = False
+            stream_gpu = xp.asarray(stream, dtype=xp.float32)
+    else:
+        import numpy as xp
+        stream_gpu = xp.asarray(stream, dtype=xp.float32)
         
-    if len(stream) == 0:
+    if len(stream_gpu) == 0:
         return []
         
     new_shape = xp.array(new_shape)
-    inside = xp.all((stream >= -epsilon) & (stream < new_shape + epsilon), axis=1)
+    inside = xp.all((stream_gpu >= -epsilon) & (stream_gpu < new_shape + epsilon), axis=1)
     
     if not xp.any(inside):
         return []
@@ -38,140 +46,164 @@ def clip_streamline_to_fov(stream, new_shape, use_gpu=True, epsilon=1e-6):
     segments = []
     current_segment = []
 
-    for i in range(len(stream)):
+    for i in range(len(stream_gpu)):
         if inside[i]:
-            current_segment.append(stream[i])
+            current_segment.append(stream_gpu[i])
         else:
             if len(current_segment) >= 2:
                 segments.append(xp.array(current_segment, dtype=xp.float32))
             current_segment = []
 
             if i > 0 and inside[i - 1]:
-                p1, p2 = stream[i - 1], stream[i]
-                # Use original FOV bounds for interpolation, not extended bounds
+                p1, p2 = stream_gpu[i - 1], stream_gpu[i]
                 clipped_point = interpolate_to_fov(p1, p2, new_shape, use_gpu)
                 if clipped_point is not None:
-                    segments.append(xp.array([p1, clipped_point], dtype=xp.float32))
-            elif i < len(stream) - 1 and inside[i + 1]:
-                p1, p2 = stream[i], stream[i + 1]
-                # Use original FOV bounds for interpolation, not extended bounds  
+                    segments.append(xp.array([to_backend(p1, xp), to_backend(clipped_point, xp)], dtype=xp.float32))
+            elif i < len(stream_gpu) - 1 and inside[i + 1]:
+                p1, p2 = stream_gpu[i], stream_gpu[i + 1]
                 clipped_point = interpolate_to_fov(p2, p1, new_shape, use_gpu)
                 if clipped_point is not None:
-                    segments.append(xp.array([clipped_point, p2], dtype=xp.float32))
+                    segments.append(xp.array([to_backend(p1, xp), to_backend(clipped_point, xp)], dtype=xp.float32))
+
 
     if len(current_segment) >= 2:
         segments.append(xp.array(current_segment, dtype=xp.float32))
 
-    # Always return NumPy arrays regardless of processing path
-    import numpy as np
-    numpy_segments = []
-    for segment in segments:
-        if hasattr(segment, 'get'):  # CuPy array
-            numpy_segments.append(np.array(segment.get(), dtype=np.float32))
-        elif hasattr(xp, 'asnumpy') and hasattr(segment, 'asnumpy'):  # Other GPU arrays
-            numpy_segments.append(np.array(segment.asnumpy(), dtype=np.float32))
-        elif not isinstance(segment, np.ndarray):
-            numpy_segments.append(np.array(segment, dtype=np.float32))
-        else:
-            # Already NumPy, ensure correct dtype
-            numpy_segments.append(segment.astype(np.float32))
-    
-    return numpy_segments
+    if use_gpu:
+        try:
+            import numpy as np
+            numpy_segments = []
+            for segment in segments:
+                if hasattr(segment, 'get'):  # CuPy array
+                    numpy_segments.append(np.array(segment.get(), dtype=np.float32))
+                else:
+                    numpy_segments.append(np.array(segment, dtype=np.float32))
+            return numpy_segments
+        except Exception:
+            # Fallback: convert any CuPy arrays to NumPy
+            import numpy as np
+            fallback_segments = []
+            for segment in segments:
+                if hasattr(segment, 'get'):  # CuPy array
+                    fallback_segments.append(np.array(segment.get(), dtype=np.float32))
+                else:
+                    fallback_segments.append(np.array(segment, dtype=np.float32))
+            return fallback_segments
+    else:
+        import numpy as np
+        result_segments = []
+        for segment in segments:
+            if isinstance(segment, np.ndarray):
+                result_segments.append(segment)
+            elif hasattr(segment, 'get'):  # CuPy array
+                result_segments.append(segment.get())
+            else:
+                result_segments.append(np.array(segment, dtype=np.float32))
+        return result_segments
 
 
 def interpolate_to_fov(p1, p2, new_shape, use_gpu=True):
     """Interpolate a point on the boundary of the field of view."""
-    # Use centralized GPU utilities
-    try:
-        from synthesis.gpu_utils import get_array_module
-    except ImportError:
+    if use_gpu:
         try:
-            from .gpu_utils import get_array_module
+            import cupy as xp
+            # Convert to cupy arrays if needed
+            if hasattr(p1, 'get'):  # Already cupy arrays
+                p1_gpu = p1
+                p2_gpu = p2
+            else:
+                p1_gpu = xp.asarray(p1, dtype=xp.float32)
+                p2_gpu = xp.asarray(p2, dtype=xp.float32)
         except ImportError:
-            from gpu_utils import get_array_module
-    
-    xp = get_array_module(prefer_gpu=use_gpu)
-    use_gpu = (xp.__name__ == 'cupy') if hasattr(xp, '__name__') else False
+            import numpy as xp
+            use_gpu = False
+            p1_gpu = xp.asarray(p1, dtype=xp.float32)
+            p2_gpu = xp.asarray(p2, dtype=xp.float32)
+    else:
+        import numpy as xp
+        p1_gpu = xp.asarray(p1, dtype=xp.float32)
+        p2_gpu = xp.asarray(p2, dtype=xp.float32)
         
-    p1 = xp.asarray(p1, dtype=xp.float32)
-    p2 = xp.asarray(p2, dtype=xp.float32)
     new_shape = xp.asarray(new_shape)
         
-    direction = p2 - p1
+    direction = p2_gpu - p1_gpu
     t_min = float('inf')
 
     for dim in range(3):
         if abs(direction[dim]) > 1e-10:
-            if p2[dim] < 0:
-                t = (0 - p1[dim]) / direction[dim]
+            if p2_gpu[dim] < 0:
+                t = (0 - p1_gpu[dim]) / direction[dim]
                 if 0 <= t <= 1 and t < t_min:
                     t_min = t
-            elif p2[dim] >= new_shape[dim]:
-                t = (new_shape[dim] - 1 - p1[dim]) / direction[dim]
+            elif p2_gpu[dim] >= new_shape[dim]:
+                t = (new_shape[dim] - 1 - p1_gpu[dim]) / direction[dim]
                 if 0 <= t <= 1 and t < t_min:
                     t_min = t
 
     if t_min == float('inf') or t_min < 0:
-        clipped_point = xp.clip(p1, 0, xp.asarray(new_shape) - 1)
+        clipped_point = xp.clip(p1_gpu, 0, xp.asarray(new_shape) - 1)
+        # Convert CuPy array to NumPy if needed
+        if use_gpu and hasattr(clipped_point, 'get'):
+            clipped_point = clipped_point.get()
         return clipped_point
 
-    intersection = p1 + t_min * direction
+    intersection = p1_gpu + t_min * direction
     intersection = xp.clip(intersection, 0, xp.asarray(new_shape) - 1)
     
-    if use_gpu and hasattr(xp, 'asnumpy'):
-        intersection = xp.asnumpy(intersection)
+    # Convert CuPy array to NumPy if needed
+    if use_gpu and hasattr(intersection, 'get'):
+        intersection = intersection.get()
     
     return intersection
 
 
 def transform_streamline(s_mm, A_new_inv, use_gpu=True):
     """Transform a streamline from mm space to voxel space."""
-    # Use centralized GPU utilities
-    try:
-        from synthesis.gpu_utils import get_array_module, try_gpu_import
-    except ImportError:
-        try:
-            from .gpu_utils import get_array_module, try_gpu_import
-        except ImportError:
-            from gpu_utils import get_array_module, try_gpu_import
-    
     if use_gpu:
         try:
-            gpu_result = try_gpu_import()
-            xp = gpu_result['xp']
-            cuda = gpu_result['cuda']
-            use_gpu = gpu_result['cupy_available'] and gpu_result['numba_available']
+            import cupy as xp
+            from numba import cuda
             
-            if use_gpu:
-                s_mm_gpu = xp.asarray(s_mm, dtype=xp.float32)
-                output = xp.zeros_like(s_mm_gpu)
-                
-                @cuda.jit
-                def transform_kernel(s_mm, A_new_inv, output):
-                    idx = cuda.grid(1)
-                    if idx < s_mm.shape[0]:
-                        hom_mm = xp.zeros(4, dtype=xp.float32)
-                        hom_mm[0] = s_mm[idx, 0]
-                        hom_mm[1] = s_mm[idx, 1]
-                        hom_mm[2] = s_mm[idx, 2]
-                        hom_mm[3] = 1.0
-                        
-                        result = xp.zeros(3, dtype=xp.float32)
-                        for i in range(3):
-                            for j in range(4):
-                                result[i] += A_new_inv[i, j] * hom_mm[j]
-                        
-                        output[idx, 0] = result[0]
-                        output[idx, 1] = result[1]
-                        output[idx, 2] = result[2]
-                
-                threads_per_block = 256
-                blocks_per_grid = (s_mm_gpu.shape[0] + threads_per_block - 1) // threads_per_block
-                transform_kernel[blocks_per_grid, threads_per_block](s_mm_gpu, A_new_inv, output)
-                
+            s_mm_gpu = xp.asarray(s_mm, dtype=xp.float32)
+            A_new_inv_gpu = xp.asarray(A_new_inv, dtype=xp.float32)
+            output = xp.zeros_like(s_mm_gpu)
+            
+            @cuda.jit
+            def transform_kernel(s_mm, A_new_inv, output):
+                idx = cuda.grid(1)
+                if idx < s_mm.shape[0]:
+                    # Create homogeneous coordinates manually (can't use xp.zeros in CUDA kernel)
+                    hom_mm_0 = s_mm[idx, 0]
+                    hom_mm_1 = s_mm[idx, 1]
+                    hom_mm_2 = s_mm[idx, 2]
+                    hom_mm_3 = 1.0
+                    
+                    # Calculate transformed coordinates manually (can't use xp.zeros in CUDA kernel)
+                    result_0 = A_new_inv[0, 0] * hom_mm_0 + A_new_inv[0, 1] * hom_mm_1 + A_new_inv[0, 2] * hom_mm_2 + A_new_inv[0, 3] * hom_mm_3
+                    result_1 = A_new_inv[1, 0] * hom_mm_0 + A_new_inv[1, 1] * hom_mm_1 + A_new_inv[1, 2] * hom_mm_2 + A_new_inv[1, 3] * hom_mm_3
+                    result_2 = A_new_inv[2, 0] * hom_mm_0 + A_new_inv[2, 1] * hom_mm_1 + A_new_inv[2, 2] * hom_mm_2 + A_new_inv[2, 3] * hom_mm_3
+                    
+                    output[idx, 0] = result_0
+                    output[idx, 1] = result_1
+                    output[idx, 2] = result_2
+            
+            threads_per_block = 256
+            blocks_per_grid = (s_mm_gpu.shape[0] + threads_per_block - 1) // threads_per_block
+            transform_kernel[blocks_per_grid, threads_per_block](s_mm_gpu, A_new_inv_gpu, output)
+            
+            # Convert back to numpy if needed for compatibility
+            if hasattr(output, 'get'):  # CuPy array
+                return output.get()
+            else:
                 return output
-        except (ImportError, Exception):
-            # Fallback to CPU processing
+            
+        except ImportError:
+            import numpy as xp
+            use_gpu = False
+        except Exception as e:
+            # Handle CUDA runtime errors or other GPU-related issues
+            print(f"GPU processing failed: {e}. Falling back to CPU.")
+            import numpy as xp
             use_gpu = False
     
     if not use_gpu:
@@ -200,18 +232,11 @@ def transform_and_densify_streamlines(
     inv_A = np.linalg.inv(new_affine)
     voxel_size = np.sqrt(np.sum(new_affine[:3, :3] ** 2, axis=0))
     
-    # Auto-adjust step size for very fine voxel sizes to improve retention
-    min_voxel_size = min(voxel_size)
-    if step_size > min_voxel_size * 5:  # If step size is much larger than voxel size
-        adjusted_step_size = min_voxel_size * 2  # Use 2x voxel size for better sampling
-        print(f"Auto-adjusting step size from {step_size:.3f} to {adjusted_step_size:.3f} for fine voxel resolution")
-        step_size = adjusted_step_size
-    
     print(f"\n[STREAMLINE DEBUG] Transform diagnostics:")
     print(f"Voxel size from affine: {voxel_size}")
     print(f"New shape: {new_shape}")
     print(f"Step size: {step_size}")
-    print(f"Smart FOV clipping: ENABLED for pass-through streamline retention")
+    print(f"FOV clipping: ENABLED")
         
     # Transform from mm space to voxel space
     transformed_streams = []
@@ -222,30 +247,20 @@ def transform_and_densify_streamlines(
     
     total_streamlines = len(transformed_streams)
     
-    # Apply smart clipping that preserves pass-through streamlines
+    # Apply clipping
     clipped_streams = []
-    
     for s in transformed_streams:
-        # Check if any part of the streamline intersects the FOV
-        inside_mask = np.all((s >= 0) & (s < np.array(new_shape)), axis=1)
-        
-        if np.any(inside_mask):
-            # Instead of just keeping inside points, clip the streamline properly
-            # This preserves connectivity for streamlines passing through the volume
-            clipped_segments = clip_streamline_to_fov(s, new_shape, use_gpu=False)
-            
-            # Add all valid segments from this streamline
-            for segment in clipped_segments:
-                if len(segment) >= 2:  # Only keep segments with at least 2 points
-                    clipped_streams.append(segment)
+        mask = np.all((s >= 0) & (s < np.array(new_shape)), axis=1)
+        if np.any(mask):
+            if np.sum(mask) >= 2:
+                filtered_array = s[mask]
+                clipped_streams.append(filtered_array)
     
     clipped_count = len(clipped_streams)
     
-    print(f"Smart Clipping Stats: {clipped_count} segments from {total_streamlines} original streamlines")
-    print(f"  - Retention ratio: {clipped_count/total_streamlines:.1f}x (segments/original streamlines)")
-    print(f"  - Pass-through streamlines preserved with proper boundary interpolation")
-    if clipped_count < total_streamlines * 0.1:
-        print(f"WARNING: Very few streamline segments retained!")
+    print(f"Clipping Stats: {clipped_count}/{total_streamlines} streamlines retained after FOV clipping ({clipped_count/total_streamlines*100:.1f}%)")
+    if clipped_count < total_streamlines * 0.5:
+        print(f"WARNING: Over 50% of streamlines were clipped!")
     if clipped_count == 0:
         print("ERROR: All streamlines were clipped!")
         return []
@@ -274,7 +289,10 @@ def transform_and_densify_streamlines(
                 s = np.array(valid_points, dtype=np.float32)
             elif not isinstance(s, np.ndarray):
                 try:
-                    s = np.array(s, dtype=np.float32)
+                    if hasattr(s, 'get'):  # CuPy array
+                        s = s.get()
+                    else:
+                        s = np.array(s, dtype=np.float32)
                 except Exception:
                     continue
             
@@ -313,3 +331,4 @@ def transform_and_densify_streamlines(
         print("Try a larger voxel size or adjust the step size.")
     
     return densified_streams
+

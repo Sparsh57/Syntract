@@ -98,7 +98,7 @@ def build_new_affine(old_affine, old_shape, new_voxel_size, new_shape, patch_cen
     A_new[:3, :3] = R_new
     A_new[:3, 3] = t_new
 
-    if use_gpu:
-        return xp.asnumpy(A_new)
+    if hasattr(A_new, 'get'):
+        return A_new.get()
     else:
         return A_new

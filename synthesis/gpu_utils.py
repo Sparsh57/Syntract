@@ -139,12 +139,10 @@ class GPUSupport:
         
         Handles both CuPy arrays and other GPU array types gracefully.
         """
-        if hasattr(array, 'get'):  # CuPy array
+        if hasattr(array, 'get'):  # CuPy array or other GPU arrays with .get() method
             return array.get()
         elif hasattr(array, 'cpu'):  # PyTorch tensor
             return array.cpu().numpy()
-        elif hasattr(array, 'asnumpy'):  # Other GPU arrays
-            return array.asnumpy()
         else:
             # Already a CPU array
             return array
