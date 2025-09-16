@@ -22,17 +22,17 @@ from .visualize import (
     overlay_streamlines_on_blockface_coronal,
     visualize_trk_with_nifti
 )
-from .ants_transform import (
+from .ants_transform_updated import (
     apply_ants_transform_to_mri,
     apply_ants_transform_to_streamlines,
     process_with_ants
 )
 from .compare_interpolation import compare_interpolations
-from .slice_selection import (
-    extract_coronal_slices_and_streamlines,
-    ensure_ras_orientation,
-    compute_brain_mask,
-    stratified_random_selection
+from .slice_simplified import (
+    extract_coronal_slices_simple,
+    extract_patches_simple,
+    geometric_slab_clipping,
+    filter_streamlines_by_bounds
 )
 
 __version__ = "1.0.0"
@@ -73,8 +73,8 @@ __all__ = [
     'compare_interpolations',
     
     # Slice selection
-    'extract_coronal_slices_and_streamlines',
-    'ensure_ras_orientation',
-    'compute_brain_mask',
-    'stratified_random_selection'
+    'extract_coronal_slices_simple',
+    'extract_patches_simple',
+    'geometric_slab_clipping',
+    'filter_streamlines_by_bounds'
 ]
