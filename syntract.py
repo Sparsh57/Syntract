@@ -1,10 +1,9 @@
 #!/usr/bin/env python
 """
-Combined MRI Synthesis and Visualization Pipeline
+Streamlined MRI Synthesis and Visualization Pipeline
 
-This script provides a unified interface for both processing NIfTI/TRK data
-and generating visualizations. It combines the synthesis pipeline for data
-processing with the syntract viewer for visualization generation.
+This script provides a unified interface for processing NIfTI/TRK data
+and generating visualizations with minimal parameters.
 
 Usage:
     python syntract.py --input brain.nii.gz --trk fibers.trk [options]
@@ -33,68 +32,17 @@ except ImportError:
 
 # Import syntract viewer functions  
 try:
-    from syntract_viewer.generate_fiber_examples import generate_examples_original_mode, generate_examples_with_spatial_subdivisions
+    from syntract_viewer.generate_fiber_examples import generate_examples_original_mode
     SYNTRACT_AVAILABLE = True
 except ImportError:
     try:
         import sys
         sys.path.append(os.path.join(os.path.dirname(__file__), 'syntract_viewer'))
-        from generate_fiber_examples import generate_examples_original_mode, generate_examples_with_spatial_subdivisions
+        from generate_fiber_examples import generate_examples_original_mode
         SYNTRACT_AVAILABLE = True
     except ImportError:
         SYNTRACT_AVAILABLE = False
         print("Warning: Syntract viewer module not available")
-
-
-def run_synthesis_stage(args, temp_dir):
-    """Run the synthesis processing stage."""
-    if not SYNTHESIS_AVAILABLE:
-        raise RuntimeError("Synthesis module not available. Cannot run processing stage.")
-    
-    print("\n" + "="*60)
-    print("STAGE 1: SYNTHESIS PROCESSING")
-    print("="*60)
-    
-    # Set up synthesis output paths
-    synthesis_output = os.path.join(temp_dir, "processed")
-    
-    # Prepare synthesis parameters
-    synthesis_args = {
-        'original_nifti_path': args.input,
-        'original_trk_path': args.trk,
-        'target_voxel_size': args.voxel_size[0] if len(args.voxel_size) == 1 else tuple(args.voxel_size),
-        'target_dimensions': tuple(args.new_dim),
-        'output_prefix': synthesis_output,
-        'num_jobs': args.jobs,
-        'patch_center': tuple(args.patch_center) if args.patch_center else None,
-        'reduction_method': args.reduction,
-        'use_gpu': not args.cpu and args.use_gpu,
-        'interpolation_method': args.interp,
-        'step_size': args.step_size,
-        'max_output_gb': args.max_gb,
-        'use_ants': args.use_ants,
-        'ants_warp_path': args.ants_warp,
-        'ants_iwarp_path': args.ants_iwarp,
-        'ants_aff_path': args.ants_aff,
-        'force_dimensions': args.force_dimensions,
-        'transform_mri_with_ants': args.transform_mri_with_ants
-    }
-    
-    # Run synthesis
-    process_and_save(**synthesis_args)
-    
-    # Return paths to processed files
-    processed_nifti = synthesis_output + ".nii.gz"
-    processed_trk = synthesis_output + ".trk"
-    
-    if not os.path.exists(processed_nifti) or not os.path.exists(processed_trk):
-        raise RuntimeError("Synthesis stage failed to produce output files")
-    
-    print(f"Synthesis completed successfully!")
-    print(f"Processed NIfTI: {processed_nifti}")
-    print(f"Processed TRK: {processed_trk}")
-    
-    return processed_nifti, processed_trk
 
 
 def run_visualization_stage(nifti_file, trk_file, args):
@@ -113,475 +61,693 @@ def run_visualization_stage(nifti_file, trk_file, args):
     # Prepare visualization arguments
     viz_args = argparse.Namespace()
     
-    # Set all the visualization parameters  
+    # Set essential visualization parameters  
     viz_args.nifti = nifti_file
     viz_args.trk = trk_file
     viz_args.output_dir = viz_output_dir
-    viz_args.examples = args.n_examples  # Note: visualization code expects 'examples' not 'n_examples'
+    viz_args.examples = args.n_examples
     viz_args.prefix = args.viz_prefix
-    viz_args.view = args.slice_mode
-    viz_args.specific_slice = args.specific_slice
-    viz_args.streamline_percentage = args.streamline_percentage
-    viz_args.roi_sphere = None  # Set to None as in original code
-    viz_args.tract_linewidth = args.tract_linewidth
-    viz_args.save_masks = args.save_masks
-    viz_args.use_high_density_masks = args.use_high_density_masks
-    viz_args.label_bundles = args.label_bundles
-    viz_args.mask_thickness = args.mask_thickness
-    viz_args.min_fiber_pct = args.min_fiber_percentage
-    viz_args.max_fiber_pct = args.max_fiber_percentage
-    viz_args.min_bundle_size = args.min_bundle_size
-    viz_args.density_threshold = args.density_threshold
-    viz_args.contrast_method = args.contrast_method
-    viz_args.background_preset = args.background_preset
-    viz_args.cornucopia_preset = args.cornucopia_preset
-    viz_args.enable_sharpening = args.enable_sharpening
-    viz_args.sharpening_strength = args.sharpening_strength
-    viz_args.close_gaps = args.close_gaps
-    viz_args.closing_footprint_size = args.closing_footprint_size
-    viz_args.randomize = args.randomize_viz
-    viz_args.random_state = args.random_state
-    viz_args.spatial_subdivisions = args.use_spatial_subdivisions
-    viz_args.n_subdivisions = args.n_subdivisions
-    viz_args.max_streamlines_per_region = args.max_streamlines_per_subdivision
-    viz_args.min_streamlines_per_region = args.min_streamlines_per_region
-    viz_args.skip_empty_regions = args.skip_empty_regions
+    viz_args.view = "coronal"  # Fixed to coronal
+    viz_args.specific_slice = None
+    viz_args.streamline_percentage = 100.0
+    viz_args.roi_sphere = None
+    viz_args.tract_linewidth = 1.0
+    viz_args.save_masks = True
+    viz_args.use_high_density_masks = False
+    viz_args.label_bundles = False
+    viz_args.mask_thickness = 1
+    viz_args.min_fiber_pct = 10.0
+    viz_args.max_fiber_pct = 100.0
+    viz_args.min_bundle_size = 20
+    viz_args.density_threshold = 0.15
+    viz_args.contrast_method = "clahe"
+    viz_args.background_preset = "preserve_edges"
+    viz_args.cornucopia_preset = "disabled"
+    viz_args.enable_sharpening = False
+    viz_args.sharpening_strength = 1.0
+    viz_args.close_gaps = False
+    viz_args.closing_footprint_size = 3
+    viz_args.randomize = False
+    viz_args.random_state = 42
     
-    # Import background enhancement availability
-    try:
-        from syntract_viewer.background_enhancement import enhance_slice_background
-        viz_args.background_enhancement_available = True
-    except ImportError:
-        viz_args.background_enhancement_available = False
-    
-    # Run visualization generation
-    if args.use_spatial_subdivisions:
-        print("Using spatial subdivisions mode")
-        generate_examples_with_spatial_subdivisions(viz_args, viz_args.background_enhancement_available)
-    else:
-        print("Using original mode")
-        generate_examples_original_mode(viz_args, viz_args.background_enhancement_available)
+    # Run visualization
+    generate_examples_original_mode(viz_args, True)  # background_enhancement_available=True
     
     print(f"Visualization generation completed!")
     print(f"Output directory: {viz_output_dir}")
 
 
-def copy_final_outputs(temp_dir, args):
-    """Copy final outputs to the specified locations."""
-    if args.keep_processed:
-        # Copy processed files to final location
-        synthesis_output = os.path.join(temp_dir, "processed")
-        processed_nifti = synthesis_output + ".nii.gz"
-        processed_trk = synthesis_output + ".trk"
-        
-        final_nifti = args.output + "_processed.nii.gz"
-        final_trk = args.output + "_processed.trk"
-        
-        if os.path.exists(processed_nifti):
-            shutil.copy2(processed_nifti, final_nifti)
-            print(f"Saved processed NIfTI: {final_nifti}")
-        
-        if os.path.exists(processed_trk):
-            shutil.copy2(processed_trk, final_trk)
-            print(f"Saved processed TRK: {final_trk}")
-
-
-def process_syntract(input_nifti, input_trk, output_base=None, **kwargs):
+def batch_process_slice_folders(slice_output_dir, args):
     """
-    Programmatic interface for the syntract pipeline.
+    Automatically batch process extracted slice folders through the visualization pipeline.
+    
+    Args:
+        slice_output_dir (str): Directory containing slice folders (slice_XXX/)
+        args: Arguments object with visualization parameters
+        
+    Returns:
+        dict: Summary of batch processing results
+    """
+    print(f"\n=== Starting Automated Batch Processing ===")
+    print(f"Processing slices from: {slice_output_dir}")
+    
+    if not os.path.exists(slice_output_dir):
+        print(f"Error: Slice output directory not found: {slice_output_dir}")
+        return {'success': False, 'error': 'Directory not found'}
+    
+    # Find all slice folders
+    slice_folders = []
+    for item in os.listdir(slice_output_dir):
+        item_path = os.path.join(slice_output_dir, item)
+        if os.path.isdir(item_path) and item.startswith('slice_'):
+            # Check if folder contains both required files
+            nifti_file = None
+            trk_file = None
+            
+            for file in os.listdir(item_path):
+                if file.endswith('.nii.gz'):
+                    nifti_file = os.path.join(item_path, file)
+                elif file.endswith('.trk'):
+                    trk_file = os.path.join(item_path, file)
+            
+            if nifti_file and trk_file:
+                slice_folders.append({
+                    'folder': item,
+                    'path': item_path,
+                    'nifti': nifti_file,
+                    'trk': trk_file
+                })
+            else:
+                print(f"Warning: Incomplete slice folder {item} (missing NIfTI or TRK file)")
+    
+    if not slice_folders:
+        print("No valid slice folders found for processing")
+        return {'success': False, 'error': 'No valid slice folders found'}
+    
+    print(f"Found {len(slice_folders)} valid slice folders to process")
+    
+    # Create batch output directory
+    batch_viz_dir = os.path.join(slice_output_dir, "batch_visualizations")
+    os.makedirs(batch_viz_dir, exist_ok=True)
+    
+    results = {
+        'success': True,
+        'total_slices': len(slice_folders),
+        'processed_slices': 0,
+        'failed_slices': 0,
+        'slice_results': [],
+        'output_dir': batch_viz_dir
+    }
+    
+    for i, slice_info in enumerate(slice_folders, 1):
+        print(f"\nProcessing slice {i}/{len(slice_folders)}: {slice_info['folder']}")
+        
+        try:
+            # Create individual output directory for this slice
+            slice_viz_dir = os.path.join(batch_viz_dir, slice_info['folder'])
+            os.makedirs(slice_viz_dir, exist_ok=True)
+            
+            # Update args for this slice
+            slice_args = argparse.Namespace(**vars(args))
+            slice_args.viz_output_dir = slice_viz_dir
+            slice_args.prefix = f"{slice_info['folder']}_"
+            
+            # Run visualization for this slice
+            run_visualization_stage(slice_info['nifti'], slice_info['trk'], slice_args)
+            
+            results['processed_slices'] += 1
+            results['slice_results'].append({
+                'slice': slice_info['folder'],
+                'status': 'success',
+                'output_dir': slice_viz_dir
+            })
+            
+            print(f"✓ Successfully processed {slice_info['folder']}")
+            
+        except Exception as e:
+            print(f"✗ Error processing {slice_info['folder']}: {e}")
+            results['failed_slices'] += 1
+            results['slice_results'].append({
+                'slice': slice_info['folder'],
+                'status': 'failed',
+                'error': str(e)
+            })
+    
+    print(f"\n=== Batch Processing Complete ===")
+    print(f"Successfully processed: {results['processed_slices']}/{results['total_slices']} slices")
+    print(f"Failed: {results['failed_slices']} slices")
+    print(f"Output directory: {batch_viz_dir}")
+    
+    # Save summary
+    import json
+    summary_file = os.path.join(batch_viz_dir, "batch_processing_summary.json")
+    with open(summary_file, 'w') as f:
+        json.dump(results, f, indent=2)
+    print(f"Summary saved: {summary_file}")
+    
+    return results
+
+
+def run_patch_extraction_stage(nifti_file, trk_files, args):
+    """Run the patch extraction stage with re-synthesis per patch center."""
+    if not SYNTRACT_AVAILABLE:
+        raise RuntimeError("Syntract viewer module not available. Cannot run patch extraction stage.")
+    
+    print("\n" + "="*60)
+    print("STAGE 3: PATCH EXTRACTION WITH RE-SYNTHESIS")
+    print("="*60)
+    
+    # Create output directory for patches
+    patch_output_dir = args.patch_output_dir
+    if not patch_output_dir:
+        patch_output_dir = "patches"
+    os.makedirs(patch_output_dir, exist_ok=True)
+    
+    # Load the base files to get dimensions and understand coordinate space
+    import numpy as np
+    import nibabel as nib
+    from synthesis.main import process_and_save
+    
+    base_img = nib.load(nifti_file)
+    base_data = base_img.get_fdata()
+    base_shape = base_data.shape
+    base_trk_file = trk_files[0] if trk_files else None
+    
+    print(f"Base image shape: {base_shape}")
+    print(f"Generating {args.total_patches} patches with size {args.patch_size}")
+    
+    # Use patch_size_3d for the new re-synthesis approach
+    if hasattr(args, 'patch_size_3d') and args.patch_size_3d:
+        patch_dimensions = tuple(args.patch_size_3d)
+    else:
+        # Fallback to converting 2D patch_size to 3D
+        if len(args.patch_size) == 2:
+            patch_dimensions = (args.patch_size[0], args.patch_size[1], args.patch_size[0])
+        elif len(args.patch_size) == 3:
+            patch_dimensions = tuple(args.patch_size)
+        else:
+            raise ValueError(f"Invalid patch_size format: {args.patch_size}")
+    
+    print(f"Using patch dimensions for re-synthesis: {patch_dimensions}")
+    
+    # Calculate valid patch centers (ensuring patch fits within base image)
+    half_patch = [dim // 2 for dim in patch_dimensions]
+    min_centers = [half_patch[i] for i in range(3)]
+    max_centers = [base_shape[i] - half_patch[i] for i in range(3)]
+    
+    print(f"Valid patch center ranges:")
+    print(f"  X: {min_centers[0]} to {max_centers[0]}")
+    print(f"  Y: {min_centers[1]} to {max_centers[1]}")
+    print(f"  Z: {min_centers[2]} to {max_centers[2]}")
+    
+    # Verify we can generate patches
+    for i in range(3):
+        if min_centers[i] >= max_centers[i]:
+            raise ValueError(f"Patch size {patch_dimensions} too large for base image shape {base_shape}")
+    
+    # Set random seed for reproducible results
+    if hasattr(args, 'random_state') and args.random_state:
+        np.random.seed(args.random_state)
+    
+    # Generate random patch centers
+    patch_centers = []
+    for patch_idx in range(args.total_patches):
+        center = [
+            np.random.randint(min_centers[0], max_centers[0]),
+            np.random.randint(min_centers[1], max_centers[1]),
+            np.random.randint(min_centers[2], max_centers[2])
+        ]
+        patch_centers.append(center)
+    
+    print(f"Generated {len(patch_centers)} patch centers")
+    
+    # Process each patch
+    results = {
+        'patches_extracted': 0,
+        'patches_failed': 0,
+        'patch_details': []
+    }
+    
+    for patch_idx, patch_center in enumerate(patch_centers, 1):
+        print(f"\n--- Processing Patch {patch_idx}/{args.total_patches} ---")
+        print(f"Patch center: {patch_center}")
+        print(f"Patch dimensions: {patch_dimensions}")
+        
+        try:
+            # Create subfolder for this patch
+            patch_subfolder = os.path.join(patch_output_dir, f"patch_{patch_idx:04d}")
+            os.makedirs(patch_subfolder, exist_ok=True)
+            
+            # Convert patch center from voxel coordinates to world coordinates
+            base_affine = base_img.affine
+            patch_center_voxel = np.array(patch_center + [1])  # Add homogeneous coordinate
+            patch_center_world = (base_affine @ patch_center_voxel)[:3]
+            
+            print(f"  Patch center (voxel): {patch_center}")
+            print(f"  Patch center (world mm): {patch_center_world}")
+            
+            # Create temporary directory for intermediate files
+            import tempfile
+            with tempfile.TemporaryDirectory() as temp_dir:
+                temp_prefix = f"patch_{patch_idx:04d}_temp"
+                temp_output = os.path.join(temp_dir, temp_prefix)
+                
+                print(f"  Running re-synthesis with center {patch_center} and dimensions {patch_dimensions}")
+                
+                # Run synthesis with patch-specific parameters
+                synthesis_result = process_and_save(
+                    original_nifti_path=nifti_file,
+                    original_trk_path=base_trk_file,
+                    target_voxel_size=args.voxel_size if hasattr(args, 'voxel_size') else 0.5,
+                    target_dimensions=patch_dimensions,
+                    output_prefix=temp_output,
+                    num_jobs=getattr(args, 'num_jobs', 8),
+                    patch_center=patch_center_world.tolist(),  # Use world coordinates for centering
+                    use_gpu=getattr(args, 'use_gpu', True),
+                    interpolation_method=getattr(args, 'interpolation_method', 'hermite'),
+                    step_size=getattr(args, 'step_size', 0.5),
+                    max_output_gb=getattr(args, 'max_output_gb', 64.0),
+                    use_ants=False,  # Skip ANTs since already applied to base files
+                    force_dimensions=True
+                )
+                
+                # Move the synthesized files to the patch subfolder
+                temp_nifti = f"{temp_output}.nii.gz"
+                temp_trk = f"{temp_output}.trk"
+                
+                final_nifti = os.path.join(patch_subfolder, f"patch_{patch_idx:04d}.nii.gz")
+                final_trk = os.path.join(patch_subfolder, f"patch_{patch_idx:04d}_streamlines.trk")
+                
+                if os.path.exists(temp_nifti):
+                    os.rename(temp_nifti, final_nifti)
+                if os.path.exists(temp_trk):
+                    os.rename(temp_trk, final_trk)
+                
+                # Generate visualization if requested
+                if SYNTRACT_AVAILABLE and not getattr(args, 'skip_visualization', False):
+                    try:
+                        from syntract_viewer.core import visualize_nifti_with_trk_coronal
+                        viz_path = os.path.join(patch_subfolder, f"patch_{patch_idx:04d}_visualization.png")
+                        visualize_nifti_with_trk_coronal(
+                            nifti_file=final_nifti,
+                            trk_file=final_trk,
+                            output_file=viz_path,
+                            n_slices=1,
+                            slice_idx=patch_dimensions[1] // 2,  # Middle slice
+                            streamline_percentage=100.0,
+                            save_masks=getattr(args, 'save_masks', False)
+                        )
+                        print(f"  Generated visualization: {viz_path}")
+                    except Exception as viz_e:
+                        print(f"  Warning: Visualization failed: {viz_e}")
+                
+                patch_result = {
+                    'patch_idx': patch_idx,
+                    'center': patch_center,
+                    'center_world_mm': patch_center_world.tolist(),
+                    'dimensions': patch_dimensions,
+                    'nifti_file': final_nifti,
+                    'trk_file': final_trk,
+                    'output_folder': patch_subfolder
+                }
+                
+                results['patches_extracted'] += 1
+                results['patch_details'].append(patch_result)
+                print(f"✓ Patch {patch_idx} completed successfully")
+                
+        except Exception as e:
+            results['patches_failed'] += 1
+            print(f"✗ Patch {patch_idx} failed with exception: {e}")
+    
+    # Save summary
+    import json
+    summary = {
+        'total_patches_requested': args.total_patches,
+        'patches_extracted': results['patches_extracted'],
+        'patches_failed': results['patches_failed'],
+        'patch_details': results['patch_details'],
+        'extraction_params': {
+            'patch_dimensions': patch_dimensions,
+            'base_image_shape': base_shape,
+            'random_state': getattr(args, 'random_state', None)
+        }
+    }
+    
+    summary_path = os.path.join(patch_output_dir, "patch_extraction_summary.json")
+    with open(summary_path, 'w') as f:
+        json.dump(summary, f, indent=2)
+    
+    print(f"\nSummary saved: {summary_path}")
+    print(f"Patch extraction with re-synthesis completed!")
+    print(f"Output directory: {patch_output_dir}")
+    
+    return results
+
+
+def process_syntract(input_nifti, input_trk, output_base="output", **kwargs):
+    """
+    Process NIfTI and TRK files through synthesis and visualization pipeline.
     
     Args:
         input_nifti (str): Path to input NIfTI file
         input_trk (str): Path to input TRK file  
-        output_base (str): Base name for output files (default: auto-generated)
-        **kwargs: Additional parameters (see main() function for all options)
+        output_base (str): Base name for output files
+        **kwargs: Additional parameters for synthesis and visualization
         
     Returns:
-        dict: Dictionary containing output paths and status
-        
-    Example:
-        result = process_syntract(
-            input_nifti="brain.nii.gz",
-            input_trk="fibers.trk",
-            output_base="my_output",
-            n_examples=3,
-            viz_prefix="fiber_",
-            skip_synthesis=False
-        )
+        dict: Results from synthesis and visualization stages
     """
-    import argparse
+    if not SYNTHESIS_AVAILABLE:
+        raise RuntimeError("Synthesis module not available")
     
-    # Set default output_base if not provided
-    if output_base is None:
-        base_name = os.path.splitext(os.path.basename(input_trk))[0]
-        output_base = f"processed_{base_name}"
-    
-    # Create argparse namespace with defaults
+    # Set up arguments
     args = argparse.Namespace()
     
-    # Required arguments
-    args.input = input_nifti
-    args.trk = input_trk
-    args.output = output_base
-    
-    # Set defaults for all parameters
-    args.skip_synthesis = kwargs.get('skip_synthesis', False)
-    args.skip_visualization = kwargs.get('skip_visualization', False)
-    args.keep_processed = kwargs.get('keep_processed', True)
-    
-    # Synthesis parameters
-    args.voxel_size = kwargs.get('voxel_size', [0.5])
-    args.new_dim = kwargs.get('new_dim', [116, 140, 96])
-    args.jobs = kwargs.get('jobs', 8)
-    args.patch_center = kwargs.get('patch_center', None)
-    args.reduction = kwargs.get('reduction', None)
-    args.use_gpu = kwargs.get('use_gpu', True)
-    args.cpu = kwargs.get('cpu', False)
-    args.interp = kwargs.get('interp', 'hermite')
-    args.step_size = kwargs.get('step_size', 0.5)
-    args.max_gb = kwargs.get('max_gb', 64.0)
-    
-    # ANTs parameters
+    # Essential synthesis parameters
+    args.input_nifti = input_nifti
+    args.input_trk = input_trk
+    args.output_prefix = output_base
+    args.new_dim = kwargs.get('new_dim', (116, 140, 96))
+    args.voxel_size = kwargs.get('voxel_size', 0.5)
     args.use_ants = kwargs.get('use_ants', False)
-    args.ants_warp = kwargs.get('ants_warp', None)
-    args.ants_iwarp = kwargs.get('ants_iwarp', None)
-    args.ants_aff = kwargs.get('ants_aff', None)
-    args.force_dimensions = kwargs.get('force_dimensions', False)
-    args.transform_mri_with_ants = kwargs.get('transform_mri_with_ants', False)
+    args.ants_warp_path = kwargs.get('ants_warp_path', None)
+    args.ants_iwarp_path = kwargs.get('ants_iwarp_path', None)
+    args.ants_aff_path = kwargs.get('ants_aff_path', None)
+    
+    # Slice extraction parameters
+    args.slice_count = kwargs.get('slice_count', None)
+    args.enable_slice_extraction = kwargs.get('enable_slice_extraction', False)
+    args.slice_output_dir = kwargs.get('slice_output_dir', None)
+    args.use_simplified_slicing = kwargs.get('use_simplified_slicing', True)
+    args.force_full_slicing = kwargs.get('force_full_slicing', False)
+    args.auto_batch_process = kwargs.get('auto_batch_process', False)
     
     # Visualization parameters
     args.viz_output_dir = kwargs.get('viz_output_dir', f"{output_base}_visualizations")
-    args.n_examples = kwargs.get('n_examples', 5)
+    args.n_examples = kwargs.get('n_examples', 3)
     args.viz_prefix = kwargs.get('viz_prefix', 'synthetic_')
-    args.slice_mode = kwargs.get('slice_mode', 'coronal')
-    args.specific_slice = kwargs.get('specific_slice', None)
-    args.streamline_percentage = kwargs.get('streamline_percentage', 100.0)
-    args.tract_linewidth = kwargs.get('tract_linewidth', 1.0)
-    args.save_masks = kwargs.get('save_masks', False)
-    args.use_high_density_masks = kwargs.get('use_high_density_masks', False)
-    args.label_bundles = kwargs.get('label_bundles', False)
-    args.mask_thickness = kwargs.get('mask_thickness', 1)
-    args.min_fiber_percentage = kwargs.get('min_fiber_percentage', 10.0)
-    args.max_fiber_percentage = kwargs.get('max_fiber_percentage', 100.0)
-    args.min_bundle_size = kwargs.get('min_bundle_size', 20)
-    args.density_threshold = kwargs.get('density_threshold', 0.15)
     
-    # Enhancement parameters
-    args.contrast_method = kwargs.get('contrast_method', 'clahe')
-    args.background_preset = kwargs.get('background_preset', 'preserve_edges')
-    args.cornucopia_preset = kwargs.get('cornucopia_preset', None)
-    args.enable_sharpening = kwargs.get('enable_sharpening', True)
-    args.sharpening_strength = kwargs.get('sharpening_strength', 0.5)
-    args.close_gaps = kwargs.get('close_gaps', False)
-    args.closing_footprint_size = kwargs.get('closing_footprint_size', 5)
+    # Patch extraction parameters
+    args.patch_mode = kwargs.get('patch_mode', False)
+    args.patch_size_3d = kwargs.get('patch_size_3d', [64, 64, 64])
+    args.num_patches = kwargs.get('num_patches', 10)
     
-    # Spatial subdivisions parameters
-    args.use_spatial_subdivisions = kwargs.get('use_spatial_subdivisions', False)
-    args.n_subdivisions = kwargs.get('n_subdivisions', 8)
-    args.max_streamlines_per_subdivision = kwargs.get('max_streamlines_per_subdivision', 50000)
-    args.min_streamlines_per_region = kwargs.get('min_streamlines_per_region', 10)
-    args.skip_empty_regions = kwargs.get('skip_empty_regions', True)
+    # Legacy patch extraction parameters
+    args.enable_patch_extraction = kwargs.get('enable_patch_extraction', False)
+    args.patch_output_dir = kwargs.get('patch_output_dir', output_base)  # Use output_base directly, no "_patches" suffix
+    args.total_patches = kwargs.get('total_patches', 100)
+    args.patch_size = kwargs.get('patch_size', [128, 128])  # Reduced from 1024x1024 to 128x128
+    args.min_streamlines_per_patch = kwargs.get('min_streamlines_per_patch', 50)  # Increased from 5 to 50
+    args.patch_prefix = kwargs.get('patch_prefix', 'patch')
     
-    # Miscellaneous parameters
-    args.randomize_viz = kwargs.get('randomize_viz', False)
-    args.random_state = kwargs.get('random_state', None)
-    args.temp_dir = kwargs.get('temp_dir', None)
+    # Ensure patch_output_dir is set if patch extraction is enabled
+    if args.enable_patch_extraction and not args.patch_output_dir:
+        args.patch_output_dir = output_base  # Use output_base directly
     
-    # Validate arguments
-    if args.skip_synthesis and args.skip_visualization:
-        raise ValueError("Cannot skip both synthesis and visualization stages")
+    # Add missing parameters for patch extraction
+    if not hasattr(args, 'random_state'):
+        args.random_state = 42
+    if not hasattr(args, 'save_masks'):
+        args.save_masks = True
+    if not hasattr(args, 'contrast_method'):
+        args.contrast_method = 'clahe'
+    if not hasattr(args, 'background_enhancement'):
+        args.background_enhancement = 'preserve_edges'
+    if not hasattr(args, 'cornucopia_preset'):
+        args.cornucopia_preset = 'disabled'
+    if not hasattr(args, 'tract_linewidth'):
+        args.tract_linewidth = 1.0
+    if not hasattr(args, 'mask_thickness'):
+        args.mask_thickness = 1
+    if not hasattr(args, 'density_threshold'):
+        args.density_threshold = 0.15
+    if not hasattr(args, 'gaussian_sigma'):
+        args.gaussian_sigma = 2.0
+    if not hasattr(args, 'close_gaps'):
+        args.close_gaps = False
+    if not hasattr(args, 'closing_footprint_size'):
+        args.closing_footprint_size = 5
+    if not hasattr(args, 'label_bundles'):
+        args.label_bundles = False
+    if not hasattr(args, 'min_bundle_size'):
+        args.min_bundle_size = 20
     
-    if args.use_ants and not all([args.ants_warp, args.ants_iwarp, args.ants_aff]):
-        raise ValueError("When use_ants=True, ants_warp, ants_iwarp, and ants_aff must be provided")
-    
-    # Set up temporary directory
-    if args.temp_dir:
-        temp_dir = args.temp_dir
-        os.makedirs(temp_dir, exist_ok=True)
-        cleanup_temp = False
-    else:
+    # Create temporary directory
         temp_dir = tempfile.mkdtemp(prefix="mri_pipeline_")
-        cleanup_temp = True
-    
-    result = {
-        'success': False,
-        'output_base': output_base,
-        'visualization_dir': args.viz_output_dir,
-        'processed_nifti': None,
-        'processed_trk': None,
-        'error': None
-    }
+    print(f"Temporary directory: {temp_dir}")
+    print(f"Final output base: {output_base}")
+    print(f"Visualization output: {args.viz_output_dir}")
     
     try:
-        print(f"Combined MRI Processing and Visualization Pipeline")
-        print(f"Input NIfTI: {args.input}")
-        print(f"Input TRK: {args.trk}")
-        print(f"Temporary directory: {temp_dir}")
-        print(f"Final output base: {args.output}")
-        print(f"Visualization output: {args.viz_output_dir}")
+        # Run synthesis stage
+        print("\n" + "="*60)
+        print("STAGE 1: SYNTHESIS PROCESSING")
+        print("="*60)
         
-        # Determine which files to use for visualization
-        if args.skip_synthesis:
-            print("\nSkipping synthesis stage - using original files")
-            viz_nifti = args.input
-            viz_trk = args.trk
-        else:
-            # Run synthesis stage
-            viz_nifti, viz_trk = run_synthesis_stage(args, temp_dir)
+        synthesis_result = process_and_save(
+            original_nifti_path=args.input_nifti,
+            original_trk_path=args.input_trk,
+            target_voxel_size=args.voxel_size,
+            target_dimensions=args.new_dim,
+            output_prefix=args.output_prefix,
+            use_ants=args.use_ants,
+            ants_warp_path=args.ants_warp_path,
+            ants_iwarp_path=args.ants_iwarp_path,
+            ants_aff_path=args.ants_aff_path,
+            slice_count=args.slice_count,
+            enable_slice_extraction=args.enable_slice_extraction,
+            slice_output_dir=args.slice_output_dir,
+            use_simplified_slicing=args.use_simplified_slicing,
+            force_full_slicing=args.force_full_slicing
+        )
+        
+        if 'slice_extraction' in synthesis_result and synthesis_result['slice_extraction']:
+            print(f"✓ Generated {len(synthesis_result['slice_extraction']['selected_slice_indices'])} slices")
             
-        # Run visualization stage
-        if not args.skip_visualization:
+            # Auto batch process if enabled
+            if args.auto_batch_process and SYNTRACT_AVAILABLE:
+                print(f"\n=== Starting Automatic Batch Processing ===")
+                slice_batch_result = batch_process_slice_folders(args.slice_output_dir, args)
+                
+                if slice_batch_result['success']:
+                    print(f"✓ Batch processing completed: {slice_batch_result['processed_slices']}/{slice_batch_result['total_slices']} slices")
+                else:
+                    print(f"✗ Batch processing failed: {slice_batch_result.get('error', 'Unknown error')}")
+        
+        # Run 3D patch extraction if enabled (replaces slice extraction and auto batch)
+        if args.patch_mode:
+            print(f"\n=== Starting 3D Patch Extraction Mode ===")
+            from synthesis.slice_simplified import extract_patches_simple
+            
+            patch_output_dir = f"{output_base}_patches"
+            patch_result = extract_patches_simple(
+                nifti_path=synthesis_result['synthesis_outputs']['nifti'],
+                trk_path=synthesis_result['synthesis_outputs']['trk'],
+                output_dir=patch_output_dir,
+                patch_size=tuple(args.patch_size_3d),
+                num_patches=args.num_patches
+            )
+            
+            if patch_result['success']:
+                print(f"✓ 3D patch extraction completed: {patch_result['n_patches_extracted']}/{args.num_patches} patches")
+                print(f"Output directory: {patch_result['output_dir']}")
+            else:
+                print(f"✗ 3D patch extraction failed")
+        
+        # Run standard visualization stage (if not doing patch extraction, batch processing or patch mode)
+        elif SYNTRACT_AVAILABLE and not args.enable_patch_extraction and not (args.auto_batch_process and 'slice_extraction' in synthesis_result and synthesis_result['slice_extraction']):
+            viz_nifti = synthesis_result['synthesis_outputs']['nifti']
+            viz_trk = synthesis_result['synthesis_outputs']['trk']
             run_visualization_stage(viz_nifti, viz_trk, args)
         
-        # Copy final outputs if requested
-        if not args.skip_synthesis and args.keep_processed:
-            copy_final_outputs(temp_dir, args)
-            result['processed_nifti'] = args.output + "_processed.nii.gz"
-            result['processed_trk'] = args.output + "_processed.trk"
+        # Run legacy patch extraction stage if enabled (and not in patch mode)
+        if args.enable_patch_extraction and not args.patch_mode and SYNTRACT_AVAILABLE:
+            print(f"\n=== Starting Patch Extraction ===")
+            
+            # Collect TRK files for patch extraction
+            trk_files_for_patches = [synthesis_result['synthesis_outputs']['trk']]
+            
+            # Add slice TRK files if they exist
+            if 'slice_extraction' in synthesis_result and synthesis_result['slice_extraction']:
+                slice_output_dir = synthesis_result['slice_extraction']['output_dir']
+                for slice_folder in os.listdir(slice_output_dir):
+                    slice_path = os.path.join(slice_output_dir, slice_folder)
+                    if os.path.isdir(slice_path):
+                        for file in os.listdir(slice_path):
+                            if file.endswith('.trk'):
+                                trk_files_for_patches.append(os.path.join(slice_path, file))
+            
+            print(f"Using {len(trk_files_for_patches)} TRK files for patch extraction")
+            
+            # Run patch extraction
+            patch_results = run_patch_extraction_stage(
+                synthesis_result['synthesis_outputs']['nifti'], 
+                trk_files_for_patches, 
+                args
+            )
+            
+            if patch_results['patches_extracted'] > 0:
+                print(f"✓ Patch extraction completed: {patch_results['patches_extracted']}/{args.total_patches} patches")
+            else:
+                print(f"✗ Patch extraction failed: no patches extracted")
         
         print("\n" + "="*60)
         print("PIPELINE COMPLETED SUCCESSFULLY!")
         print("="*60)
+        print(f"Visualizations saved to: {args.viz_output_dir}")
         
-        if not args.skip_visualization:
-            print(f"Visualizations saved to: {args.viz_output_dir}")
-        if not args.skip_synthesis and args.keep_processed:
-            print(f"Processed files saved with prefix: {args.output}_processed")
-            
-        result['success'] = True
+        return {
+            'success': True,
+            'synthesis_outputs': synthesis_result['synthesis_outputs'],
+            'slice_extraction': synthesis_result.get('slice_extraction'),
+            'visualization_output': args.viz_output_dir
+        }
         
     except Exception as e:
-        error_msg = f"Error in pipeline: {e}"
-        print(error_msg)
-        result['error'] = str(e)
+        print(f"❌ Pipeline failed: {e}")
+        return {'success': False, 'error': str(e)}
     
     finally:
-        # Clean up temporary directory if we created it
-        if cleanup_temp and os.path.exists(temp_dir):
+        # Clean up temporary directory
+        if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
             print(f"Cleaned up temporary directory: {temp_dir}")
-    
-    return result
 
 
 def main():
+    """Main entry point for the syntract console script."""
     parser = argparse.ArgumentParser(
-        description="Combined MRI synthesis and visualization pipeline",
+        description="Streamlined MRI Synthesis and Visualization Pipeline",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic usage - process and visualize
-  python syntract.py --input brain.nii.gz --trk fibers.trk --output results
-
-  # Skip synthesis, only visualize existing files
-  python syntract.py --input brain.nii.gz --trk fibers.trk --output results --skip_synthesis
-
-  # Use ANTs transforms with high-quality visualizations
-  python syntract.py --input brain.nii.gz --trk fibers.trk --output results \\
-    --use_ants --ants_warp warp.nii.gz --ants_iwarp iwarp.nii.gz --ants_aff affine.mat \\
-    --background_preset high_quality --cornucopia_preset realistic_optical
-
-  # Generate spatial subdivisions with custom parameters
-  python syntract.py --input brain.nii.gz --trk fibers.trk --output results \\
-    --use_spatial_subdivisions --n_subdivisions 10 --n_examples 3
+  # Basic processing
+  python syntract.py --input brain.nii.gz --trk fibers.trk
+  
+  # With ANTs transformation
+  python syntract.py --input brain.nii.gz --trk fibers.trk --use_ants \\
+    --ants_warp warp.nii.gz --ants_iwarp iwarp.nii.gz --ants_aff affine.mat
+  
+  # With slice extraction
+  python syntract.py --input brain.nii.gz --trk fibers.trk --slice_count 10
+  
+  # With auto batch processing (processes all slices automatically)
+  python syntract.py --input brain.nii.gz --trk fibers.trk --slice_count 10 --auto_batch_process
+  
+  # With patch extraction (extracts random patches from different brain regions)
+  python syntract.py --input brain.nii.gz --trk fibers.trk --enable_patch_extraction \\
+    --total_patches 100 --patch_size 1024 1024 --min_streamlines_per_patch 5
         """
     )
-
-    # Input/Output arguments
-    parser.add_argument("--input", type=str, required=True, 
-                       help="Path to input NIfTI (.nii or .nii.gz) file")
-    parser.add_argument("--trk", type=str, required=True, 
-                       help="Path to input TRK (.trk) file")
-    parser.add_argument("--output", type=str, default="combined_output", 
-                       help="Base name for output files")
     
-    # Pipeline control
-    parser.add_argument("--skip_synthesis", action="store_true", 
-                       help="Skip synthesis stage and use input files directly for visualization")
-    parser.add_argument("--skip_visualization", action="store_true", 
-                       help="Skip visualization stage, only run synthesis")
-    parser.add_argument("--keep_processed", action="store_true",
-                       help="Keep the processed NIfTI and TRK files from synthesis stage")
+    # Essential input arguments
+    parser.add_argument("--input", required=True, help="Input NIfTI file path")
+    parser.add_argument("--trk", required=True, help="Input TRK file path")
+    parser.add_argument("--output", default="output", help="Output base name")
     
     # Synthesis parameters
-    synthesis_group = parser.add_argument_group('Synthesis Parameters')
-    synthesis_group.add_argument("--voxel_size", type=float, nargs='+', default=[0.5],
-                                help="New voxel size: single value for isotropic or three values for anisotropic")
-    synthesis_group.add_argument("--new_dim", type=int, nargs=3, default=[116, 140, 96], 
-                                help="New image dimensions (x, y, z)")
-    synthesis_group.add_argument("--jobs", type=int, default=8, 
-                                help="Number of parallel jobs (-1 for all CPUs)")
-    synthesis_group.add_argument("--patch_center", type=float, nargs=3, default=None, 
-                                help="Optional patch center in mm")
-    synthesis_group.add_argument("--reduction", type=str, choices=["mip", "mean"], default=None,
-                                help="Optional reduction along z-axis")
-    synthesis_group.add_argument("--use_gpu", type=lambda x: str(x).lower() != 'false', 
-                                nargs='?', const=True, default=True,
-                                help="Use GPU acceleration (default: True)")
-    synthesis_group.add_argument("--cpu", action="store_true", 
-                                help="Force CPU processing (disables GPU)")
-    synthesis_group.add_argument("--interp", type=str, choices=["hermite", "linear", "rbf"], default="hermite",
-                                help="Interpolation method for streamlines")
-    synthesis_group.add_argument("--step_size", type=float, default=0.5, 
-                                help="Step size for streamline densification")
-    synthesis_group.add_argument("--max_gb", type=float, default=64.0,
-                                help="Maximum output size in GB")
+    synthesis_group = parser.add_argument_group("Synthesis Parameters")
+    synthesis_group.add_argument("--new_dim", nargs=3, type=int, default=[116, 140, 96],
+                                help="Target dimensions (X Y Z)")
+    synthesis_group.add_argument("--voxel_size", type=float, default=0.5,
+                                help="Target voxel size in mm")
     
     # ANTs parameters
-    ants_group = parser.add_argument_group('ANTs Transform Parameters')
+    ants_group = parser.add_argument_group("ANTs Transformation")
     ants_group.add_argument("--use_ants", action="store_true", 
-                           help="Use ANTs transforms for processing")
-    ants_group.add_argument("--ants_warp", type=str, default=None, 
-                           help="Path to ANTs warp file")
-    ants_group.add_argument("--ants_iwarp", type=str, default=None, 
-                           help="Path to ANTs inverse warp file")
-    ants_group.add_argument("--ants_aff", type=str, default=None, 
-                           help="Path to ANTs affine file")
-    ants_group.add_argument("--force_dimensions", action="store_true", 
-                           help="Force using specified new_dim even when using ANTs")
-    ants_group.add_argument("--transform_mri_with_ants", action="store_true", 
-                           help="Also transform MRI with ANTs (default: only transforms streamlines)")
+                           help="Use ANTs transformation")
+    ants_group.add_argument("--ants_warp", help="ANTs warp field file")
+    ants_group.add_argument("--ants_iwarp", help="ANTs inverse warp field file")
+    ants_group.add_argument("--ants_aff", help="ANTs affine transformation file")
+    
+    # Slice extraction parameters
+    slice_group = parser.add_argument_group("Slice Extraction")
+    slice_group.add_argument("--slice_count", type=int,
+                            help="Number of coronal slices to extract")
+    slice_group.add_argument("--slice_output_dir", 
+                            help="Directory for slice outputs")
+    slice_group.add_argument("--auto_batch_process", action="store_true",
+                            help="Automatically process all extracted slices through visualization")
+    
+    # Patch extraction parameters
+    patch_group = parser.add_argument_group("Patch Extraction")
+    patch_group.add_argument("--patch_mode", action="store_true",
+                            help="Enable 3D patch extraction mode (replaces slice extraction and disables auto batch)")
+    patch_group.add_argument("--patch_size_3d", type=int, nargs=3, default=[64, 64, 64],
+                            help="3D patch dimensions (x y z) in voxels")
+    patch_group.add_argument("--num_patches", type=int, default=10,
+                            help="Number of patches to extract in patch mode")
+    
+    # Legacy patch extraction (for backward compatibility)
+    patch_group.add_argument("--enable_patch_extraction", action="store_true",
+                            help="Enable legacy patch extraction from processed data")
+    patch_group.add_argument("--patch_output_dir", 
+                            help="Directory for patch outputs")
+    patch_group.add_argument("--total_patches", type=int, default=100,
+                            help="Total number of patches to extract (legacy)")
+    patch_group.add_argument("--patch_size", type=int, nargs='+', default=[128, 128],
+                            help="Patch size - 2D: [width, height] or 3D: [width, height, depth]. "
+                                 "For re-synthesis mode, 3D dimensions become target synthesis size.")
+    patch_group.add_argument("--min_streamlines_per_patch", type=int, default=50,
+                            help="Minimum streamlines per patch (legacy)")
+    patch_group.add_argument("--patch_prefix", default="patch",
+                            help="Prefix for patch files")
     
     # Visualization parameters
-    viz_group = parser.add_argument_group('Visualization Parameters')
-    viz_group.add_argument("--viz_output_dir", type=str, default=None,
-                          help="Output directory for visualizations (default: {output}_visualizations)")
-    viz_group.add_argument("--n_examples", type=int, default=5, 
+    viz_group = parser.add_argument_group("Visualization")
+    viz_group.add_argument("--n_examples", type=int, default=3,
                           help="Number of visualization examples to generate")
     viz_group.add_argument("--viz_prefix", type=str, default="synthetic_", 
                           help="Prefix for visualization files")
-    viz_group.add_argument("--slice_mode", type=str, choices=["coronal", "axial", "sagittal"], default="coronal",
-                          help="Slice orientation for visualization")
-    viz_group.add_argument("--specific_slice", type=int, default=None, 
-                          help="Specific slice number to visualize")
-    viz_group.add_argument("--streamline_percentage", type=float, default=100.0, 
-                          help="Percentage of streamlines to include")
-    viz_group.add_argument("--tract_linewidth", type=float, default=1.0, 
-                          help="Linewidth for tract visualization")
-    viz_group.add_argument("--save_masks", action="store_true", 
-                          help="Save fiber masks along with visualizations")
-    viz_group.add_argument("--use_high_density_masks", action="store_true",
-                          help="Use masks from high-density fibers for all density variations")
-    viz_group.add_argument("--label_bundles", action="store_true",
-                          help="Label distinct fiber bundles in the masks")
-    viz_group.add_argument("--mask_thickness", type=int, default=1,
-                          help="Thickness of the mask lines in pixels")
-    viz_group.add_argument("--min_fiber_percentage", type=float, default=10.0, 
-                          help="Minimum fiber percentage for visualization")
-    viz_group.add_argument("--max_fiber_percentage", type=float, default=100.0, 
-                          help="Maximum fiber percentage for visualization")
-    viz_group.add_argument("--min_bundle_size", type=int, default=20,
-                          help="Minimum bundle size for fiber labeling")
-    viz_group.add_argument("--density_threshold", type=float, default=0.15,
-                          help="Density threshold for fiber visualization")
-    
-    # Enhancement parameters
-    enhancement_group = parser.add_argument_group('Enhancement Parameters')
-    enhancement_group.add_argument("--contrast_method", type=str, default="clahe", 
-                                  help="Contrast enhancement method")
-    enhancement_group.add_argument("--background_preset", type=str, 
-                                  choices=["smooth_realistic", "high_quality", "clinical_appearance", 
-                                          "preserve_edges", "subtle_enhancement", "lpsvd_denoising", 
-                                          "lpsvd_aggressive", "lpsvd_conservative", "hybrid_lpsvd"],
-                                  default="preserve_edges",
-                                  help="Background enhancement preset")
-    enhancement_group.add_argument("--cornucopia_preset", type=str,
-                                  choices=["clean_optical", "realistic_optical", "noisy_optical", 
-                                          "artifact_simulation", "clinical_simulation"],
-                                  default=None,
-                                  help="Cornucopia augmentation preset")
-    enhancement_group.add_argument("--enable_sharpening", action="store_true", default=True,
-                                  help="Enable sharpening in background enhancement")
-    enhancement_group.add_argument("--sharpening_strength", type=float, default=0.5,
-                                  help="Strength of sharpening effect")
-    enhancement_group.add_argument("--close_gaps", action="store_true", 
-                                  help="Close gaps in fiber visualizations")
-    enhancement_group.add_argument("--closing_footprint_size", type=int, default=5, 
-                                  help="Size of morphological closing footprint")
-    
-    # Spatial subdivisions parameters
-    subdivision_group = parser.add_argument_group('Spatial Subdivision Parameters')
-    subdivision_group.add_argument("--use_spatial_subdivisions", action="store_true",
-                                  help="Use spatial subdivisions for visualization generation")
-    subdivision_group.add_argument("--n_subdivisions", type=int, default=8,
-                                  help="Number of spatial subdivisions")
-    subdivision_group.add_argument("--max_streamlines_per_subdivision", type=int, default=50000,
-                                  help="Maximum streamlines per subdivision")
-    
-    # Miscellaneous parameters
-    misc_group = parser.add_argument_group('Miscellaneous Parameters')
-    misc_group.add_argument("--randomize_viz", action="store_true", 
-                           help="Randomize visualization parameters")
-    misc_group.add_argument("--random_state", type=int, default=None, 
-                           help="Random seed for reproducible results")
-    misc_group.add_argument("--temp_dir", type=str, default=None,
-                           help="Temporary directory for intermediate files")
     
     args = parser.parse_args()
     
-    # Validate arguments
-    if args.skip_synthesis and args.skip_visualization:
-        parser.error("Cannot skip both synthesis and visualization stages")
+    # Validate ANTs parameters
+    if args.use_ants:
+        if not all([args.ants_warp, args.ants_iwarp, args.ants_aff]):
+            print("❌ Error: --use_ants requires --ants_warp, --ants_iwarp, and --ants_aff")
+            sys.exit(1)
     
-    if args.use_ants and not all([args.ants_warp, args.ants_iwarp, args.ants_aff]):
-        parser.error("When --use_ants is specified, --ants_warp, --ants_iwarp, and --ants_aff must be provided")
+    # Set up extraction mode
+    enable_slice_extraction = args.slice_count is not None and not args.patch_mode
+    enable_patch_mode = args.patch_mode
+    slice_output_dir = args.slice_output_dir or f"{args.output}_slices"
     
-    # Set up output directory for visualizations
-    if args.viz_output_dir is None:
-        args.viz_output_dir = f"{args.output}_visualizations"
+    # Run the pipeline
+    result = process_syntract(
+        input_nifti=args.input,
+        input_trk=args.trk,
+        output_base=args.output,
+        new_dim=tuple(args.new_dim),
+        voxel_size=args.voxel_size,
+        use_ants=args.use_ants,
+        ants_warp_path=args.ants_warp,
+        ants_iwarp_path=args.ants_iwarp,
+        ants_aff_path=args.ants_aff,
+        slice_count=args.slice_count,
+        enable_slice_extraction=enable_slice_extraction,
+        slice_output_dir=slice_output_dir,
+        use_simplified_slicing=True,
+        force_full_slicing=False,
+        auto_batch_process=args.auto_batch_process,
+        patch_mode=args.patch_mode,
+        patch_size_3d=args.patch_size_3d,
+        num_patches=args.num_patches,
+        enable_patch_extraction=args.enable_patch_extraction,
+        patch_output_dir=args.patch_output_dir,
+        total_patches=args.total_patches,
+        patch_size=args.patch_size,
+        min_streamlines_per_patch=args.min_streamlines_per_patch,
+        patch_prefix=args.patch_prefix,
+        n_examples=args.n_examples,
+        viz_prefix=args.viz_prefix
+    )
     
-    # Set up temporary directory
-    if args.temp_dir:
-        temp_dir = args.temp_dir
-        os.makedirs(temp_dir, exist_ok=True)
-        cleanup_temp = False
-    else:
-        temp_dir = tempfile.mkdtemp(prefix="mri_pipeline_")
-        cleanup_temp = True
-    
-    try:
-        print(f"Combined MRI Processing and Visualization Pipeline")
-        print(f"Input NIfTI: {args.input}")
-        print(f"Input TRK: {args.trk}")
-        print(f"Temporary directory: {temp_dir}")
-        print(f"Final output base: {args.output}")
-        print(f"Visualization output: {args.viz_output_dir}")
-        
-        # Determine which files to use for visualization
-        if args.skip_synthesis:
-            print("\nSkipping synthesis stage - using original files")
-            viz_nifti = args.input
-            viz_trk = args.trk
-        else:
-            # Run synthesis stage
-            viz_nifti, viz_trk = run_synthesis_stage(args, temp_dir)
-        
-        # Run visualization stage
-        if not args.skip_visualization:
-            run_visualization_stage(viz_nifti, viz_trk, args)
-        
-        # Copy final outputs if requested
-        if not args.skip_synthesis and args.keep_processed:
-            copy_final_outputs(temp_dir, args)
-        
-        print("\n" + "="*60)
-        print("PIPELINE COMPLETED SUCCESSFULLY!")
-        print("="*60)
-        
-        if not args.skip_visualization:
-            print(f"Visualizations saved to: {args.viz_output_dir}")
-        if not args.skip_synthesis and args.keep_processed:
-            print(f"Processed files saved with prefix: {args.output}_processed")
-    
-    except Exception as e:
-        print(f"\nError in pipeline: {e}")
+    if not result['success']:
+        print(f"❌ Pipeline failed: {result.get('error', 'Unknown error')}")
         sys.exit(1)
     
-    finally:
-        # Clean up temporary directory if we created it
-        if cleanup_temp and os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-            print(f"Cleaned up temporary directory: {temp_dir}")
+    print("🎉 Pipeline completed successfully!")
 
 
 if __name__ == "__main__":

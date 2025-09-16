@@ -27,13 +27,13 @@ try:
     from .transform import build_new_affine
     from .streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
     from .densify import densify_streamline_subvoxel
-    from .ants_transform import process_with_ants
+    from .ants_transform_updated import process_with_ants_updated
 except ImportError:
     from nifti_preprocessing import resample_nifti
     from transform import build_new_affine
     from streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
     from densify import densify_streamline_subvoxel
-    from ants_transform import process_with_ants
+    from ants_transform_updated import process_with_ants_updated
 from nibabel.streamlines import Tractogram, save as save_trk
 
 
@@ -55,7 +55,12 @@ def process_and_save(
         ants_iwarp_path=None,
         ants_aff_path=None,
         force_dimensions=False,
-        transform_mri_with_ants=False
+        transform_mri_with_ants=False,
+        slice_count=None,
+        enable_slice_extraction=False,
+        slice_output_dir=None,
+        use_simplified_slicing=True,
+        force_full_slicing=False
 ):
     """Process and save NIfTI and streamline data with new parameters."""
     
@@ -97,7 +102,7 @@ def process_and_save(
         if not transform_mri_with_ants:
             print("Note: MRI transformation will be skipped as requested")
         
-        moved_mri, affine_vox2fix, transformed_streamlines, streamlines_voxel = process_with_ants(
+        moved_mri, affine_vox2fix, transformed_streamlines, streamlines_voxel = process_with_ants_updated(
             ants_warp_path, 
             ants_iwarp_path, 
             ants_aff_path, 
@@ -336,6 +341,41 @@ def process_and_save(
     print(f"Saved new .trk => {out_trk_path}")
     print(f"Number of streamlines in final .trk file: {len(new_tractogram)}")
     print("\n==== Synthesis Process Completed Successfully! ====")
+    
+    # Prepare synthesis outputs
+    synthesis_outputs = {
+        'nifti': out_nifti_path,
+        'trk': out_trk_path
+    }
+    
+    # Handle slice extraction if requested
+    slice_extraction_result = None
+    if enable_slice_extraction and slice_count is not None:
+        print(f"\n=== Starting Slice Extraction ===")
+        try:
+            from .slice_simplified import extract_coronal_slices_simple
+            
+            slice_output_dir = slice_output_dir or f"{output_prefix}_slices"
+            slice_result = extract_coronal_slices_simple(
+                nifti_path=out_nifti_path,
+                trk_path=out_trk_path,
+                output_dir=slice_output_dir,
+                n_slices=slice_count
+            )
+            
+            if slice_result['success']:
+                slice_extraction_result = slice_result
+                print(f"✓ Slice extraction completed: {len(slice_result['metadata']['selected_slice_indices'])} slices")
+            else:
+                print(f"✗ Slice extraction failed")
+                
+        except Exception as e:
+            print(f"✗ Slice extraction failed: {e}")
+    
+    return {
+        'synthesis_outputs': synthesis_outputs,
+        'slice_extraction': slice_extraction_result
+    }
 
 def main():
     """Main entry point for the mri-synthesis console script."""
