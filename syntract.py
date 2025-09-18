@@ -397,17 +397,25 @@ def run_patch_extraction_stage(nifti_file, trk_files, args):
                     else:
                         use_gpu_for_synthesis = getattr(args, 'use_gpu', True)
                     
+                    # Debug voxel size
+                    actual_voxel_size = args.voxel_size if hasattr(args, 'voxel_size') else 0.5
+                    actual_step_size = args.voxel_size if hasattr(args, 'voxel_size') else 0.5
+                    print(f"  📏 Debug voxel size parameters:")
+                    print(f"      args.voxel_size: {getattr(args, 'voxel_size', 'NOT_SET')}")
+                    print(f"      actual_voxel_size: {actual_voxel_size}")
+                    print(f"      actual_step_size: {actual_step_size}")
+                    
                     synthesis_result = process_and_save(
                         original_nifti_path=nifti_file,
                         original_trk_path=base_trk_file,
-                        target_voxel_size=args.voxel_size if hasattr(args, 'voxel_size') else 0.5,
+                        target_voxel_size=actual_voxel_size,
                         target_dimensions=patch_dimensions,
                         output_prefix=temp_output,
                         num_jobs=getattr(args, 'num_jobs', 8),
                         patch_center=patch_center_world.tolist(),  # Use world coordinates for centering
                         use_gpu=use_gpu_for_synthesis,
-                        interpolation_method=getattr(args, 'interpolation_method', 'hermite'),
-                        step_size=args.voxel_size if hasattr(args, 'voxel_size') else 0.5,
+                        interpolation_method='rbf',  # Use RBF for better curvature preservation
+                        step_size=actual_step_size,
                         max_output_gb=getattr(args, 'max_output_gb', 64.0),
                         use_ants=False,  # Skip ANTs since already applied to base files
                         force_dimensions=True
@@ -621,10 +629,45 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
         print(f"Input TRK: {input_trk}")
         print(f"Output base: {output_base}")
         
-        # Check if patch extraction is enabled
+        # Always run base synthesis first to create files at target dimensions
+        print("\n🧠 Running base synthesis...")
+        from synthesis.main import process_and_save
+        
+        synthesis_result = process_and_save(
+            original_nifti_path=input_nifti,
+            original_trk_path=input_trk,
+            target_voxel_size=voxel_size,
+            target_dimensions=new_dim,
+            output_prefix=output_base,
+            use_ants=use_ants,
+            ants_warp_path=ants_warp_path,
+            ants_iwarp_path=ants_iwarp_path,
+            ants_aff_path=ants_aff_path,
+            step_size=voxel_size,  # CRITICAL: Match step size to voxel size for curvature preservation
+            interpolation_method='hermite'  # Use Hermite for base synthesis too
+        )
+        
+        # Check if patch extraction is enabled (after base synthesis)
         if enable_patch_extraction:
             print("\n📦 Patch extraction enabled - starting patch processing...")
-            patch_result = run_patch_extraction_stage(input_nifti, [input_trk], 
+            
+            # Use the synthesized files as input for patch extraction
+            base_nifti = f"{output_base}.nii.gz"
+            base_trk = f"{output_base}.trk"
+            
+            if not os.path.exists(base_nifti) or not os.path.exists(base_trk):
+                print(f"⚠️  Base synthesis files not found:")
+                print(f"    Expected NIfTI: {base_nifti}")
+                print(f"    Expected TRK: {base_trk}")
+                print(f"    Using original files instead")
+                base_nifti = input_nifti
+                base_trk = input_trk
+            else:
+                print(f"✅ Using synthesized base files:")
+                print(f"    Base NIfTI: {base_nifti}")
+                print(f"    Base TRK: {base_trk}")
+            
+            patch_result = run_patch_extraction_stage(base_nifti, [base_trk], 
                 argparse.Namespace(**{
                     'patch_size': patch_size,
                     'total_patches': total_patches,
@@ -644,22 +687,6 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                 }))
             
             return {'success': True, 'stage': 'patch_extraction', 'result': patch_result}
-        
-        # If no patch extraction, run regular synthesis
-        print("\n🧠 Running regular synthesis...")
-        from synthesis.main import process_and_save
-        
-        synthesis_result = process_and_save(
-            original_nifti_path=input_nifti,
-            original_trk_path=input_trk,
-            target_voxel_size=voxel_size,
-            target_dimensions=new_dim,
-            output_prefix=output_base,
-            use_ants=use_ants,
-            ants_warp_path=ants_warp_path,
-            ants_iwarp_path=ants_iwarp_path,
-            ants_aff_path=ants_aff_path
-        )
         
         return {'success': True, 'stage': 'synthesis', 'result': synthesis_result}
         

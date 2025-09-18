@@ -647,22 +647,43 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                 xi = np.asarray(xi)
 
         if interp_method == 'hermite':
+            # Calculate tangents preserving natural streamline curvature
             tangents = xp.zeros_like(streamline_device)
-            base_scale = 1.0
-            voxel_scale = (1.0 / max(0.01, voxel_size))
-            voxel_scale = min(5.0, voxel_scale)
-            final_scale = base_scale * voxel_scale
+            
+            # Calculate local segment lengths for adaptive scaling
+            segment_lengths_for_tangents = xp.sqrt(xp.sum(diffs**2, axis=1))
+            
+            # Calculate natural tangent vectors with aggressive scaling to preserve curvature
             for i in range(1, len(streamline_device) - 1):
-                pt_prev = streamline_device[i-1]
-                pt_next = streamline_device[i+1]
-                tangent = (pt_next - pt_prev) * 0.5
-                tangents[i] = tangent * final_scale
-            tangents[0] = (streamline_device[1] - streamline_device[0]) * final_scale
-            tangents[-1] = (streamline_device[-1] - streamline_device[-2]) * final_scale
-            tangent_norms = xp.sqrt(xp.sum(tangents**2, axis=1, keepdims=True))
-            tangent_norms = xp.where(tangent_norms > 1e-10, tangent_norms, 1e-10)
-            normalization_factor = max(0.5, min(1.0, voxel_size))
-            tangents = tangents / (tangent_norms * normalization_factor)
+                # Use central difference for smooth tangents
+                raw_tangent = (streamline_device[i+1] - streamline_device[i-1]) * 0.5
+                
+                # Local adaptive scaling based on nearby segment lengths
+                # Use a small window around current point to get local characteristics
+                window_start = max(0, i - 2)
+                window_end = min(len(segment_lengths_for_tangents), i + 1)
+                local_segments = segment_lengths_for_tangents[window_start:window_end]
+                local_mean_length = xp.mean(local_segments)
+                
+                # MUCH more aggressive scaling to preserve curvature
+                # The previous 0.3 scaling was far too conservative
+                local_scale = local_mean_length * 1.0  # More moderate scaling
+                tangents[i] = raw_tangent * local_scale
+            
+            # Handle endpoints with matching moderate scaling
+            # Start point
+            if len(segment_lengths_for_tangents) > 0:
+                start_scale = segment_lengths_for_tangents[0] * 1.0
+            else:
+                start_scale = 1.0
+            tangents[0] = (streamline_device[1] - streamline_device[0]) * start_scale
+            
+            # End point  
+            if len(segment_lengths_for_tangents) > 0:
+                end_scale = segment_lengths_for_tangents[-1] * 1.0
+            else:
+                end_scale = 1.0
+            tangents[-1] = (streamline_device[-1] - streamline_device[-2]) * end_scale
 
         if interp_method == 'rbf':
             try:
