@@ -47,7 +47,7 @@ def process_and_save(
         patch_center=None,
         reduction_method=None,
         use_gpu=True,
-        interpolation_method='hermite',
+        interpolation_method='rbf',
         step_size=0.5,
         max_output_gb=64.0,
         use_ants=False,
