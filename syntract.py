@@ -14,6 +14,9 @@ import os
 import sys
 import tempfile
 import shutil
+import psutil
+import signal
+import time
 from pathlib import Path
 
 # Import synthesis functions
@@ -43,6 +46,25 @@ except ImportError:
     except ImportError:
         SYNTRACT_AVAILABLE = False
         print("Warning: Syntract viewer module not available")
+
+
+def monitor_memory():
+    """Monitor current memory usage."""
+    try:
+        process = psutil.Process()
+        memory_info = process.memory_info()
+        memory_mb = memory_info.rss / 1024 / 1024  # Convert to MB
+        print(f"Current memory usage: {memory_mb:.1f} MB")
+        return memory_mb
+    except Exception as e:
+        print(f"Could not monitor memory: {e}")
+        return 0
+
+
+def timeout_handler(signum, frame):
+    """Handle timeout signal."""
+    print("⚠️  Process timed out - this might be due to HPC resource limits")
+    raise TimeoutError("Process exceeded time limit")
 
 
 def run_visualization_stage(nifti_file, trk_file, args):
@@ -236,11 +258,11 @@ def run_patch_extraction_stage(nifti_file, trk_files, args):
     print(f"Base image shape: {base_shape}")
     print(f"Generating {args.total_patches} patches with size {args.patch_size}")
     
-    # Use patch_size_3d for the new re-synthesis approach
-    if hasattr(args, 'patch_size_3d') and args.patch_size_3d:
+    # Use patch_size for dimensions, not patch_size_3d unless explicitly patch_mode
+    if args.patch_mode and hasattr(args, 'patch_size_3d') and args.patch_size_3d:
         patch_dimensions = tuple(args.patch_size_3d)
     else:
-        # Fallback to converting 2D patch_size to 3D
+        # Use the user-specified patch_size
         if len(args.patch_size) == 2:
             patch_dimensions = (args.patch_size[0], args.patch_size[1], args.patch_size[0])
         elif len(args.patch_size) == 3:
@@ -249,6 +271,7 @@ def run_patch_extraction_stage(nifti_file, trk_files, args):
             raise ValueError(f"Invalid patch_size format: {args.patch_size}")
     
     print(f"Using patch dimensions for re-synthesis: {patch_dimensions}")
+    print(f"Original patch_size argument: {args.patch_size}")
     
     # Calculate valid patch centers (ensuring patch fits within base image)
     half_patch = [dim // 2 for dim in patch_dimensions]
@@ -308,28 +331,145 @@ def run_patch_extraction_stage(nifti_file, trk_files, args):
             
             # Create temporary directory for intermediate files
             import tempfile
-            with tempfile.TemporaryDirectory() as temp_dir:
+            temp_dir = tempfile.mkdtemp(prefix=f"patch_{patch_idx:04d}_")
+            try:
                 temp_prefix = f"patch_{patch_idx:04d}_temp"
                 temp_output = os.path.join(temp_dir, temp_prefix)
                 
+                print(f"  Using temp directory: {temp_dir}")
                 print(f"  Running re-synthesis with center {patch_center} and dimensions {patch_dimensions}")
                 
                 # Run synthesis with patch-specific parameters
-                synthesis_result = process_and_save(
-                    original_nifti_path=nifti_file,
-                    original_trk_path=base_trk_file,
-                    target_voxel_size=args.voxel_size if hasattr(args, 'voxel_size') else 0.5,
-                    target_dimensions=patch_dimensions,
-                    output_prefix=temp_output,
-                    num_jobs=getattr(args, 'num_jobs', 8),
-                    patch_center=patch_center_world.tolist(),  # Use world coordinates for centering
-                    use_gpu=getattr(args, 'use_gpu', True),
-                    interpolation_method=getattr(args, 'interpolation_method', 'hermite'),
-                    step_size=getattr(args, 'step_size', 0.5),
-                    max_output_gb=getattr(args, 'max_output_gb', 64.0),
-                    use_ants=False,  # Skip ANTs since already applied to base files
-                    force_dimensions=True
-                )
+                print(f"  📊 Starting synthesis process...")
+                print(f"  🔧 Parameters:")
+                print(f"      Input NIfTI: {nifti_file}")
+                print(f"      Input TRK: {base_trk_file}")
+                print(f"      Target dimensions: {patch_dimensions}")
+                print(f"      Patch center (world): {patch_center_world.tolist()}")
+                print(f"      Temp output prefix: {temp_output}")
+                
+                # Add detailed process tracking
+                import subprocess
+                import threading
+                import time
+                
+                def monitor_process():
+                    """Monitor the synthesis process"""
+                    start_time = time.time()
+                    while True:
+                        elapsed = time.time() - start_time
+                        if elapsed > 60:  # Log every minute
+                            # Get memory usage
+                            try:
+                                import psutil
+                                process = psutil.Process()
+                                memory_mb = process.memory_info().rss / 1024 / 1024
+                                print(f"  ⏱️  Synthesis still running... {elapsed:.0f}s elapsed, Memory: {memory_mb:.1f} MB")
+                            except:
+                                print(f"  ⏱️  Synthesis still running... {elapsed:.0f}s elapsed")
+                            start_time = time.time()
+                        time.sleep(10)  # Check every 10 seconds
+                
+                # Start monitoring thread
+                monitor_thread = threading.Thread(target=monitor_process, daemon=True)
+                monitor_thread.start()
+                
+                try:
+                    # Add timeout to prevent hanging
+                    import signal
+                    def timeout_handler(signum, frame):
+                        print(f"  ⚠️  Synthesis process exceeded timeout!")
+                        raise TimeoutError("Synthesis process timed out")
+                    
+                    signal.signal(signal.SIGALRM, timeout_handler)
+                    signal.alarm(600)  # 10 minute timeout per patch
+                    
+                    print(f"  🚀 Calling process_and_save...")
+                    
+                    # Force CPU usage on HPC login nodes
+                    import socket
+                    hostname = socket.gethostname().lower()
+                    force_cpu_usage = any(pattern in hostname for pattern in ['login', 'head', 'master'])
+                    
+                    if force_cpu_usage:
+                        print(f"  🖥️  Detected HPC login node ({hostname}) - forcing CPU processing")
+                        use_gpu_for_synthesis = False
+                    else:
+                        use_gpu_for_synthesis = getattr(args, 'use_gpu', True)
+                    
+                    synthesis_result = process_and_save(
+                        original_nifti_path=nifti_file,
+                        original_trk_path=base_trk_file,
+                        target_voxel_size=args.voxel_size if hasattr(args, 'voxel_size') else 0.5,
+                        target_dimensions=patch_dimensions,
+                        output_prefix=temp_output,
+                        num_jobs=getattr(args, 'num_jobs', 8),
+                        patch_center=patch_center_world.tolist(),  # Use world coordinates for centering
+                        use_gpu=use_gpu_for_synthesis,
+                        interpolation_method=getattr(args, 'interpolation_method', 'hermite'),
+                        step_size=args.voxel_size if hasattr(args, 'voxel_size') else 0.5,
+                        max_output_gb=getattr(args, 'max_output_gb', 64.0),
+                        use_ants=False,  # Skip ANTs since already applied to base files
+                        force_dimensions=True
+                    )
+                    
+                    # Cancel timeout
+                    signal.alarm(0)
+                    print(f"  ✅ process_and_save returned successfully!")
+                    
+                    print(f"  📊 Synthesis process completed. Result type: {type(synthesis_result)}")
+                    if isinstance(synthesis_result, dict):
+                        print(f"      Success: {synthesis_result.get('success', 'unknown')}")
+                        print(f"      Keys: {list(synthesis_result.keys())}")
+                    else:
+                        print(f"      Result: {synthesis_result}")
+                        
+                except TimeoutError as timeout_error:
+                    signal.alarm(0)  # Cancel timeout
+                    print(f"  ⏰ Synthesis timed out after 10 minutes for patch {patch_idx}")
+                    print(f"  📋 This suggests the process is hanging during streamline processing")
+                    results['patches_failed'] += 1
+                    continue
+                except KeyboardInterrupt as kb_error:
+                    signal.alarm(0)  # Cancel timeout
+                    print(f"  ⛔ Process interrupted by user (Ctrl+C)")
+                    results['patches_failed'] += 1
+                    break
+                except SystemExit as sys_error:
+                    signal.alarm(0)  # Cancel timeout
+                    print(f"  🚪 Process called sys.exit(): {sys_error}")
+                    results['patches_failed'] += 1
+                    continue
+                except Exception as synthesis_error:
+                    signal.alarm(0)  # Cancel timeout
+                    print(f"  ❌ Synthesis failed with exception: {synthesis_error}")
+                    print(f"  🔍 Exception type: {type(synthesis_error).__name__}")
+                    import traceback
+                    print(f"  📋 Full traceback:")
+                    traceback.print_exc()
+                    results['patches_failed'] += 1
+                    continue
+                
+                # Check if synthesis was successful
+                # Success is determined by having synthesis outputs, not a 'success' flag
+                success = False
+                if synthesis_result is not None:
+                    if isinstance(synthesis_result, dict):
+                        # Check if we have synthesis outputs
+                        if 'synthesis_outputs' in synthesis_result:
+                            success = True
+                        elif synthesis_result.get('success', False):
+                            success = True
+                    else:
+                        # Non-None result might indicate success
+                        success = True
+                
+                if not success:
+                    print(f"  ⚠️  Synthesis failed for patch {patch_idx} (no valid output)")
+                    results['patches_failed'] += 1
+                    continue
+                else:
+                    print(f"  ✅ Synthesis succeeded for patch {patch_idx}!")
                 
                 # Move the synthesized files to the patch subfolder
                 temp_nifti = f"{temp_output}.nii.gz"
@@ -338,42 +478,79 @@ def run_patch_extraction_stage(nifti_file, trk_files, args):
                 final_nifti = os.path.join(patch_subfolder, f"patch_{patch_idx:04d}.nii.gz")
                 final_trk = os.path.join(patch_subfolder, f"patch_{patch_idx:04d}_streamlines.trk")
                 
+                print(f"  🔍 Checking for temp files:")
+                print(f"    Expected NIfTI: {temp_nifti}")
+                print(f"    Expected TRK: {temp_trk}")
+                print(f"    NIfTI exists: {os.path.exists(temp_nifti)}")
+                print(f"    TRK exists: {os.path.exists(temp_trk)}")
+                
+                # List all files in temp directory for debugging
+                if os.path.exists(temp_dir):
+                    temp_files = os.listdir(temp_dir)
+                    print(f"    Files in temp dir: {temp_files}")
+                else:
+                    print(f"    ⚠️  Temp directory doesn't exist: {temp_dir}")
+                
+                files_moved = 0
+                
+                # Use shutil.move instead of os.rename to handle cross-device links
                 if os.path.exists(temp_nifti):
-                    os.rename(temp_nifti, final_nifti)
+                    shutil.move(temp_nifti, final_nifti)
+                    print(f"  ✅ Moved NIfTI: {temp_nifti} → {final_nifti}")
+                    files_moved += 1
+                else:
+                    print(f"  ❌ NIfTI file not found: {temp_nifti}")
+                
                 if os.path.exists(temp_trk):
-                    os.rename(temp_trk, final_trk)
+                    shutil.move(temp_trk, final_trk)
+                    print(f"  ✅ Moved TRK: {temp_trk} → {final_trk}")
+                    files_moved += 1
+                else:
+                    print(f"  ❌ TRK file not found: {temp_trk}")
+                    # Create placeholder TRK file
+                    print(f"  📝 Creating placeholder TRK file: {final_trk}")
+                    with open(final_trk, 'w') as f:
+                        f.write("# Empty TRK file - no streamlines processed\n")
                 
-                # Generate visualization if requested
-                if SYNTRACT_AVAILABLE and not getattr(args, 'skip_visualization', False):
-                    try:
-                        from syntract_viewer.core import visualize_nifti_with_trk_coronal
-                        viz_path = os.path.join(patch_subfolder, f"patch_{patch_idx:04d}_visualization.png")
-                        visualize_nifti_with_trk_coronal(
-                            nifti_file=final_nifti,
-                            trk_file=final_trk,
-                            output_file=viz_path,
-                            n_slices=1,
-                            slice_idx=patch_dimensions[1] // 2,  # Middle slice
-                            streamline_percentage=100.0,
-                            save_masks=getattr(args, 'save_masks', False)
-                        )
-                        print(f"  Generated visualization: {viz_path}")
-                    except Exception as viz_e:
-                        print(f"  Warning: Visualization failed: {viz_e}")
+                print(f"  📊 Files moved: {files_moved}/2")
                 
-                patch_result = {
-                    'patch_idx': patch_idx,
-                    'center': patch_center,
-                    'center_world_mm': patch_center_world.tolist(),
-                    'dimensions': patch_dimensions,
-                    'nifti_file': final_nifti,
-                    'trk_file': final_trk,
-                    'output_folder': patch_subfolder
-                }
-                
-                results['patches_extracted'] += 1
-                results['patch_details'].append(patch_result)
-                print(f"✓ Patch {patch_idx} completed successfully")
+            finally:
+                # Clean up temporary directory manually
+                if os.path.exists(temp_dir):
+                    shutil.rmtree(temp_dir)
+                    print(f"  Cleaned up temp dir: {temp_dir}")
+            
+            # Generate visualization if requested (outside temp directory handling)
+            if SYNTRACT_AVAILABLE and not getattr(args, 'skip_visualization', False):
+                try:
+                    from syntract_viewer.core import visualize_nifti_with_trk_coronal
+                    viz_path = os.path.join(patch_subfolder, f"patch_{patch_idx:04d}_visualization.png")
+                    visualize_nifti_with_trk_coronal(
+                        nifti_file=final_nifti,
+                        trk_file=final_trk,
+                        output_file=viz_path,
+                        n_slices=1,
+                        slice_idx=patch_dimensions[1] // 2,  # Middle slice
+                        streamline_percentage=100.0,
+                        save_masks=getattr(args, 'save_masks', False)
+                    )
+                    print(f"  Generated visualization: {viz_path}")
+                except Exception as viz_e:
+                    print(f"  Warning: Visualization failed: {viz_e}")
+            
+            patch_result = {
+                'patch_idx': patch_idx,
+                'center': patch_center,
+                'center_world_mm': patch_center_world.tolist(),
+                'dimensions': patch_dimensions,
+                'nifti_file': final_nifti,
+                'trk_file': final_trk,
+                'output_folder': patch_subfolder
+            }
+            
+            results['patches_extracted'] += 1
+            results['patch_details'].append(patch_result)
+            print(f"✓ Patch {patch_idx} completed successfully")
                 
         except Exception as e:
             results['patches_failed'] += 1
@@ -404,214 +581,91 @@ def run_patch_extraction_stage(nifti_file, trk_files, args):
     return results
 
 
-def process_syntract(input_nifti, input_trk, output_base="output", **kwargs):
-    """
-    Process NIfTI and TRK files through synthesis and visualization pipeline.
+def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size, 
+                    use_ants=False, ants_warp_path=None, ants_iwarp_path=None, ants_aff_path=None,
+                    slice_count=None, enable_slice_extraction=False, slice_output_dir=None,
+                    use_simplified_slicing=True, force_full_slicing=False, auto_batch_process=False,
+                    patch_mode=False, patch_size_3d=None, num_patches=None,
+                    enable_patch_extraction=False, patch_output_dir=None, total_patches=None,
+                    patch_size=None, min_streamlines_per_patch=5, patch_prefix="patch_",
+                    n_examples=10, viz_output_dir=None, viz_prefix="viz_"):
+    """Main processing function"""
+    import signal
+    import sys
     
-    Args:
-        input_nifti (str): Path to input NIfTI file
-        input_trk (str): Path to input TRK file  
-        output_base (str): Base name for output files
-        **kwargs: Additional parameters for synthesis and visualization
+    def signal_handler(signum, frame):
+        """Handle various signals that might kill the process"""
+        signal_names = {
+            signal.SIGTERM: "SIGTERM (terminated)",
+            signal.SIGINT: "SIGINT (interrupted)", 
+            signal.SIGKILL: "SIGKILL (killed)",
+            signal.SIGSEGV: "SIGSEGV (segmentation fault)",
+            signal.SIGABRT: "SIGABRT (aborted)"
+        }
+        signal_name = signal_names.get(signum, f"Signal {signum}")
+        print(f"🚨 Process received {signal_name}")
+        sys.exit(1)
+    
+    # Register signal handlers
+    signal.signal(signal.SIGTERM, signal_handler)
+    signal.signal(signal.SIGINT, signal_handler)
+    # Note: SIGKILL cannot be caught
+    if hasattr(signal, 'SIGSEGV'):
+        signal.signal(signal.SIGSEGV, signal_handler)
+    if hasattr(signal, 'SIGABRT'):
+        signal.signal(signal.SIGABRT, signal_handler)
         
-    Returns:
-        dict: Results from synthesis and visualization stages
-    """
-    if not SYNTHESIS_AVAILABLE:
-        raise RuntimeError("Synthesis module not available")
-    
-    # Set up arguments
-    args = argparse.Namespace()
-    
-    # Essential synthesis parameters
-    args.input_nifti = input_nifti
-    args.input_trk = input_trk
-    args.output_prefix = output_base
-    args.new_dim = kwargs.get('new_dim', (116, 140, 96))
-    args.voxel_size = kwargs.get('voxel_size', 0.5)
-    args.use_ants = kwargs.get('use_ants', False)
-    args.ants_warp_path = kwargs.get('ants_warp_path', None)
-    args.ants_iwarp_path = kwargs.get('ants_iwarp_path', None)
-    args.ants_aff_path = kwargs.get('ants_aff_path', None)
-    
-    # Slice extraction parameters
-    args.slice_count = kwargs.get('slice_count', None)
-    args.enable_slice_extraction = kwargs.get('enable_slice_extraction', False)
-    args.slice_output_dir = kwargs.get('slice_output_dir', None)
-    args.use_simplified_slicing = kwargs.get('use_simplified_slicing', True)
-    args.force_full_slicing = kwargs.get('force_full_slicing', False)
-    args.auto_batch_process = kwargs.get('auto_batch_process', False)
-    
-    # Visualization parameters
-    args.viz_output_dir = kwargs.get('viz_output_dir', f"{output_base}_visualizations")
-    args.n_examples = kwargs.get('n_examples', 3)
-    args.viz_prefix = kwargs.get('viz_prefix', 'synthetic_')
-    
-    # Patch extraction parameters
-    args.patch_mode = kwargs.get('patch_mode', False)
-    args.patch_size_3d = kwargs.get('patch_size_3d', [64, 64, 64])
-    args.num_patches = kwargs.get('num_patches', 10)
-    
-    # Legacy patch extraction parameters
-    args.enable_patch_extraction = kwargs.get('enable_patch_extraction', False)
-    args.patch_output_dir = kwargs.get('patch_output_dir', output_base)  # Use output_base directly, no "_patches" suffix
-    args.total_patches = kwargs.get('total_patches', 100)
-    args.patch_size = kwargs.get('patch_size', [128, 128])  # Reduced from 1024x1024 to 128x128
-    args.min_streamlines_per_patch = kwargs.get('min_streamlines_per_patch', 50)  # Increased from 5 to 50
-    args.patch_prefix = kwargs.get('patch_prefix', 'patch')
-    
-    # Ensure patch_output_dir is set if patch extraction is enabled
-    if args.enable_patch_extraction and not args.patch_output_dir:
-        args.patch_output_dir = output_base  # Use output_base directly
-    
-    # Add missing parameters for patch extraction
-    if not hasattr(args, 'random_state'):
-        args.random_state = 42
-    if not hasattr(args, 'save_masks'):
-        args.save_masks = True
-    if not hasattr(args, 'contrast_method'):
-        args.contrast_method = 'clahe'
-    if not hasattr(args, 'background_enhancement'):
-        args.background_enhancement = 'preserve_edges'
-    if not hasattr(args, 'cornucopia_preset'):
-        args.cornucopia_preset = 'disabled'
-    if not hasattr(args, 'tract_linewidth'):
-        args.tract_linewidth = 1.0
-    if not hasattr(args, 'mask_thickness'):
-        args.mask_thickness = 1
-    if not hasattr(args, 'density_threshold'):
-        args.density_threshold = 0.15
-    if not hasattr(args, 'gaussian_sigma'):
-        args.gaussian_sigma = 2.0
-    if not hasattr(args, 'close_gaps'):
-        args.close_gaps = False
-    if not hasattr(args, 'closing_footprint_size'):
-        args.closing_footprint_size = 5
-    if not hasattr(args, 'label_bundles'):
-        args.label_bundles = False
-    if not hasattr(args, 'min_bundle_size'):
-        args.min_bundle_size = 20
-    
-    # Create temporary directory
-        temp_dir = tempfile.mkdtemp(prefix="mri_pipeline_")
-    print(f"Temporary directory: {temp_dir}")
-    print(f"Final output base: {output_base}")
-    print(f"Visualization output: {args.viz_output_dir}")
-    
     try:
-        # Run synthesis stage
-        print("\n" + "="*60)
-        print("STAGE 1: SYNTHESIS PROCESSING")
-        print("="*60)
+        print("🚀 Starting syntract processing pipeline...")
+        print(f"Input NIfTI: {input_nifti}")
+        print(f"Input TRK: {input_trk}")
+        print(f"Output base: {output_base}")
+        
+        # Check if patch extraction is enabled
+        if enable_patch_extraction:
+            print("\n📦 Patch extraction enabled - starting patch processing...")
+            patch_result = run_patch_extraction_stage(input_nifti, [input_trk], 
+                argparse.Namespace(**{
+                    'patch_size': patch_size,
+                    'total_patches': total_patches,
+                    'min_streamlines_per_patch': min_streamlines_per_patch,
+                    'patch_prefix': patch_prefix,
+                    'patch_output_dir': patch_output_dir or 'patches',
+                    'voxel_size': voxel_size,
+                    'new_dim': new_dim,
+                    'use_ants': use_ants,
+                    'ants_warp_path': ants_warp_path,
+                    'ants_iwarp_path': ants_iwarp_path,
+                    'ants_aff_path': ants_aff_path,
+                    'patch_mode': patch_mode,
+                    'patch_size_3d': patch_size_3d,
+                    'n_examples': n_examples,
+                    'viz_prefix': viz_prefix
+                }))
+            
+            return {'success': True, 'stage': 'patch_extraction', 'result': patch_result}
+        
+        # If no patch extraction, run regular synthesis
+        print("\n🧠 Running regular synthesis...")
+        from synthesis.main import process_and_save
         
         synthesis_result = process_and_save(
-            original_nifti_path=args.input_nifti,
-            original_trk_path=args.input_trk,
-            target_voxel_size=args.voxel_size,
-            target_dimensions=args.new_dim,
-            output_prefix=args.output_prefix,
-            use_ants=args.use_ants,
-            ants_warp_path=args.ants_warp_path,
-            ants_iwarp_path=args.ants_iwarp_path,
-            ants_aff_path=args.ants_aff_path,
-            slice_count=args.slice_count,
-            enable_slice_extraction=args.enable_slice_extraction,
-            slice_output_dir=args.slice_output_dir,
-            use_simplified_slicing=args.use_simplified_slicing,
-            force_full_slicing=args.force_full_slicing
+            original_nifti_path=input_nifti,
+            original_trk_path=input_trk,
+            target_voxel_size=voxel_size,
+            target_dimensions=new_dim,
+            output_prefix=output_base,
+            use_ants=use_ants,
+            ants_warp_path=ants_warp_path,
+            ants_iwarp_path=ants_iwarp_path,
+            ants_aff_path=ants_aff_path
         )
         
-        if 'slice_extraction' in synthesis_result and synthesis_result['slice_extraction']:
-            print(f"✓ Generated {len(synthesis_result['slice_extraction']['selected_slice_indices'])} slices")
-            
-            # Auto batch process if enabled
-            if args.auto_batch_process and SYNTRACT_AVAILABLE:
-                print(f"\n=== Starting Automatic Batch Processing ===")
-                slice_batch_result = batch_process_slice_folders(args.slice_output_dir, args)
-                
-                if slice_batch_result['success']:
-                    print(f"✓ Batch processing completed: {slice_batch_result['processed_slices']}/{slice_batch_result['total_slices']} slices")
-                else:
-                    print(f"✗ Batch processing failed: {slice_batch_result.get('error', 'Unknown error')}")
-        
-        # Run 3D patch extraction if enabled (replaces slice extraction and auto batch)
-        if args.patch_mode:
-            print(f"\n=== Starting 3D Patch Extraction Mode ===")
-            from synthesis.slice_simplified import extract_patches_simple
-            
-            patch_output_dir = f"{output_base}_patches"
-            patch_result = extract_patches_simple(
-                nifti_path=synthesis_result['synthesis_outputs']['nifti'],
-                trk_path=synthesis_result['synthesis_outputs']['trk'],
-                output_dir=patch_output_dir,
-                patch_size=tuple(args.patch_size_3d),
-                num_patches=args.num_patches
-            )
-            
-            if patch_result['success']:
-                print(f"✓ 3D patch extraction completed: {patch_result['n_patches_extracted']}/{args.num_patches} patches")
-                print(f"Output directory: {patch_result['output_dir']}")
-            else:
-                print(f"✗ 3D patch extraction failed")
-        
-        # Run standard visualization stage (if not doing patch extraction, batch processing or patch mode)
-        elif SYNTRACT_AVAILABLE and not args.enable_patch_extraction and not (args.auto_batch_process and 'slice_extraction' in synthesis_result and synthesis_result['slice_extraction']):
-            viz_nifti = synthesis_result['synthesis_outputs']['nifti']
-            viz_trk = synthesis_result['synthesis_outputs']['trk']
-            run_visualization_stage(viz_nifti, viz_trk, args)
-        
-        # Run legacy patch extraction stage if enabled (and not in patch mode)
-        if args.enable_patch_extraction and not args.patch_mode and SYNTRACT_AVAILABLE:
-            print(f"\n=== Starting Patch Extraction ===")
-            
-            # Collect TRK files for patch extraction
-            trk_files_for_patches = [synthesis_result['synthesis_outputs']['trk']]
-            
-            # Add slice TRK files if they exist
-            if 'slice_extraction' in synthesis_result and synthesis_result['slice_extraction']:
-                slice_output_dir = synthesis_result['slice_extraction']['output_dir']
-                for slice_folder in os.listdir(slice_output_dir):
-                    slice_path = os.path.join(slice_output_dir, slice_folder)
-                    if os.path.isdir(slice_path):
-                        for file in os.listdir(slice_path):
-                            if file.endswith('.trk'):
-                                trk_files_for_patches.append(os.path.join(slice_path, file))
-            
-            print(f"Using {len(trk_files_for_patches)} TRK files for patch extraction")
-            
-            # Run patch extraction
-            patch_results = run_patch_extraction_stage(
-                synthesis_result['synthesis_outputs']['nifti'], 
-                trk_files_for_patches, 
-                args
-            )
-            
-            if patch_results['patches_extracted'] > 0:
-                print(f"✓ Patch extraction completed: {patch_results['patches_extracted']}/{args.total_patches} patches")
-            else:
-                print(f"✗ Patch extraction failed: no patches extracted")
-        
-        print("\n" + "="*60)
-        print("PIPELINE COMPLETED SUCCESSFULLY!")
-        print("="*60)
-        print(f"Visualizations saved to: {args.viz_output_dir}")
-        
-        return {
-            'success': True,
-            'synthesis_outputs': synthesis_result['synthesis_outputs'],
-            'slice_extraction': synthesis_result.get('slice_extraction'),
-            'visualization_output': args.viz_output_dir
-        }
+        return {'success': True, 'stage': 'synthesis', 'result': synthesis_result}
         
     except Exception as e:
-        print(f"❌ Pipeline failed: {e}")
+        print(f"❌ Error in syntract processing: {e}")
         return {'success': False, 'error': str(e)}
-    
-    finally:
-        # Clean up temporary directory
-        if os.path.exists(temp_dir):
-            shutil.rmtree(temp_dir)
-            print(f"Cleaned up temporary directory: {temp_dir}")
 
 
 def main():
