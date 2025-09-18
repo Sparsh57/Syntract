@@ -53,7 +53,31 @@ class GPUSupport:
             self.initialize(verbose=False)
             
         if prefer_gpu and self.cupy_available:
-            return self.cupy
+            # Test if CuPy can actually create arrays (has GPU device)
+            try:
+                import cupy as cp
+                # Check if CUDA devices are available
+                device_count = cp.cuda.runtime.getDeviceCount()
+                if device_count == 0:
+                    print(f"ℹ CuPy available but no CUDA devices found. Using CPU processing.")
+                    import numpy
+                    return numpy
+                
+                # Try to create a small test array to ensure GPU is actually usable
+                with cp.cuda.Device(0):
+                    test = cp.array([1.0], dtype=cp.float32)
+                    del test  # Clean up
+                print(f"ℹ Using GPU processing (GPU libraries available)")
+                return self.cupy
+            except Exception as e:
+                # GPU not available or other CuPy error - fall back to NumPy
+                error_str = str(e)
+                if any(err in error_str for err in ["cudaErrorNoDevice", "CUDA", "cuda", "device"]):
+                    print(f"ℹ Using CPU processing (GPU libraries not available)")
+                else:
+                    print(f"⚠️  CuPy error: {e}. Falling back to CPU (NumPy).")
+                import numpy
+                return numpy
         else:
             import numpy
             return numpy
