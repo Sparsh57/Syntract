@@ -266,7 +266,9 @@ def process_and_save(
                                 segment, step_size=step_size, 
                                 interp_method=interpolation_method, use_gpu=use_gpu
                             )
-                            if len(densified) >= 2:
+                            # Filter out segments that are too short to preserve curvature
+                            # Require at least 10 points for meaningful curvature
+                            if len(densified) >= 10:
                                 densified_segments.append(densified)
                         except Exception as e:
                             print(f"Error densifying segment: {e}")
@@ -276,7 +278,15 @@ def process_and_save(
                 print(f"Error processing streamline: {e}")
                 return []
         
-        results = Parallel(num_jobs)(
+        # Configure joblib with proper timeout and memory management
+        results = Parallel(
+            n_jobs=num_jobs,
+            timeout=300,  # 5 minutes timeout per job
+            batch_size='auto',  # Automatic batch sizing
+            max_nbytes=None,  # No memory limit per job
+            backend='loky',  # Use loky backend for better memory management
+            prefer='processes'  # Use processes instead of threads for CPU-bound work
+        )(
             delayed(process_streamline)(streamline) for streamline in voxel_streamlines
         )
         
@@ -325,11 +335,33 @@ def process_and_save(
     
     if len(densified_vox) > 0:
         print(f"Converting {len(densified_vox)} streamlines from voxel to RAS coordinates...")
+        
+        # DEBUG: Print transformation matrix
+        print(f"DEBUG: A_new shape: {A_new.shape}")
+        print(f"DEBUG: A_new diagonal (voxel sizes): {np.diag(A_new[:3, :3])}")
+        
+        # FIXED: Don't apply coordinate scaling "correction" which destroys curvature
+        # The original small voxel sizes are correct - just use them directly
+        voxel_sizes = np.diag(A_new[:3, :3])
+        print(f"Using original voxel sizes: {voxel_sizes}")
+        
         ras_streamlines = []
         for streamline in densified_vox:
             ras_streamline = np.dot(streamline, A_new[:3, :3].T) + A_new[:3, 3]
             ras_streamlines.append(ras_streamline)
             
+        # Verify the transformation worked
+        if len(ras_streamlines) > 0 and len(ras_streamlines[0]) > 0:
+            sample_ranges = []
+            for dim in range(3):
+                dim_coords = [pt[dim] for streamline in ras_streamlines[:10] for pt in streamline]
+                dim_range = max(dim_coords) - min(dim_coords)
+                sample_ranges.append(dim_range)
+            print(f"DEBUG: RAS coordinate ranges: {sample_ranges}")
+            
+            if max(sample_ranges) < 1.0:
+                print("WARNING: Coordinates still appear collapsed after transformation!")
+        
         new_tractogram = Tractogram(ras_streamlines, affine_to_rasmm=np.eye(4))
     else:
         print("WARNING: No valid streamlines to save after processing!")

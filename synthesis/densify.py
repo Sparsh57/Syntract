@@ -15,6 +15,166 @@ import traceback
 # Suppress RBF warnings for cleaner output - we know what we're doing
 warnings.filterwarnings('ignore', category=RuntimeWarning, module='scipy.interpolate')
 
+def calculate_optimal_step_size(streamline):
+    """
+    Calculate optimal step size based on original streamline characteristics.
+    
+    Parameters
+    ----------
+    streamline : array-like
+        The input streamline to analyze.
+        
+    Returns
+    -------
+    float
+        Optimal step size for this streamline.
+    """
+    if len(streamline) < 2:
+        return 0.25  # Default fallback
+    
+    # Convert to numpy if needed
+    if not isinstance(streamline, np.ndarray):
+        streamline = np.array(streamline)
+    
+    # Calculate original step sizes
+    original_steps = np.linalg.norm(np.diff(streamline, axis=0), axis=1)
+    
+    # Use median to avoid outlier influence
+    optimal_step = np.median(original_steps)
+    
+    # Clamp to reasonable range to prevent extreme values
+    return np.clip(optimal_step, 0.15, 0.35)
+
+def calculate_streamline_curvature(streamline):
+    """
+    Calculate curvature metrics for a streamline.
+    
+    Parameters
+    ----------
+    streamline : array-like
+        The streamline to analyze.
+        
+    Returns
+    -------
+    numpy.ndarray
+        Curvature values at each point.
+    """
+    if len(streamline) < 3:
+        return np.array([0.0])
+    
+    # Convert to numpy if needed
+    if not isinstance(streamline, np.ndarray):
+        streamline = np.array(streamline)
+    
+    # Calculate first derivatives (tangent vectors)
+    tangents = np.zeros_like(streamline)
+    tangents[1:-1] = (streamline[2:] - streamline[:-2]) / 2.0
+    tangents[0] = streamline[1] - streamline[0] 
+    tangents[-1] = streamline[-1] - streamline[-2]
+    
+    # Normalize tangents
+    tangent_norms = np.linalg.norm(tangents, axis=1, keepdims=True)
+    tangent_norms = np.where(tangent_norms > 1e-10, tangent_norms, 1e-10)
+    tangents = tangents / tangent_norms
+    
+    # Calculate second derivatives 
+    second_derivs = np.zeros_like(streamline)
+    second_derivs[1:-1] = (tangents[2:] - tangents[:-2]) / 2.0
+    second_derivs[0] = tangents[1] - tangents[0]
+    second_derivs[-1] = tangents[-1] - tangents[-2]
+    
+    # Curvature = |T'| where T is unit tangent
+    curvature = np.linalg.norm(second_derivs, axis=1)
+    
+    return curvature
+
+def validate_curvature_preservation(original_streamlines, processed_streamlines):
+    """
+    Compare curvature metrics between original and processed streamlines to validate preservation.
+    
+    Parameters
+    ----------
+    original_streamlines : list of arrays
+        Original streamlines before processing.
+    processed_streamlines : list of arrays
+        Processed streamlines after densification.
+        
+    Returns
+    -------
+    dict
+        Dictionary containing validation metrics.
+    """
+    if len(original_streamlines) == 0 or len(processed_streamlines) == 0:
+        return {
+            'mean_curvature_ratio': 0.0,
+            'curvature_variance_ratio': 0.0,
+            'path_length_preservation': 0.0,
+            'num_original': len(original_streamlines),
+            'num_processed': len(processed_streamlines)
+        }
+    
+    # Calculate curvature metrics for original streamlines
+    original_curvatures = []
+    original_lengths = []
+    
+    for streamline in original_streamlines:
+        if len(streamline) >= 3:
+            curvature = calculate_streamline_curvature(streamline)
+            original_curvatures.extend(curvature)
+            
+            # Calculate path length
+            diffs = np.diff(streamline, axis=0)
+            length = np.sum(np.linalg.norm(diffs, axis=1))
+            original_lengths.append(length)
+    
+    # Calculate curvature metrics for processed streamlines
+    processed_curvatures = []
+    processed_lengths = []
+    
+    for streamline in processed_streamlines:
+        if len(streamline) >= 3:
+            curvature = calculate_streamline_curvature(streamline)
+            processed_curvatures.extend(curvature)
+            
+            # Calculate path length
+            diffs = np.diff(streamline, axis=0)
+            length = np.sum(np.linalg.norm(diffs, axis=1))
+            processed_lengths.append(length)
+    
+    # Calculate metrics
+    original_mean_curvature = np.mean(original_curvatures) if original_curvatures else 0.0
+    processed_mean_curvature = np.mean(processed_curvatures) if processed_curvatures else 0.0
+    
+    original_curvature_var = np.var(original_curvatures) if original_curvatures else 0.0
+    processed_curvature_var = np.var(processed_curvatures) if processed_curvatures else 0.0
+    
+    original_mean_length = np.mean(original_lengths) if original_lengths else 0.0
+    processed_mean_length = np.mean(processed_lengths) if processed_lengths else 0.0
+    
+    # Calculate ratios
+    mean_curvature_ratio = (processed_mean_curvature / original_mean_curvature 
+                          if original_mean_curvature > 0 else 0.0)
+    curvature_variance_ratio = (processed_curvature_var / original_curvature_var
+                               if original_curvature_var > 0 else 0.0)
+    path_length_preservation = (processed_mean_length / original_mean_length
+                               if original_mean_length > 0 else 0.0)
+    
+    metrics = {
+        'mean_curvature_ratio': mean_curvature_ratio,
+        'curvature_variance_ratio': curvature_variance_ratio, 
+        'path_length_preservation': path_length_preservation,
+        'original_mean_curvature': original_mean_curvature,
+        'processed_mean_curvature': processed_mean_curvature,
+        'original_mean_length': original_mean_length,
+        'processed_mean_length': processed_mean_length,
+        'num_original': len(original_streamlines),
+        'num_processed': len(processed_streamlines),
+        'preservation_success': (mean_curvature_ratio > 0.6 and 
+                               0.9 <= path_length_preservation <= 1.1)
+    }
+    
+    return metrics
+
 def linear_interpolate(p0, p1, t, xp=np):
     """Linear interpolation between two points."""
     return p0 + t * (p1 - p0)
@@ -280,7 +440,7 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
         # Import numpy here to ensure it's available in both code paths
         import numpy as np
         
-        # Parallel processing
+        # Parallel processing with proper timeout and memory management
         from joblib import Parallel, delayed
         
         def _process_one(streamline, idx, total):
@@ -354,7 +514,17 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
                 return None
         
         total = len(streamlines)
-        results = Parallel(n_jobs=n_jobs)(
+        
+        # Configure joblib with proper timeout and memory management
+        # This prevents the "worker stopped" warnings
+        results = Parallel(
+            n_jobs=n_jobs,
+            timeout=300,  # 5 minutes timeout per job
+            batch_size='auto',  # Automatic batch sizing
+            max_nbytes=None,  # No memory limit per job
+            backend='loky',  # Use loky backend for better memory management
+            prefer='processes'  # Use processes instead of threads for CPU-bound work
+        )(
             delayed(_process_one)(streamline, idx, total) 
             for idx, streamline in enumerate(streamlines)
         )
@@ -394,6 +564,7 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
 def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', epsilon=None, xp=np, preserve_length=True):
     """
     Perform RBF interpolation for a streamline with proper regularization and length preservation.
+    Enhanced with curvature-aware parameter selection.
     """
     # Import numpy to ensure it's available
     import numpy as np
@@ -404,13 +575,35 @@ def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', eps
             streamline = np.array(streamline, dtype=np.float32)
         return streamline
 
+    # === CURVATURE-AWARE PARAMETER SELECTION ===
+    # Calculate curvature to adapt RBF parameters
+    streamline_cpu = streamline if isinstance(streamline, np.ndarray) else streamline.get() if hasattr(streamline, 'get') else np.array(streamline)
+    curvature_values = calculate_streamline_curvature(streamline_cpu)
+    mean_curvature = np.mean(curvature_values)
+    
+    # Adaptive step size based on curvature
+    if mean_curvature > 0.05:  # High curvature
+        optimal_step = calculate_optimal_step_size(streamline_cpu)
+        adaptive_step = max(step_size, optimal_step)
+        # Use less smoothing for high curvature to preserve features
+        smoothing_factor = 0.0
+        rbf_function = 'thin_plate_spline'  # Correct scipy kernel name
+    elif mean_curvature > 0.01:  # Medium curvature  
+        adaptive_step = step_size
+        smoothing_factor = 1e-8  # Minimal smoothing
+        rbf_function = 'thin_plate_spline'
+    else:  # Low curvature
+        adaptive_step = step_size
+        smoothing_factor = 1e-6  # Slight smoothing for stability
+        rbf_function = 'multiquadric'  # More stable for straight segments
+
     # Calculate the total length of the streamline
     diffs = xp.diff(streamline, axis=0)
     segment_lengths = xp.sqrt(xp.sum(diffs**2, axis=1))
     total_length = xp.sum(segment_lengths)
 
-    # Skip densification if streamline is shorter than step_size
-    if total_length < step_size:
+    # Skip densification if streamline is shorter than adaptive step_size
+    if total_length < adaptive_step:
         if not isinstance(streamline, np.ndarray):
             streamline = np.array(streamline, dtype=np.float32)
         return streamline
@@ -418,8 +611,8 @@ def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', eps
     # Create parameterization (cumulative distance)
     cumulative_lengths = xp.concatenate((xp.array([0], dtype=segment_lengths.dtype), xp.cumsum(segment_lengths)))
 
-    # Calculate new sampling points based on original total length
-    n_steps = max(int(xp.ceil(total_length / step_size)), 2)
+    # Calculate new sampling points based on adaptive step size
+    n_steps = max(int(xp.ceil(total_length / adaptive_step)), 2)
     t_new = xp.linspace(0, cumulative_lengths[-1], n_steps)
 
     # RBF interpolation requires scipy - convert to CPU if necessary
@@ -437,15 +630,11 @@ def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', eps
     streamline_cpu = np.asarray(streamline_cpu, dtype=np.float64)
     t_new_cpu = np.asarray(t_new_cpu, dtype=np.float64)
     
-    # Use more stable RBF settings
+    # Use more stable RBF settings with curvature-aware parameters
     try:
         from scipy.interpolate import RBFInterpolator
         
-        # Choose more stable RBF function and add regularization
-        rbf_function = 'multiquadric'  # More stable than thin_plate
-        smoothing = 1e-6  # Small regularization to prevent oscillations
-        
-        # Apply RBF interpolation to each dimension
+        # Apply RBF interpolation to each dimension with adaptive parameters
         result = np.zeros((len(t_new_cpu), streamline_cpu.shape[1]), dtype=np.float32)
         
         for dim in range(streamline_cpu.shape[1]):
@@ -453,13 +642,13 @@ def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', eps
             t_2d = t_cpu.reshape(-1, 1)
             y_values = streamline_cpu[:, dim]
             
-            # Create RBF interpolator with regularization
+            # Create RBF interpolator with curvature-aware parameters
             rbf = RBFInterpolator(
                 t_2d, 
                 y_values, 
-                kernel=rbf_function,
-                smoothing=smoothing,
-                epsilon=1.0  # Shape parameter for stability
+                kernel=rbf_function,  # Adaptive based on curvature
+                smoothing=smoothing_factor,  # Adaptive smoothing
+                epsilon=None  # Let scipy choose optimal epsilon
             )
             
             # Evaluate at new points
@@ -467,21 +656,31 @@ def rbf_interpolate_streamline(streamline, step_size, function='thin_plate', eps
             result[:, dim] = rbf(t_new_2d).astype(np.float32)
             
     except ImportError:
-        # Fallback to old Rbf with better parameters
-        print("Warning: RBFInterpolator not available, using legacy Rbf with safer parameters")
+        # Fallback to old Rbf with curvature-aware parameters
+        print("Warning: RBFInterpolator not available, using legacy Rbf with curvature-aware parameters")
         from scipy.interpolate import Rbf
         
         result = np.zeros((len(t_new_cpu), streamline_cpu.shape[1]), dtype=np.float32)
         
         for dim in range(streamline_cpu.shape[1]):
-            # Use multiquadric instead of thin_plate and add smoothing
-            rbf = Rbf(
-                t_cpu, 
-                streamline_cpu[:, dim], 
-                function='multiquadric',  # More stable
-                epsilon=1.0,  # Shape parameter
-                smooth=1e-6   # Regularization
-            )
+            # Use adaptive function and parameters based on curvature
+            if rbf_function == 'thin_plate':
+                # Thin plate splines don't use epsilon, use multiquadric as fallback
+                rbf = Rbf(
+                    t_cpu, 
+                    streamline_cpu[:, dim], 
+                    function='multiquadric',
+                    epsilon=1.0,  # Shape parameter
+                    smooth=smoothing_factor   # Adaptive regularization
+                )
+            else:
+                rbf = Rbf(
+                    t_cpu, 
+                    streamline_cpu[:, dim], 
+                    function=rbf_function,
+                    epsilon=1.0,  # Shape parameter
+                    smooth=smoothing_factor   # Adaptive regularization
+                )
             result[:, dim] = rbf(t_new_cpu)
     
     # === LENGTH PRESERVATION ===
@@ -612,6 +811,27 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                 streamline = np.array(streamline, dtype=np.float32)
             streamline_device = xp.asarray(streamline)
 
+        # === CURVATURE-BASED ADAPTIVE STEP SIZE ===
+        # Add curvature analysis for adaptive step size
+        if len(streamline) >= 3:
+            # Calculate curvature using numpy (convert from GPU if needed)
+            streamline_cpu = streamline if isinstance(streamline, np.ndarray) else streamline_device.get() if hasattr(streamline_device, 'get') else np.array(streamline_device)
+            curvature_values = calculate_streamline_curvature(streamline_cpu)
+            mean_curvature = np.mean(curvature_values)
+            
+            # For high-curvature streamlines, use adaptive step size
+            if mean_curvature > 0.05:  # High curvature threshold
+                optimal_step = calculate_optimal_step_size(streamline_cpu)
+                adaptive_step = max(step_size, optimal_step)
+                if debug_tangents:
+                    print(f"[CURVATURE] Mean curvature: {mean_curvature:.6f}, using adaptive step: {adaptive_step:.3f} (original: {step_size:.3f})")
+            else:
+                adaptive_step = step_size
+                if debug_tangents:
+                    print(f"[CURVATURE] Mean curvature: {mean_curvature:.6f}, using original step: {step_size:.3f}")
+        else:
+            adaptive_step = step_size
+
         diffs = xp.diff(streamline_device, axis=0)
         segment_lengths = xp.sqrt(xp.sum(diffs**2, axis=1))
         total_length = xp.sum(segment_lengths)
@@ -620,12 +840,12 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
             print(f"[DENSIFY] Total streamline length: {total_length:.4f}mm")
             print(f"[DENSIFY] Mean segment length: {total_length/len(segment_lengths):.4f}mm")
 
-        if total_length < step_size:
+        if total_length < adaptive_step:
             if not isinstance(streamline, np.ndarray):
                 streamline = np.array(streamline, dtype=np.float32)
             return streamline
 
-        n_steps = int(xp.ceil(total_length / step_size)) + 1
+        n_steps = int(xp.ceil(total_length / adaptive_step)) + 1
         cumulative_lengths = xp.concatenate((xp.array([0], dtype=segment_lengths.dtype), xp.cumsum(segment_lengths)))
         normalized_distances = cumulative_lengths / total_length
         xi = xp.linspace(0, 1, n_steps)
@@ -653,10 +873,10 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
             # Calculate local segment lengths for adaptive scaling
             segment_lengths_for_tangents = xp.sqrt(xp.sum(diffs**2, axis=1))
             
-            # Calculate natural tangent vectors with aggressive scaling to preserve curvature
+            # Calculate natural tangent vectors with proper scaling to preserve curvature
             for i in range(1, len(streamline_device) - 1):
                 # Use central difference for smooth tangents
-                raw_tangent = (streamline_device[i+1] - streamline_device[i-1]) * 0.5
+                raw_tangent = streamline_device[i+1] - streamline_device[i-1]
                 
                 # Local adaptive scaling based on nearby segment lengths
                 # Use a small window around current point to get local characteristics
@@ -665,25 +885,73 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                 local_segments = segment_lengths_for_tangents[window_start:window_end]
                 local_mean_length = xp.mean(local_segments)
                 
-                # MUCH more aggressive scaling to preserve curvature
-                # The previous 0.3 scaling was far too conservative
-                local_scale = local_mean_length * 1.0  # More moderate scaling
-                tangents[i] = raw_tangent * local_scale
+                # AGGRESSIVE: Much stronger scaling to preserve anatomical curvature
+                # Use central difference normalization with aggressive local scaling
+                raw_norm = xp.linalg.norm(raw_tangent)
+                if raw_norm > 1e-10:
+                    # Normalize and then apply aggressive local scaling (2.0 instead of 0.75)
+                    local_scale_factor = 2.0
+                    tangents[i] = (raw_tangent / raw_norm) * local_mean_length * local_scale_factor
+                else:
+                    tangents[i] = raw_tangent
             
-            # Handle endpoints with matching moderate scaling
+            # Handle endpoints with aggressive scaling
             # Start point
             if len(segment_lengths_for_tangents) > 0:
-                start_scale = segment_lengths_for_tangents[0] * 1.0
+                start_tangent = streamline_device[1] - streamline_device[0]
+                start_norm = xp.linalg.norm(start_tangent)
+                if start_norm > 1e-10:
+                    start_scale_factor = 2.0  # Aggressive scaling
+                    tangents[0] = (start_tangent / start_norm) * segment_lengths_for_tangents[0] * start_scale_factor
+                else:
+                    tangents[0] = start_tangent
             else:
-                start_scale = 1.0
-            tangents[0] = (streamline_device[1] - streamline_device[0]) * start_scale
+                tangents[0] = streamline_device[1] - streamline_device[0]
             
             # End point  
             if len(segment_lengths_for_tangents) > 0:
-                end_scale = segment_lengths_for_tangents[-1] * 1.0
+                end_tangent = streamline_device[-1] - streamline_device[-2]
+                end_norm = xp.linalg.norm(end_tangent)
+                if end_norm > 1e-10:
+                    end_scale_factor = 2.0  # Aggressive scaling
+                    tangents[-1] = (end_tangent / end_norm) * segment_lengths_for_tangents[-1] * end_scale_factor
+                else:
+                    tangents[-1] = end_tangent
             else:
-                end_scale = 1.0
-            tangents[-1] = (streamline_device[-1] - streamline_device[-2]) * end_scale
+                tangents[-1] = streamline_device[-1] - streamline_device[-2]
+            
+            # Optional: Enhanced Catmull-Rom style tangent calculation for better curvature
+            # This provides more natural curvature preservation for longer streamlines
+            enhanced_tangents = os.environ.get("ENHANCED_TANGENTS", "0") == "1"
+            if enhanced_tangents:
+                # Use Catmull-Rom tangent calculation for better curvature preservation
+                for i in range(1, len(streamline_device) - 1):
+                    # Catmull-Rom tangent: 0.5 * (P[i+1] - P[i-1])
+                    catmull_tangent = (streamline_device[i+1] - streamline_device[i-1]) * 0.5
+                    
+                    # ENHANCED: Scale tangent by 3.0 to preserve much more curvature
+                    tangent_norm = xp.linalg.norm(catmull_tangent)
+                    if tangent_norm > 1e-10:
+                        # Aggressive scaling: 3.0x step_size for maximum curvature preservation
+                        curvature_enhancement_factor = 3.0
+                        tangents[i] = catmull_tangent / tangent_norm * step_size * curvature_enhancement_factor
+                    else:
+                        tangents[i] = catmull_tangent
+                
+                # Endpoints for Catmull-Rom with enhanced scaling
+                if len(streamline_device) > 1:
+                    forward_diff = streamline_device[1] - streamline_device[0]
+                    backward_diff = streamline_device[-1] - streamline_device[-2]
+                    
+                    # Scale endpoint tangents with aggressive enhancement
+                    forward_norm = xp.linalg.norm(forward_diff)
+                    backward_norm = xp.linalg.norm(backward_diff)
+                    curvature_enhancement_factor = 3.0
+                    
+                    if forward_norm > 1e-10:
+                        tangents[0] = forward_diff / forward_norm * step_size * curvature_enhancement_factor
+                    if backward_norm > 1e-10:
+                        tangents[-1] = backward_diff / backward_norm * step_size * curvature_enhancement_factor
 
         if interp_method == 'rbf':
             try:
