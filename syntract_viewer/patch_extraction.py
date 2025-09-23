@@ -1,14 +1,21 @@
 #!/usr/bin/env python
 """
-Patch Extraction Module for Syntract Viewer
+Robust Patch Extraction Module for Syntract Viewer
 
 This module provides functionality to extract random patches from NIfTI volumes
-with overlaid tractography data. It supports:
-- Specified total number of patches
-- Fixed patch dimensions
-- Distribution across multiple TRK files
-- Random sampling from different coronal sections
-- Efficient center-point based extraction
+with overlaid tractography data. It uses a robust methodology that ensures:
+- Proper dimensional validation between NIfTI and TRK files
+- Accurate coordinate transformations and spatial alignment
+- Comprehensive validation of output patches
+- Rejection sampling to ensure adequate streamline density
+- Backward compatibility with existing visualization pipeline
+
+Features:
+- 3D patch extraction with proper bounds checking
+- Robust coordinate transformation handling 
+- Spatial consistency validation
+- Multiple TRK file support
+- Integrated visualization generation
 """
 
 import os
@@ -18,6 +25,7 @@ import numpy as np
 import nibabel as nib
 from pathlib import Path
 from nibabel.streamlines import load
+from nibabel.affines import apply_affine
 import random
 from typing import List, Tuple, Dict, Optional
 import json
@@ -35,54 +43,263 @@ except ImportError:
     from effects import apply_balanced_dark_field_effect
     from utils import select_random_streamlines
 
+# Import robust patch extraction functions
+try:
+    # Try to import from the main module directory
+    sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+    from patch_extract import (
+        PatchSpec, _hdr_dimensions_from_trk, _choose_random_origin,
+        _crop_nifti, _filter_and_retarget_trk, _validate_consistency,
+        _validate_outputs, extract_single_patch
+    )
+    ROBUST_PATCH_AVAILABLE = True
+except ImportError:
+    ROBUST_PATCH_AVAILABLE = False
+    print("Warning: Robust patch extraction not available, falling back to legacy implementation")
 
-def extract_random_patches(nifti_file: str, 
-                          trk_files: List[str], 
-                          output_dir: str,
-                          total_patches: int = 100,
-                          patch_size: Tuple[int, int] = (1024, 1024),
-                          min_streamlines_per_patch: int = 50,  # Increased default from 5 to 50
-                          random_state: Optional[int] = None,
-                          prefix: str = "patch",
-                          save_masks: bool = True,
-                          contrast_method: str = 'clahe',
-                          background_enhancement: str = 'preserve_edges',
-                          cornucopia_preset: str = 'disabled',
-                          tract_linewidth: float = 1.0,
-                          mask_thickness: int = 1,
-                          density_threshold: float = 0.15,
-                          gaussian_sigma: float = 2.0,
-                          close_gaps: bool = False,
-                          closing_footprint_size: int = 5,
-                          label_bundles: bool = False,
-                          min_bundle_size: int = 20) -> Dict:
+
+def extract_random_patches_robust(nifti_file: str, 
+                                 trk_files: List[str], 
+                                 output_dir: str,
+                                 total_patches: int = 100,
+                                 patch_size: Tuple[int, int, int] = (64, 64, 64),
+                                 min_streamlines_per_patch: int = 30,
+                                 random_state: Optional[int] = None,
+                                 prefix: str = "patch",
+                                 save_masks: bool = True,
+                                 contrast_method: str = 'clahe',
+                                 background_enhancement: str = 'preserve_edges',
+                                 cornucopia_preset: str = 'disabled',
+                                 tract_linewidth: float = 1.0,
+                                 mask_thickness: int = 1,
+                                 density_threshold: float = 0.15,
+                                 gaussian_sigma: float = 2.0,
+                                 close_gaps: bool = False,
+                                 closing_footprint_size: int = 5,
+                                 label_bundles: bool = False,
+                                 min_bundle_size: int = 20,
+                                 max_trials: int = 100) -> Dict:
     """
-    Extract random patches from NIfTI volume with tractography data.
+    Extract random patches using robust methodology with proper coordinate transformations.
+    
+    This function uses the improved patch extraction approach that ensures:
+    - Dimensional consistency validation
+    - Proper coordinate transformations
+    - Spatial alignment verification
+    - Rejection sampling for adequate streamline density
     
     Args:
         nifti_file: Path to the NIfTI file
         trk_files: List of paths to TRK files
         output_dir: Directory to save patches
         total_patches: Total number of patches to extract
-        patch_size: Size of each patch (width, height)
+        patch_size: Size of each patch (width, height, depth)
         min_streamlines_per_patch: Minimum streamlines required in a patch
         random_state: Random seed for reproducibility
         prefix: Prefix for output files
         save_masks: Whether to save fiber masks
-        contrast_method: Contrast enhancement method
-        background_enhancement: Background enhancement preset
-        cornucopia_preset: Cornucopia augmentation preset
-        tract_linewidth: Line width for tract visualization
-        mask_thickness: Thickness of mask lines
-        density_threshold: Density threshold for mask creation
-        gaussian_sigma: Gaussian smoothing sigma
-        close_gaps: Whether to close gaps in masks
-        closing_footprint_size: Footprint size for gap closing
-        label_bundles: Whether to label distinct bundles
-        min_bundle_size: Minimum bundle size for labeling
+        ... (visualization parameters as before)
+        max_trials: Maximum trials per patch to find adequate streamlines
         
     Returns:
         Dictionary with extraction results and metadata
+    """
+    
+    if not ROBUST_PATCH_AVAILABLE:
+        print("Warning: Falling back to legacy patch extraction")
+        return extract_random_patches_legacy(
+            nifti_file, trk_files, output_dir, total_patches,
+            (patch_size[0], patch_size[1]), min_streamlines_per_patch,
+            random_state, prefix, save_masks, contrast_method,
+            background_enhancement, cornucopia_preset, tract_linewidth,
+            mask_thickness, density_threshold, gaussian_sigma,
+            close_gaps, closing_footprint_size, label_bundles, min_bundle_size
+        )
+    
+    print(f"=== Robust Random Patch Extraction ===")
+    print(f"NIfTI file: {nifti_file}")
+    print(f"TRK files: {len(trk_files)}")
+    print(f"Total patches: {total_patches}")
+    print(f"Patch size: {patch_size[0]}x{patch_size[1]}x{patch_size[2]}")
+    print(f"Min streamlines per patch: {min_streamlines_per_patch}")
+    print(f"Output directory: {output_dir}")
+    
+    # Create output directory
+    output_path = Path(output_dir)
+    output_path.mkdir(parents=True, exist_ok=True)
+    
+    # Set up random state
+    if random_state is not None:
+        np.random.seed(random_state)
+        random.seed(random_state)
+    rng = np.random.default_rng(random_state)
+    
+    # Results tracking
+    results = {
+        'total_patches_requested': total_patches,
+        'patches_extracted': 0,
+        'patches_failed': 0,
+        'patch_details': [],
+        'trk_file_stats': [],
+        'extraction_params': {
+            'patch_size': patch_size,
+            'min_streamlines_per_patch': min_streamlines_per_patch,
+            'random_state': random_state,
+            'max_trials': max_trials,
+            'method': 'robust'
+        }
+    }
+    
+    # Process each TRK file to distribute patches
+    patches_per_file = max(1, total_patches // len(trk_files))
+    remaining_patches = total_patches - (patches_per_file * len(trk_files))
+    
+    print(f"\nPatch distribution across {len(trk_files)} TRK files:")
+    for i, trk_file in enumerate(trk_files):
+        extra_patch = 1 if i < remaining_patches else 0
+        patches_for_file = patches_per_file + extra_patch
+        print(f"  {Path(trk_file).name}: {patches_for_file} patches")
+    
+    patch_counter = 0
+    
+    for file_idx, trk_file in enumerate(trk_files):
+        extra_patch = 1 if file_idx < remaining_patches else 0
+        patches_for_file = patches_per_file + extra_patch
+        
+        print(f"\nProcessing {Path(trk_file).name} ({patches_for_file} patches)...")
+        
+        file_results = {
+            'file': trk_file,
+            'patches_requested': patches_for_file,
+            'patches_extracted': 0,
+            'patches_failed': 0
+        }
+        
+        for patch_idx in range(patches_for_file):
+            patch_counter += 1
+            patch_seed = rng.integers(0, 2**32-1) if random_state is not None else None
+            
+            # Use individual TRK file for this patch
+            patch_prefix = f"{prefix}_{patch_counter:04d}"
+            patch_output_prefix = str(output_path / patch_prefix)
+            
+            print(f"  Extracting patch {patch_counter}/{total_patches}...")
+            
+            try:
+                # Use robust single patch extraction
+                meta = extract_single_patch(
+                    nifti_path=nifti_file,
+                    trk_path=trk_file,
+                    patch_xyz=patch_size,
+                    seed=patch_seed,
+                    out_prefix=patch_output_prefix,
+                    min_streamlines=min_streamlines_per_patch,
+                    max_trials=max_trials
+                )
+                
+                # Generate visualization if files were created successfully
+                if save_masks or True:  # Always generate basic visualization
+                    _generate_patch_visualization(
+                        f"{patch_output_prefix}.nii.gz",
+                        f"{patch_output_prefix}.trk",
+                        str(output_path),
+                        patch_prefix,
+                        save_masks,
+                        contrast_method,
+                        background_enhancement,
+                        cornucopia_preset,
+                        tract_linewidth,
+                        mask_thickness,
+                        density_threshold,
+                        gaussian_sigma,
+                        close_gaps,
+                        closing_footprint_size,
+                        label_bundles,
+                        min_bundle_size
+                    )
+                
+                patch_detail = {
+                    'patch_id': patch_counter,
+                    'center_voxel': meta['patch_origin'],
+                    'size': meta['patch_size'],
+                    'streamlines_count': meta['validations']['streamlines_kept'],
+                    'trials': meta['validations']['trials'],
+                    'nifti_file': f"{patch_output_prefix}.nii.gz",
+                    'trk_file': f"{patch_output_prefix}.trk",
+                    'meta_file': f"{patch_output_prefix}.meta.json",
+                    'source_file': trk_file
+                }
+                
+                results['patch_details'].append(patch_detail)
+                results['patches_extracted'] += 1
+                file_results['patches_extracted'] += 1
+                
+                print(f"  Patch {patch_counter}: ✓ ({meta['validations']['streamlines_kept']} streamlines, "
+                      f"{meta['validations']['trials']} trials)")
+                
+            except Exception as e:
+                print(f"  Patch {patch_counter}: ✗ Error - {e}")
+                results['patches_failed'] += 1
+                file_results['patches_failed'] += 1
+        
+        results['trk_file_stats'].append(file_results)
+    
+    # Save results summary
+    summary_path = output_path / "patch_extraction_summary.json"
+    
+    # Convert numpy types to native Python types for JSON serialization
+    def _convert_numpy_types(obj):
+        """Recursively convert numpy types to native Python types."""
+        if isinstance(obj, np.generic):
+            return obj.item()
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, dict):
+            return {key: _convert_numpy_types(value) for key, value in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [_convert_numpy_types(item) for item in obj]
+        else:
+            return obj
+    
+    # Convert results to JSON-safe format
+    json_safe_results = _convert_numpy_types(results)
+    
+    with open(summary_path, 'w') as f:
+        json.dump(json_safe_results, f, indent=2)
+    
+    print(f"\n=== Robust Patch Extraction Complete ===")
+    print(f"Total patches extracted: {results['patches_extracted']}/{total_patches}")
+    print(f"Failed extractions: {results['patches_failed']}")
+    print(f"Summary saved: {summary_path}")
+    
+    return results
+
+
+def extract_random_patches_legacy(nifti_file: str, 
+                                 trk_files: List[str], 
+                                 output_dir: str,
+                                 total_patches: int = 100,
+                                 patch_size: Tuple[int, int] = (1024, 1024),
+                                 min_streamlines_per_patch: int = 50,
+                                 random_state: Optional[int] = None,
+                                 prefix: str = "patch",
+                                 save_masks: bool = True,
+                                 contrast_method: str = 'clahe',
+                                 background_enhancement: str = 'preserve_edges',
+                                 cornucopia_preset: str = 'disabled',
+                                 tract_linewidth: float = 1.0,
+                                 mask_thickness: int = 1,
+                                 density_threshold: float = 0.15,
+                                 gaussian_sigma: float = 2.0,
+                                 close_gaps: bool = False,
+                                 closing_footprint_size: int = 5,
+                                 label_bundles: bool = False,
+                                 min_bundle_size: int = 20) -> Dict:
+    """
+    Legacy patch extraction implementation (2D patches).
+    
+    This is the original patch extraction method kept for backward compatibility.
+    It extracts 2D patches from coronal sections.
     """
     
     if random_state is not None:
@@ -305,8 +522,26 @@ def extract_random_patches(nifti_file: str,
     
     # Save results summary
     summary_path = output_path / "patch_extraction_summary.json"
+    
+    # Convert numpy types to native Python types for JSON serialization
+    def _convert_numpy_types(obj):
+        """Recursively convert numpy types to native Python types."""
+        if isinstance(obj, np.generic):
+            return obj.item()
+        elif isinstance(obj, np.ndarray):
+            return obj.tolist()
+        elif isinstance(obj, dict):
+            return {key: _convert_numpy_types(value) for key, value in obj.items()}
+        elif isinstance(obj, (list, tuple)):
+            return [_convert_numpy_types(item) for item in obj]
+        else:
+            return obj
+    
+    # Convert results to JSON-safe format
+    json_safe_results = _convert_numpy_types(results)
+    
     with open(summary_path, 'w') as f:
-        json.dump(results, f, indent=2)
+        json.dump(json_safe_results, f, indent=2)
     
     print(f"\n=== Patch Extraction Complete ===")
     print(f"Total patches extracted: {results['patches_extracted']}/{total_patches}")
@@ -314,6 +549,87 @@ def extract_random_patches(nifti_file: str,
     print(f"Summary saved: {summary_path}")
     
     return results
+
+
+def extract_random_patches(nifti_file: str, 
+                          trk_files: List[str], 
+                          output_dir: str,
+                          total_patches: int = 100,
+                          patch_size: Tuple[int, int] = (1024, 1024),
+                          min_streamlines_per_patch: int = 50,
+                          random_state: Optional[int] = None,
+                          prefix: str = "patch",
+                          save_masks: bool = True,
+                          contrast_method: str = 'clahe',
+                          background_enhancement: str = 'preserve_edges',
+                          cornucopia_preset: str = 'disabled',
+                          tract_linewidth: float = 1.0,
+                          mask_thickness: int = 1,
+                          density_threshold: float = 0.15,
+                          gaussian_sigma: float = 2.0,
+                          close_gaps: bool = False,
+                          closing_footprint_size: int = 5,
+                          label_bundles: bool = False,
+                          min_bundle_size: int = 20) -> Dict:
+    """
+    Main patch extraction interface - automatically chooses best method.
+    
+    This function maintains backward compatibility while using the improved
+    robust patch extraction when available. For 3D patches, uses the robust
+    method. For 2D patches, falls back to legacy method.
+    
+    Args:
+        nifti_file: Path to the NIfTI file
+        trk_files: List of paths to TRK files
+        output_dir: Directory to save patches
+        total_patches: Total number of patches to extract
+        patch_size: Size of each patch (width, height) for 2D or (w, h, d) for 3D
+        ... (other parameters as documented in individual methods)
+        
+    Returns:
+        Dictionary with extraction results and metadata
+    """
+    
+    # Check if 3D patch size provided
+    if len(patch_size) == 3 and ROBUST_PATCH_AVAILABLE:
+        # Use robust 3D extraction
+        return extract_random_patches_robust(
+            nifti_file, trk_files, output_dir, total_patches,
+            patch_size, min_streamlines_per_patch, random_state, prefix,
+            save_masks, contrast_method, background_enhancement, cornucopia_preset,
+            tract_linewidth, mask_thickness, density_threshold, gaussian_sigma,
+            close_gaps, closing_footprint_size, label_bundles, min_bundle_size
+        )
+    elif len(patch_size) == 2:
+        # Use legacy 2D extraction
+        return extract_random_patches_legacy(
+            nifti_file, trk_files, output_dir, total_patches,
+            patch_size, min_streamlines_per_patch, random_state, prefix,
+            save_masks, contrast_method, background_enhancement, cornucopia_preset,
+            tract_linewidth, mask_thickness, density_threshold, gaussian_sigma,
+            close_gaps, closing_footprint_size, label_bundles, min_bundle_size
+        )
+    else:
+        # Try to convert 2D to 3D for robust extraction
+        if ROBUST_PATCH_AVAILABLE and len(patch_size) == 2:
+            patch_3d = (patch_size[0], patch_size[1], patch_size[0])
+            print(f"Converting 2D patch size {patch_size} to 3D {patch_3d} for robust extraction")
+            return extract_random_patches_robust(
+                nifti_file, trk_files, output_dir, total_patches,
+                patch_3d, min_streamlines_per_patch, random_state, prefix,
+                save_masks, contrast_method, background_enhancement, cornucopia_preset,
+                tract_linewidth, mask_thickness, density_threshold, gaussian_sigma,
+                close_gaps, closing_footprint_size, label_bundles, min_bundle_size
+            )
+        else:
+            # Fallback to legacy
+            return extract_random_patches_legacy(
+                nifti_file, trk_files, output_dir, total_patches,
+                tuple(patch_size[:2]), min_streamlines_per_patch, random_state, prefix,
+                save_masks, contrast_method, background_enhancement, cornucopia_preset,
+                tract_linewidth, mask_thickness, density_threshold, gaussian_sigma,
+                close_gaps, closing_footprint_size, label_bundles, min_bundle_size
+            )
 
 
 def _filter_streamlines_for_patch(streamlines, x_start, x_end, y_start, y_end, z_start, z_end):

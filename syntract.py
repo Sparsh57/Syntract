@@ -231,13 +231,19 @@ def batch_process_slice_folders(slice_output_dir, args):
 
 
 def run_patch_extraction_stage(nifti_file, trk_files, args):
-    """Run the patch extraction stage with re-synthesis per patch center."""
+    """Run the patch extraction stage using robust methodology."""
     if not SYNTRACT_AVAILABLE:
         raise RuntimeError("Syntract viewer module not available. Cannot run patch extraction stage.")
     
     print("\n" + "="*60)
-    print("STAGE 3: PATCH EXTRACTION WITH RE-SYNTHESIS")
+    print("STAGE 3: ROBUST PATCH EXTRACTION")
     print("="*60)
+    
+    # Import the robust patch extraction module
+    try:
+        from syntract_viewer.patch_extraction import extract_random_patches
+    except ImportError:
+        raise RuntimeError("Could not import patch extraction module.")
     
     # Create output directory for patches
     patch_output_dir = args.patch_output_dir
@@ -245,355 +251,129 @@ def run_patch_extraction_stage(nifti_file, trk_files, args):
         patch_output_dir = "patches"
     os.makedirs(patch_output_dir, exist_ok=True)
     
-    # Load the base files to get dimensions and understand coordinate space
-    import numpy as np
-    import nibabel as nib
-    from synthesis.main import process_and_save
+    print(f"Input NIfTI: {nifti_file}")
+    print(f"Input TRK files: {trk_files}")
+    print(f"Output directory: {patch_output_dir}")
+    print(f"Generating {args.total_patches} patches")
     
-    base_img = nib.load(nifti_file)
-    base_data = base_img.get_fdata()
-    base_shape = base_data.shape
-    base_trk_file = trk_files[0] if trk_files else None
-    
-    print(f"Base image shape: {base_shape}")
-    print(f"Generating {args.total_patches} patches with size {args.patch_size}")
-    
-    # Use patch_size for dimensions, not patch_size_3d unless explicitly patch_mode
-    if args.patch_mode and hasattr(args, 'patch_size_3d') and args.patch_size_3d:
-        patch_dimensions = tuple(args.patch_size_3d)
-    else:
-        # Use the user-specified patch_size
+    # Determine patch size - convert from args format to 3D tuple
+    if hasattr(args, 'patch_size') and args.patch_size:
         if len(args.patch_size) == 2:
             patch_dimensions = (args.patch_size[0], args.patch_size[1], args.patch_size[0])
         elif len(args.patch_size) == 3:
             patch_dimensions = tuple(args.patch_size)
         else:
             raise ValueError(f"Invalid patch_size format: {args.patch_size}")
+    else:
+        # Default 3D patch size
+        patch_dimensions = (128, 128, 128)
     
-    print(f"Using patch dimensions for re-synthesis: {patch_dimensions}")
-    print(f"Original patch_size argument: {args.patch_size}")
+    print(f"Using patch dimensions: {patch_dimensions}")
     
-    # Calculate valid patch centers (ensuring patch fits within base image)
-    half_patch = [dim // 2 for dim in patch_dimensions]
-    min_centers = [half_patch[i] for i in range(3)]
-    max_centers = [base_shape[i] - half_patch[i] for i in range(3)]
-    
-    print(f"Valid patch center ranges:")
-    print(f"  X: {min_centers[0]} to {max_centers[0]}")
-    print(f"  Y: {min_centers[1]} to {max_centers[1]}")
-    print(f"  Z: {min_centers[2]} to {max_centers[2]}")
-    
-    # Verify we can generate patches
-    for i in range(3):
-        if min_centers[i] >= max_centers[i]:
-            raise ValueError(f"Patch size {patch_dimensions} too large for base image shape {base_shape}")
-    
-    # Set random seed for reproducible results
-    if hasattr(args, 'random_state') and args.random_state:
-        np.random.seed(args.random_state)
-    
-    # Generate random patch centers
-    patch_centers = []
-    for patch_idx in range(args.total_patches):
-        center = [
-            np.random.randint(min_centers[0], max_centers[0]),
-            np.random.randint(min_centers[1], max_centers[1]),
-            np.random.randint(min_centers[2], max_centers[2])
-        ]
-        patch_centers.append(center)
-    
-    print(f"Generated {len(patch_centers)} patch centers")
-    
-    # Process each patch
-    results = {
-        'patches_extracted': 0,
-        'patches_failed': 0,
-        'patch_details': []
-    }
-    
-    for patch_idx, patch_center in enumerate(patch_centers, 1):
-        print(f"\n--- Processing Patch {patch_idx}/{args.total_patches} ---")
-        print(f"Patch center: {patch_center}")
-        print(f"Patch dimensions: {patch_dimensions}")
+    # Run robust patch extraction
+    try:
+        results = extract_random_patches(
+            nifti_file=nifti_file,
+            trk_files=trk_files,
+            output_dir=patch_output_dir,
+            total_patches=args.total_patches,
+            patch_size=patch_dimensions,
+            min_streamlines_per_patch=getattr(args, 'min_streamlines_per_patch', 30),
+            random_state=getattr(args, 'random_state', None),
+            prefix=getattr(args, 'patch_prefix', 'patch').rstrip('_'),
+            save_masks=True,
+            contrast_method='clahe',
+            background_enhancement='preserve_edges',
+            cornucopia_preset='disabled',
+            tract_linewidth=1.0,
+            mask_thickness=1,
+            density_threshold=0.15,
+            gaussian_sigma=2.0,
+            close_gaps=False,
+            closing_footprint_size=3,
+            label_bundles=False,
+            min_bundle_size=20
+        )
         
-        try:
-            # Create subfolder for this patch
-            patch_subfolder = os.path.join(patch_output_dir, f"patch_{patch_idx:04d}")
-            os.makedirs(patch_subfolder, exist_ok=True)
+        print(f"\n=== Patch Extraction Results ===")
+        print(f"Patches requested: {results['total_patches_requested']}")
+        print(f"Patches extracted: {results['patches_extracted']}")
+        print(f"Patches failed: {results['patches_failed']}")
+        print(f"Success rate: {results['patches_extracted']/results['total_patches_requested']*100:.1f}%")
+        print(f"Output directory: {patch_output_dir}")
+        
+        # Add automatic visualization generation for extracted patches
+        if results['patches_extracted'] > 0:
+            print(f"\n🎨 Generating visualizations for extracted patches...")
             
-            # Convert patch center from voxel coordinates to world coordinates
-            base_affine = base_img.affine
-            patch_center_voxel = np.array(patch_center + [1])  # Add homogeneous coordinate
-            patch_center_world = (base_affine @ patch_center_voxel)[:3]
+            # Set up visualization output directory
+            viz_output_dir = os.path.join(patch_output_dir, "visualizations")
+            os.makedirs(viz_output_dir, exist_ok=True)
             
-            print(f"  Patch center (voxel): {patch_center}")
-            print(f"  Patch center (world mm): {patch_center_world}")
+            # Create visualization arguments
+            viz_args = argparse.Namespace()
+            viz_args.viz_output_dir = viz_output_dir
+            viz_args.n_examples = min(10, results['patches_extracted'])  # Generate examples for up to 10 patches
+            viz_args.viz_prefix = "patch_viz_"
             
-            # Create temporary directory for intermediate files
-            import tempfile
-            temp_dir = tempfile.mkdtemp(prefix=f"patch_{patch_idx:04d}_")
             try:
-                temp_prefix = f"patch_{patch_idx:04d}_temp"
-                temp_output = os.path.join(temp_dir, temp_prefix)
+                # Find and visualize some of the extracted patches
+                patch_folders = []
+                for item in os.listdir(patch_output_dir):
+                    item_path = os.path.join(patch_output_dir, item)
+                    if os.path.isdir(item_path) and item.startswith('patch_'):
+                        nifti_file = os.path.join(item_path, f"{item}.nii.gz")
+                        trk_file = os.path.join(item_path, f"{item}.trk")
+                        if os.path.exists(nifti_file) and os.path.exists(trk_file):
+                            patch_folders.append({
+                                'name': item,
+                                'nifti': nifti_file,
+                                'trk': trk_file
+                            })
                 
-                print(f"  Using temp directory: {temp_dir}")
-                print(f"  Running re-synthesis with center {patch_center} and dimensions {patch_dimensions}")
-                
-                # Run synthesis with patch-specific parameters
-                print(f"  📊 Starting synthesis process...")
-                print(f"  🔧 Parameters:")
-                print(f"      Input NIfTI: {nifti_file}")
-                print(f"      Input TRK: {base_trk_file}")
-                print(f"      Target dimensions: {patch_dimensions}")
-                print(f"      Patch center (world): {patch_center_world.tolist()}")
-                print(f"      Temp output prefix: {temp_output}")
-                
-                # Add detailed process tracking
-                import subprocess
-                import threading
-                import time
-                
-                def monitor_process():
-                    """Monitor the synthesis process"""
-                    start_time = time.time()
-                    while True:
-                        elapsed = time.time() - start_time
-                        if elapsed > 60:  # Log every minute
-                            # Get memory usage
-                            try:
-                                import psutil
-                                process = psutil.Process()
-                                memory_mb = process.memory_info().rss / 1024 / 1024
-                                print(f"  ⏱️  Synthesis still running... {elapsed:.0f}s elapsed, Memory: {memory_mb:.1f} MB")
-                            except:
-                                print(f"  ⏱️  Synthesis still running... {elapsed:.0f}s elapsed")
-                            start_time = time.time()
-                        time.sleep(10)  # Check every 10 seconds
-                
-                # Start monitoring thread
-                monitor_thread = threading.Thread(target=monitor_process, daemon=True)
-                monitor_thread.start()
-                
-                try:
-                    # Add timeout to prevent hanging
-                    import signal
-                    def timeout_handler(signum, frame):
-                        print(f"  ⚠️  Synthesis process exceeded timeout!")
-                        raise TimeoutError("Synthesis process timed out")
-                    
-                    signal.signal(signal.SIGALRM, timeout_handler)
-                    signal.alarm(600)  # 10 minute timeout per patch
-                    
-                    print(f"  🚀 Calling process_and_save...")
-                    
-                    # Force CPU usage on HPC login nodes
-                    import socket
-                    hostname = socket.gethostname().lower()
-                    force_cpu_usage = any(pattern in hostname for pattern in ['login', 'head', 'master'])
-                    
-                    if force_cpu_usage:
-                        print(f"  🖥️  Detected HPC login node ({hostname}) - forcing CPU processing")
-                        use_gpu_for_synthesis = False
-                    else:
-                        use_gpu_for_synthesis = getattr(args, 'use_gpu', True)
-                    
-                    # Debug voxel size
-                    actual_voxel_size = args.voxel_size if hasattr(args, 'voxel_size') else 0.5
-                    actual_step_size = args.voxel_size if hasattr(args, 'voxel_size') else 0.5
-                    print(f"  📏 Debug voxel size parameters:")
-                    print(f"      args.voxel_size: {getattr(args, 'voxel_size', 'NOT_SET')}")
-                    print(f"      actual_voxel_size: {actual_voxel_size}")
-                    print(f"      actual_step_size: {actual_step_size}")
-                    
-                    synthesis_result = process_and_save(
-                        original_nifti_path=nifti_file,
-                        original_trk_path=base_trk_file,
-                        target_voxel_size=actual_voxel_size,
-                        target_dimensions=patch_dimensions,
-                        output_prefix=temp_output,
-                        num_jobs=getattr(args, 'num_jobs', 8),
-                        patch_center=patch_center_world.tolist(),  # Use world coordinates for centering
-                        use_gpu=use_gpu_for_synthesis,
-                        interpolation_method='rbf',  # Use RBF for better curvature preservation
-                        step_size=actual_step_size,
-                        max_output_gb=getattr(args, 'max_output_gb', 64.0),
-                        use_ants=False,  # Skip ANTs since already applied to base files
-                        force_dimensions=True
-                    )
-                    
-                    # Cancel timeout
-                    signal.alarm(0)
-                    print(f"  ✅ process_and_save returned successfully!")
-                    
-                    print(f"  📊 Synthesis process completed. Result type: {type(synthesis_result)}")
-                    if isinstance(synthesis_result, dict):
-                        print(f"      Success: {synthesis_result.get('success', 'unknown')}")
-                        print(f"      Keys: {list(synthesis_result.keys())}")
-                    else:
-                        print(f"      Result: {synthesis_result}")
+                if patch_folders:
+                    # Generate visualizations for first few patches
+                    viz_count = min(5, len(patch_folders))  # Limit to 5 patches to avoid overwhelming output
+                    for i, patch_info in enumerate(patch_folders[:viz_count]):
+                        print(f"Generating visualization for {patch_info['name']} ({i+1}/{viz_count})")
                         
-                except TimeoutError as timeout_error:
-                    signal.alarm(0)  # Cancel timeout
-                    print(f"  ⏰ Synthesis timed out after 10 minutes for patch {patch_idx}")
-                    print(f"  📋 This suggests the process is hanging during streamline processing")
-                    results['patches_failed'] += 1
-                    continue
-                except KeyboardInterrupt as kb_error:
-                    signal.alarm(0)  # Cancel timeout
-                    print(f"  ⛔ Process interrupted by user (Ctrl+C)")
-                    results['patches_failed'] += 1
-                    break
-                except SystemExit as sys_error:
-                    signal.alarm(0)  # Cancel timeout
-                    print(f"  🚪 Process called sys.exit(): {sys_error}")
-                    results['patches_failed'] += 1
-                    continue
-                except Exception as synthesis_error:
-                    signal.alarm(0)  # Cancel timeout
-                    print(f"  ❌ Synthesis failed with exception: {synthesis_error}")
-                    print(f"  🔍 Exception type: {type(synthesis_error).__name__}")
-                    import traceback
-                    print(f"  📋 Full traceback:")
-                    traceback.print_exc()
-                    results['patches_failed'] += 1
-                    continue
-                
-                # Check if synthesis was successful
-                # Success is determined by having synthesis outputs, not a 'success' flag
-                success = False
-                if synthesis_result is not None:
-                    if isinstance(synthesis_result, dict):
-                        # Check if we have synthesis outputs
-                        if 'synthesis_outputs' in synthesis_result:
-                            success = True
-                        elif synthesis_result.get('success', False):
-                            success = True
-                    else:
-                        # Non-None result might indicate success
-                        success = True
-                
-                if not success:
-                    print(f"  ⚠️  Synthesis failed for patch {patch_idx} (no valid output)")
-                    results['patches_failed'] += 1
-                    continue
+                        # Create individual viz output directory for this patch
+                        patch_viz_dir = os.path.join(viz_output_dir, patch_info['name'])
+                        os.makedirs(patch_viz_dir, exist_ok=True)
+                        
+                        patch_viz_args = argparse.Namespace(**vars(viz_args))
+                        patch_viz_args.viz_output_dir = patch_viz_dir
+                        patch_viz_args.viz_prefix = f"{patch_info['name']}_"
+                        
+                        run_visualization_stage(patch_info['nifti'], patch_info['trk'], patch_viz_args)
+                    
+                    print(f"✅ Generated visualizations for {viz_count} patches in: {viz_output_dir}")
                 else:
-                    print(f"  ✅ Synthesis succeeded for patch {patch_idx}!")
-                
-                # Move the synthesized files to the patch subfolder
-                temp_nifti = f"{temp_output}.nii.gz"
-                temp_trk = f"{temp_output}.trk"
-                
-                final_nifti = os.path.join(patch_subfolder, f"patch_{patch_idx:04d}.nii.gz")
-                final_trk = os.path.join(patch_subfolder, f"patch_{patch_idx:04d}_streamlines.trk")
-                
-                print(f"  🔍 Checking for temp files:")
-                print(f"    Expected NIfTI: {temp_nifti}")
-                print(f"    Expected TRK: {temp_trk}")
-                print(f"    NIfTI exists: {os.path.exists(temp_nifti)}")
-                print(f"    TRK exists: {os.path.exists(temp_trk)}")
-                
-                # List all files in temp directory for debugging
-                if os.path.exists(temp_dir):
-                    temp_files = os.listdir(temp_dir)
-                    print(f"    Files in temp dir: {temp_files}")
-                else:
-                    print(f"    ⚠️  Temp directory doesn't exist: {temp_dir}")
-                
-                files_moved = 0
-                
-                # Use shutil.move instead of os.rename to handle cross-device links
-                if os.path.exists(temp_nifti):
-                    shutil.move(temp_nifti, final_nifti)
-                    print(f"  ✅ Moved NIfTI: {temp_nifti} → {final_nifti}")
-                    files_moved += 1
-                else:
-                    print(f"  ❌ NIfTI file not found: {temp_nifti}")
-                
-                if os.path.exists(temp_trk):
-                    shutil.move(temp_trk, final_trk)
-                    print(f"  ✅ Moved TRK: {temp_trk} → {final_trk}")
-                    files_moved += 1
-                else:
-                    print(f"  ❌ TRK file not found: {temp_trk}")
-                    # Create placeholder TRK file
-                    print(f"  📝 Creating placeholder TRK file: {final_trk}")
-                    with open(final_trk, 'w') as f:
-                        f.write("# Empty TRK file - no streamlines processed\n")
-                
-                print(f"  📊 Files moved: {files_moved}/2")
-                
-            finally:
-                # Clean up temporary directory manually
-                if os.path.exists(temp_dir):
-                    shutil.rmtree(temp_dir)
-                    print(f"  Cleaned up temp dir: {temp_dir}")
-            
-            # Generate visualization if requested (outside temp directory handling)
-            if SYNTRACT_AVAILABLE and not getattr(args, 'skip_visualization', False):
-                try:
-                    from syntract_viewer.core import visualize_nifti_with_trk_coronal
-                    viz_path = os.path.join(patch_subfolder, f"patch_{patch_idx:04d}_visualization.png")
-                    visualize_nifti_with_trk_coronal(
-                        nifti_file=final_nifti,
-                        trk_file=final_trk,
-                        output_file=viz_path,
-                        n_slices=1,
-                        slice_idx=patch_dimensions[1] // 2,  # Middle slice
-                        streamline_percentage=100.0,
-                        save_masks=getattr(args, 'save_masks', False)
-                    )
-                    print(f"  Generated visualization: {viz_path}")
-                except Exception as viz_e:
-                    print(f"  Warning: Visualization failed: {viz_e}")
-            
-            patch_result = {
-                'patch_idx': patch_idx,
-                'center': patch_center,
-                'center_world_mm': patch_center_world.tolist(),
-                'dimensions': patch_dimensions,
-                'nifti_file': final_nifti,
-                'trk_file': final_trk,
-                'output_folder': patch_subfolder
-            }
-            
-            results['patches_extracted'] += 1
-            results['patch_details'].append(patch_result)
-            print(f"✓ Patch {patch_idx} completed successfully")
-                
-        except Exception as e:
-            results['patches_failed'] += 1
-            print(f"✗ Patch {patch_idx} failed with exception: {e}")
-    
-    # Save summary
-    import json
-    summary = {
-        'total_patches_requested': args.total_patches,
-        'patches_extracted': results['patches_extracted'],
-        'patches_failed': results['patches_failed'],
-        'patch_details': results['patch_details'],
-        'extraction_params': {
-            'patch_dimensions': patch_dimensions,
-            'base_image_shape': base_shape,
-            'random_state': getattr(args, 'random_state', None)
+                    print("⚠️  No patch files found for visualization generation")
+                    
+            except Exception as viz_error:
+                print(f"⚠️  Visualization generation failed: {viz_error}")
+                # Don't fail the entire patch extraction if visualization fails
+                pass
+        
+        return results
+        
+    except Exception as e:
+        print(f"❌ Patch extraction failed: {e}")
+        import traceback
+        print(f"Full traceback:")
+        traceback.print_exc()
+        
+        return {
+            'patches_extracted': 0,
+            'patches_failed': args.total_patches,
+            'error': str(e)
         }
-    }
-    
-    summary_path = os.path.join(patch_output_dir, "patch_extraction_summary.json")
-    with open(summary_path, 'w') as f:
-        json.dump(summary, f, indent=2)
-    
-    print(f"\nSummary saved: {summary_path}")
-    print(f"Patch extraction with re-synthesis completed!")
-    print(f"Output directory: {patch_output_dir}")
-    
-    return results
-
 
 def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size, 
                     use_ants=False, ants_warp_path=None, ants_iwarp_path=None, ants_aff_path=None,
                     slice_count=None, enable_slice_extraction=False, slice_output_dir=None,
                     use_simplified_slicing=True, force_full_slicing=False, auto_batch_process=False,
-                    patch_mode=False, patch_size_3d=None, num_patches=None,
                     enable_patch_extraction=False, patch_output_dir=None, total_patches=None,
                     patch_size=None, min_streamlines_per_patch=5, patch_prefix="patch_",
                     n_examples=10, viz_output_dir=None, viz_prefix="viz_"):
@@ -643,7 +423,7 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
             ants_warp_path=ants_warp_path,
             ants_iwarp_path=ants_iwarp_path,
             ants_aff_path=ants_aff_path,
-            step_size=voxel_size,  # CRITICAL: Match step size to voxel size for curvature preservation
+            step_size=voxel_size * 0.5,  # Use fine step size (0.5x voxel) for good curvature preservation
             interpolation_method='hermite'  # Use Hermite for base synthesis too
         )
         
@@ -680,8 +460,6 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                     'ants_warp_path': ants_warp_path,
                     'ants_iwarp_path': ants_iwarp_path,
                     'ants_aff_path': ants_aff_path,
-                    'patch_mode': patch_mode,
-                    'patch_size_3d': patch_size_3d,
                     'n_examples': n_examples,
                     'viz_prefix': viz_prefix
                 }))
@@ -751,26 +529,21 @@ Examples:
                             help="Automatically process all extracted slices through visualization")
     
     # Patch extraction parameters
-    patch_group = parser.add_argument_group("Patch Extraction")
-    patch_group.add_argument("--patch_mode", action="store_true",
-                            help="Enable 3D patch extraction mode (replaces slice extraction and disables auto batch)")
-    patch_group.add_argument("--patch_size_3d", type=int, nargs=3, default=[64, 64, 64],
-                            help="3D patch dimensions (x y z) in voxels")
-    patch_group.add_argument("--num_patches", type=int, default=10,
-                            help="Number of patches to extract in patch mode")
-    
-    # Legacy patch extraction (for backward compatibility)
+    patch_group = parser.add_argument_group("Robust Patch Extraction")
     patch_group.add_argument("--enable_patch_extraction", action="store_true",
-                            help="Enable legacy patch extraction from processed data")
+                            help="Enable robust 3D patch extraction with proper coordinate transformations")
     patch_group.add_argument("--patch_output_dir", 
-                            help="Directory for patch outputs")
-    patch_group.add_argument("--total_patches", type=int, default=100,
-                            help="Total number of patches to extract (legacy)")
-    patch_group.add_argument("--patch_size", type=int, nargs='+', default=[128, 128],
-                            help="Patch size - 2D: [width, height] or 3D: [width, height, depth]. "
-                                 "For re-synthesis mode, 3D dimensions become target synthesis size.")
-    patch_group.add_argument("--min_streamlines_per_patch", type=int, default=50,
-                            help="Minimum streamlines per patch (legacy)")
+                            help="Directory for patch outputs (default: 'patches')")
+    patch_group.add_argument("--total_patches", type=int, default=10,
+                            help="Total number of patches to extract (default: 10)")
+    patch_group.add_argument("--patch_size", type=int, nargs='+', default=[128, 128, 128],
+                            help="Patch size - 3D: [width, height, depth] or 2D: [width, height] (default: 128x128x128)")
+    patch_group.add_argument("--min_streamlines_per_patch", type=int, default=30,
+                            help="Minimum streamlines required per patch (default: 30)")
+    patch_group.add_argument("--max_patch_trials", type=int, default=100,
+                            help="Maximum trials per patch to find adequate streamlines (default: 100)")
+    patch_group.add_argument("--random_state", type=int, 
+                            help="Random seed for reproducible patch extraction")
     patch_group.add_argument("--patch_prefix", default="patch",
                             help="Prefix for patch files")
     
@@ -790,8 +563,7 @@ Examples:
             sys.exit(1)
     
     # Set up extraction mode
-    enable_slice_extraction = args.slice_count is not None and not args.patch_mode
-    enable_patch_mode = args.patch_mode
+    enable_slice_extraction = args.slice_count is not None
     slice_output_dir = args.slice_output_dir or f"{args.output}_slices"
     
     # Run the pipeline
@@ -811,9 +583,6 @@ Examples:
         use_simplified_slicing=True,
         force_full_slicing=False,
         auto_batch_process=args.auto_batch_process,
-        patch_mode=args.patch_mode,
-        patch_size_3d=args.patch_size_3d,
-        num_patches=args.num_patches,
         enable_patch_extraction=args.enable_patch_extraction,
         patch_output_dir=args.patch_output_dir,
         total_patches=args.total_patches,
