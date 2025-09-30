@@ -88,6 +88,8 @@ def run_visualization_stage(nifti_file, trk_file, args):
     viz_args.save_masks = True
     viz_args.use_high_density_masks = False
     viz_args.label_bundles = False
+    viz_args.enable_orange_blobs = args.enable_orange_blobs
+    viz_args.orange_blob_probability = args.orange_blob_probability
     viz_args.mask_thickness = 1
     viz_args.min_fiber_pct = 10.0
     viz_args.max_fiber_pct = 100.0
@@ -283,7 +285,9 @@ def run_patch_extraction_stage(nifti_file, trk_files, args):
             close_gaps=False,
             closing_footprint_size=3,
             label_bundles=False,
-            min_bundle_size=20
+            min_bundle_size=20,
+            enable_orange_blobs=getattr(args, 'enable_orange_blobs', False),
+            orange_blob_probability=getattr(args, 'orange_blob_probability', 0.3)
         )
         
         print(f"\n=== Patch Extraction Results ===")
@@ -402,7 +406,8 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                     use_simplified_slicing=True, force_full_slicing=False, auto_batch_process=False,
                     enable_patch_extraction=False, patch_output_dir=None, total_patches=None,
                     patch_size=None, min_streamlines_per_patch=5, patch_prefix="patch_",
-                    n_examples=10, viz_output_dir=None, viz_prefix="viz_"):
+                    n_examples=10, viz_output_dir=None, viz_prefix="viz_",
+                    enable_orange_blobs=False, orange_blob_probability=0.3):
     """Main processing function"""
     import signal
     import sys
@@ -487,7 +492,9 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                     'ants_iwarp_path': ants_iwarp_path,
                     'ants_aff_path': ants_aff_path,
                     'n_examples': n_examples,
-                    'viz_prefix': viz_prefix
+                    'viz_prefix': viz_prefix,
+                    'enable_orange_blobs': enable_orange_blobs,
+                    'orange_blob_probability': orange_blob_probability
                 }))
             
             return {'success': True, 'stage': 'patch_extraction', 'result': patch_result}
@@ -579,6 +586,11 @@ Examples:
                           help="Number of visualization examples to generate")
     viz_group.add_argument("--viz_prefix", type=str, default="synthetic_", 
                           help="Prefix for visualization files")
+    viz_group.add_argument("--enable_orange_blobs", action="store_true",
+                          help="Enable orange blob generation to simulate injection site artifacts")
+    viz_group.add_argument("--orange_blob_probability", type=float, default=0.3,
+                          help="Probability of applying orange blobs to each visualization (0.0-1.0, default: 0.3)")
+    
     
     args = parser.parse_args()
     
@@ -616,7 +628,9 @@ Examples:
         min_streamlines_per_patch=args.min_streamlines_per_patch,
         patch_prefix=args.patch_prefix,
         n_examples=args.n_examples,
-        viz_prefix=args.viz_prefix
+        viz_prefix=args.viz_prefix,
+        enable_orange_blobs=args.enable_orange_blobs,
+        orange_blob_probability=args.orange_blob_probability
     )
     
     if not result['success']:

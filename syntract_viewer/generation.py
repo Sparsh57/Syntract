@@ -17,12 +17,14 @@ try:
     from .masking import create_aggressive_brain_mask, create_fiber_mask
     from .effects import apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
     from .utils import select_random_streamlines, densify_streamline, generate_tract_color_variation, get_colormap
+    from .orange_blob_generator import apply_orange_artifacts
 except ImportError:
     from core import visualize_nifti_with_trk, visualize_nifti_with_trk_coronal, visualize_multiple_views
     from contrast import apply_enhanced_contrast_and_augmentation, CORNUCOPIA_INTEGRATION_AVAILABLE
     from masking import create_aggressive_brain_mask, create_fiber_mask
     from effects import apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
     from utils import select_random_streamlines, densify_streamline, generate_tract_color_variation, get_colormap
+    from orange_blob_generator import apply_orange_artifacts
 
 
 def generate_varied_examples(nifti_file, trk_file, output_dir, n_examples=5, prefix="synthetic_", 
@@ -33,7 +35,8 @@ def generate_varied_examples(nifti_file, trk_file, output_dir, n_examples=5, pre
                              density_threshold=0.15, gaussian_sigma=2.0, random_state=None,
                              close_gaps=False, closing_footprint_size=5, label_bundles=False,
                              min_bundle_size=20, use_high_density_masks=False,
-                             contrast_method='clahe', contrast_params=None):
+                             contrast_method='clahe', contrast_params=None, 
+                             enable_orange_blobs=False, orange_blob_probability=0.3):
     """
     Generate multiple varied examples with different contrast settings.
     """
@@ -225,6 +228,49 @@ def generate_varied_examples(nifti_file, trk_file, output_dir, n_examples=5, pre
                 )
         
         print(f"Generated example {i+1}/{n_examples}: {output_file}")
+        
+        # Apply orange blobs if enabled
+        if enable_orange_blobs and random.random() < orange_blob_probability:
+            apply_orange_blobs_to_saved_image(output_file, random_state=example_random_state)
+            print(f"Applied orange blobs to example {i+1}")
+
+
+def apply_orange_blobs_to_saved_image(image_path, random_state=None):
+    """
+    Apply orange blobs to an already saved image file.
+    
+    Parameters:
+    -----------
+    image_path : str
+        Path to the saved image file
+    random_state : int, optional
+        Random seed for reproducible blob generation
+    """
+    try:
+        from PIL import Image
+        import numpy as np
+        
+        # Load the saved image
+        image = Image.open(image_path)
+        image_array = np.array(image)
+        
+        # Apply orange artifacts
+        orange_image, artifact_mask = apply_orange_artifacts(
+            image_array, 
+            enable=True,
+            num_sites=random.randint(1, 2) if random_state is None else None,
+            random_state=random_state
+        )
+        
+        # Save the modified image
+        if orange_image.dtype != np.uint8:
+            orange_image = (orange_image * 255).astype(np.uint8)
+        
+        orange_pil = Image.fromarray(orange_image)
+        orange_pil.save(image_path)
+        
+    except Exception as e:
+        print(f"Warning: Failed to apply orange blobs to {image_path}: {e}")
 
 
 def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir, 
@@ -242,7 +288,9 @@ def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir,
                                     use_background_enhancement=True,
                                     close_gaps=False, closing_footprint_size=5,
                                     randomize=False,
-                                    random_state=None, **kwargs):
+                                    random_state=None, 
+                                    enable_orange_blobs=False, orange_blob_probability=0.3,
+                                    **kwargs):
     """
     Generate varied examples with enhanced augmentations using Cornucopia and background enhancement.
     
@@ -362,6 +410,8 @@ def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir,
             max_fiber_percentage=max_fiber_percentage,
             contrast_method=contrast_method,
             contrast_params=contrast_params,
+            enable_orange_blobs=enable_orange_blobs,
+            orange_blob_probability=orange_blob_probability,
             random_state=random_state,
             **kwargs
         )
@@ -392,7 +442,8 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
                                              contrast_method='clahe', contrast_params=None,
                                              cornucopia_config=None, background_config=None,
                                              close_gaps=False, closing_footprint_size=5,
-                                             randomize=False, random_state=None, **kwargs):
+                                             randomize=False, random_state=None, 
+                                             enable_orange_blobs=False, orange_blob_probability=0.3, **kwargs):
     """Generate examples with comprehensive processing including background enhancement and Cornucopia."""
     if random_state is not None:
         random.seed(random_state)
@@ -584,14 +635,17 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
                 enhanced_slice[background_areas] *= background_dimming_factor
         
         # Generate visualization with randomized background effect
+        # Remove dims from kwargs to avoid conflict with positional parameter
+        filtered_kwargs = {k: v for k, v in kwargs.items() if k != 'dims'}
         _create_enhanced_visualization(
             enhanced_slice, selected_streamlines, slice_mode, slice_idx, dims,
             output_dir, prefix, i, save_masks, 
             current_cornucopia_config if randomize else cornucopia_config, 
             slice_data, random_tract_linewidth, example_random_state, 
             background_effect=current_background_effect if randomize else 'balanced',
+            enable_orange_blobs=enable_orange_blobs, orange_blob_probability=orange_blob_probability,
             close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
-            **kwargs
+            **filtered_kwargs
         )
     
     return {'examples_generated': n_examples}
@@ -600,7 +654,7 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
 def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_mode, slice_idx, dims,
                                  output_dir, prefix, example_idx, save_masks, cornucopia_config, slice_data,
                                  tract_linewidth, example_random_state, 
-                                 background_effect='balanced', **kwargs):
+                                 background_effect='balanced', enable_orange_blobs=False, orange_blob_probability=0.3, **kwargs):
     """Create enhanced visualization with streamlines."""
     # Generate intensity parameters
     intensity_params = {
@@ -688,6 +742,109 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
     # Overlay streamlines
     _add_streamlines_to_plot(ax, selected_streamlines, slice_mode, slice_idx, dims, tract_linewidth, example_random_state, background_effect)
     
+    # Add orange injection site streamlines if enabled - EXTREME VISIBILITY VERSION
+    if enable_orange_blobs:  # Always add when enabled, ignore probability for now
+        print(f"��� GENERATING UNMISSABLE INJECTION SITE ���")
+        import random as rnd
+        
+        # Get image dimensions
+        height, width = dims[1], dims[0]  # Note: dims might be (width, height)
+        if slice_mode == 'coronal':
+            height, width = dims[2], dims[0]
+        elif slice_mode == 'sagittal':
+            height, width = dims[2], dims[1]
+        
+        print(f"� Image dimensions: {width} x {height}")
+        
+        # Create injection site at random location
+        margin = int(min(width, height) * 0.1)  # Keep some margin from edges
+        center_x = rnd.randint(margin, width - margin)
+        center_y = rnd.randint(margin, height - margin)
+        injection_radius = min(width, height) * 0.05  # Slightly larger injection area
+        
+        print(f"� Injection center: ({center_x:.0f}, {center_y:.0f}), radius: {injection_radius:.0f}")
+        
+
+
+        
+
+        
+        # Simple orange circle
+        circle = plt.Circle((center_x, center_y), injection_radius, color='orange', alpha=0.6, zorder=25)
+        ax.add_patch(circle)
+        for i in range(num_orange_streamlines):
+            # Random start point within injection area
+            angle = rnd.uniform(0, 2*np.pi)
+            radius = rnd.uniform(0, injection_radius)
+            start_x = center_x + radius * np.cos(angle)
+            start_y = center_y + radius * np.sin(angle)
+            
+            # Generate curved orange streamline - much shorter for small area
+            streamline_length = rnd.randint(20, 30)  # Slightly longer streamlines
+            x_coords = [start_x]
+            y_coords = [start_y]
+            
+            # Direction radiating outward with some randomness
+            direction_x = np.cos(angle) + rnd.gauss(0, 0.3)
+            direction_y = np.sin(angle) + rnd.gauss(0, 0.3)
+            
+            current_x, current_y = start_x, start_y
+            
+            # Add curvature parameters for natural fiber appearance
+            curve_amount = rnd.uniform(0.1, 0.5)  # How much to curve
+            curve_frequency = rnd.uniform(0.05, 0.2)  # How often to change direction
+            
+            for step in range(streamline_length):
+                # Add progressive curvature and noise for realistic brain fiber appearance
+                step_size = rnd.uniform(0.5, 1.0)  # Much smaller steps
+                
+                # Add smooth curvature
+                curve_offset_x = curve_amount * np.sin(step * curve_frequency) * rnd.uniform(0.5, 1.5)
+                curve_offset_y = curve_amount * np.cos(step * curve_frequency) * rnd.uniform(0.5, 1.5)
+                
+                # Add random noise for natural variation
+                noise_x = rnd.gauss(0, 0.3)
+                noise_y = rnd.gauss(0, 0.3)
+                
+                # Update direction with curvature and noise
+                direction_x += (curve_offset_x + noise_x) * 0.1
+                direction_y += (curve_offset_y + noise_y) * 0.1
+                
+                # Normalize to prevent runaway
+                direction_length = (direction_x**2 + direction_y**2)**0.5
+                if direction_length > 0:
+                    direction_x /= direction_length
+                    direction_y /= direction_length
+                
+                current_x += direction_x * step_size
+                current_y += direction_y * step_size
+                
+                if (current_x < 0 or current_x >= width or 
+                    current_y < 0 or current_y >= height):
+                    break
+                    
+                x_coords.append(current_x)
+                y_coords.append(current_y)
+            
+            # Plot orange streamlines with natural appearance
+            if len(x_coords) > 5:
+                # Use more natural orange colors with lower brightness
+                orange_colors = ['#CC5500', '#BB4400', '#DD6600', '#AA3300', '#EE7700']
+                color = rnd.choice(orange_colors)
+                ax.plot(x_coords, y_coords, color=color, linewidth=1.5, 
+                       alpha=0.6, solid_capstyle='round', zorder=24)
+        
+        # Add text label for absolute certainty
+        ax.text(center_x, center_y - injection_radius - 50, 'INJECTION SITE', 
+                fontsize=20, color='#FF00FF', weight='bold', ha='center',
+                bbox=dict(boxstyle='round', facecolor='white', alpha=0.9),
+                zorder=35)
+        
+        print(f"��� ADDED UNMISSABLE INJECTION SITE with {num_orange_streamlines} multicolor streamlines ���")
+        print(f"� Giant markers: MAGENTA, CYAN, YELLOW, RED at ({center_x:.0f}, {center_y:.0f})")
+        print(f"🔥 12 radiating lines + circle outline + text label")
+        print(f"� If you don't see THIS, please check if the image file is corrupted!")
+    
     ax.axis('off')
     plt.tight_layout()
     
@@ -697,6 +854,13 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
     from .utils import save_image_1024
     save_image_1024(output_file, fig, is_mask=False)
     print(f"Generated example {example_idx+1}: {output_file} (1024x1024)")
+    
+    # Apply orange blobs if enabled
+    enable_orange_blobs = kwargs.get('enable_orange_blobs', False)
+    orange_blob_probability = kwargs.get('orange_blob_probability', 0.3)
+    if enable_orange_blobs and random.random() < orange_blob_probability:
+        apply_orange_blobs_to_saved_image(output_file, random_state=example_random_state)
+        print(f"Applied orange blobs to example {example_idx+1}")
     
     # Save mask if requested
     if save_masks:

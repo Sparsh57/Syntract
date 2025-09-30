@@ -88,6 +88,8 @@ def generate_examples_original_mode(args, background_enhancement_available):
         sharpening_strength=args.sharpening_strength,
         use_cornucopia_per_example=args.cornucopia_preset is not None and not args.randomize,
         use_background_enhancement=background_enhancement_available,
+        enable_orange_blobs=args.enable_orange_blobs,
+        orange_blob_probability=args.orange_blob_probability,
         randomize=args.randomize
     )
 
@@ -215,6 +217,8 @@ def generate_examples_with_spatial_subdivisions(args, background_enhancement_ava
                             sharpening_strength=args.sharpening_strength,
                             use_cornucopia_per_example=args.cornucopia_preset is not None and not args.randomize,
                             use_background_enhancement=background_enhancement_available,
+                            enable_orange_blobs=args.enable_orange_blobs,
+                            orange_blob_probability=args.orange_blob_probability,
                             randomize=args.randomize
                         )
                         
@@ -445,6 +449,12 @@ def main():
                         help='Randomize parameters per example: min/max streamline percentage (5-30%% to 70-100%% for balanced, '
                              '15-40%% to 80-100%% for blockface_preserving), streamline appearance (linewidth 0.5-1.5), '
                              'cornucopia preset (None/aggressive/clinical_simulation), and background effect (balanced/blockface_preserving)')
+    
+    # Orange blob injection site simulation parameters
+    parser.add_argument('--enable_orange_blobs', action='store_true',
+                        help='Enable orange blob generation to simulate injection site artifacts')
+    parser.add_argument('--orange_blob_probability', type=float, default=0.3,
+                        help='Probability of applying orange blobs to each generated example (0.0-1.0, default: 0.3)')
     
     args = parser.parse_args()
     
