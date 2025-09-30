@@ -39,13 +39,24 @@ except ImportError:
 class CornucopiaAugmenter:
     """Advanced medical imaging augmentation using Cornucopia transforms."""
     
-    def __init__(self, device='auto', random_state=None):
+    def __init__(self, device='auto', random_state=None, truly_random=False):
         self.device = self._get_device(device)
         self.random_state = random_state
+        self.truly_random = truly_random
         
-        if random_state is not None:
-            torch.manual_seed(random_state)
+        if truly_random:
+            # Use current time for truly random augmentations
+            import time
+            true_random_seed = int(time.time() * 1000000) % (2**32)
+            if TORCH_AVAILABLE:
+                torch.manual_seed(true_random_seed)
+            np.random.seed(true_random_seed)
+            random.seed(true_random_seed)
+        elif random_state is not None:
+            if TORCH_AVAILABLE:
+                torch.manual_seed(random_state)
             np.random.seed(random_state)
+            random.seed(random_state)
         
         self.noise_transforms = self._init_noise_transforms()
         self.intensity_transforms = self._init_intensity_transforms()
@@ -458,11 +469,32 @@ def create_augmentation_presets():
     }
 
 
+    
+    
+def create_augmentation_presets(truly_random=False):
+    """Create different presets for medical imaging augmentations."""
+    presets = {}
+    
+    # Standard presets (existing)
+    if CORNUCOPIA_AVAILABLE:
+        presets['clinical_simulation'] = CornucopiaAugmenter(
+            random_state=None if truly_random else 42, 
+            truly_random=truly_random
+        )
+        presets['aggressive'] = CornucopiaAugmenter(
+            random_state=None if truly_random else 123, 
+            truly_random=truly_random
+        )
+    
+    return presets
+
+
 def augment_fiber_slice(slice_data: np.ndarray, 
                        preset: str = 'clinical_simulation',
                        custom_config: Optional[Dict[str, Any]] = None,
-                       random_state: Optional[int] = None) -> np.ndarray:
-    """Convenient function to augment a single fiber slice."""
+                       random_state: Optional[int] = None,
+                       truly_random: bool = False) -> np.ndarray:
+    """Convenient function to augment a single fiber slice with true randomization support."""
     # Normalize input data to [0,1] more carefully to preserve brain-background contrast
     original_min = np.min(slice_data)
     original_max = np.max(slice_data)

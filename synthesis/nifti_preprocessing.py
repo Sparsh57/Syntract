@@ -6,6 +6,50 @@ import gc
 import math
 from joblib import Parallel, delayed
 
+def cubic_kernel(x):
+    """Cubic interpolation kernel (Mitchell-Netravali)"""
+    x = np.abs(x)
+    if isinstance(x, np.ndarray):
+        result = np.zeros_like(x)
+        # First piece: 0 <= x < 1
+        mask1 = x < 1
+        result[mask1] = (21*x[mask1]**3 - 36*x[mask1]**2 + 16) / 18
+        # Second piece: 1 <= x < 2  
+        mask2 = (x >= 1) & (x < 2)
+        result[mask2] = (-7*x[mask2]**3 + 36*x[mask2]**2 - 60*x[mask2] + 32) / 18
+        return result
+    else:
+        if x < 1:
+            return (21*x**3 - 36*x**2 + 16) / 18
+        elif x < 2:
+            return (-7*x**3 + 36*x**2 - 60*x + 32) / 18
+        else:
+            return 0
+
+def interpolate_point(data_in, i, j, k):
+    """High-quality cubic interpolation for a single point"""
+    # Tricubic interpolation
+    i_center, j_center, k_center = int(round(i)), int(round(j)), int(round(k))
+    
+    result = 0.0
+    total_weight = 0.0
+    
+    for di in range(-1, 3):  # 4x4x4 neighborhood
+        for dj in range(-1, 3):
+            for dk in range(-1, 3):
+                ii, jj, kk = i_center + di, j_center + dj, k_center + dk
+                
+                if (0 <= ii < data_in.shape[0] and 0 <= jj < data_in.shape[1] and 0 <= kk < data_in.shape[2]):
+                    weight_i = cubic_kernel(i - ii)
+                    weight_j = cubic_kernel(j - jj) 
+                    weight_k = cubic_kernel(k - kk)
+                    weight = weight_i * weight_j * weight_k
+                    
+                    result += data_in[ii, jj, kk] * weight
+                    total_weight += weight
+    
+    return result / max(total_weight, 1e-10)
+
 def estimate_memory_usage(shape, dtype=np.float32):
     """
     Estimate memory usage for an array with given shape and dtype.
@@ -29,7 +73,7 @@ def estimate_memory_usage(shape, dtype=np.float32):
 
 def resample_nifti(old_img, new_affine, new_shape, chunk_size=(64, 64, 64), n_jobs=-1, use_gpu=True, max_output_gb=64):
     """
-    Resample a NIfTI image to a new resolution and shape using GPU or CPU.
+    Resample a NIfTI image to a new resolution and shape using high-quality cubic interpolation.
 
     Parameters
     ----------
@@ -89,12 +133,8 @@ def resample_nifti(old_img, new_affine, new_shape, chunk_size=(64, 64, 64), n_jo
                     j = old_affine_inv[1, 0] * x_mm + old_affine_inv[1, 1] * y_mm + old_affine_inv[1, 2] * z_mm + old_affine_inv[1, 3]
                     k = old_affine_inv[2, 0] * x_mm + old_affine_inv[2, 1] * y_mm + old_affine_inv[2, 2] * z_mm + old_affine_inv[2, 3]
                     
-                    i_int = int(i)
-                    j_int = int(j)
-                    k_int = int(k)
-                    
-                    if 0 <= i_int < data_in.shape[0] and 0 <= j_int < data_in.shape[1] and 0 <= k_int < data_in.shape[2]:
-                        new_data[x, y, z] = data_in[i_int, j_int, k_int]
+                    # Use cubic interpolation for high quality results
+                    new_data[x, y, z] = interpolate_point(data_in, i, j, k)
             
             data_in = xp.asarray(old_img.get_fdata(), dtype=xp.float32)
             old_affine_inv = xp.linalg.inv(xp.asarray(old_img.affine))
@@ -119,12 +159,9 @@ def resample_nifti(old_img, new_affine, new_shape, chunk_size=(64, 64, 64), n_jo
                         j = old_affine_inv[1, 0] * x_mm + old_affine_inv[1, 1] * y_mm + old_affine_inv[1, 2] * z_mm + old_affine_inv[1, 3]
                         k = old_affine_inv[2, 0] * x_mm + old_affine_inv[2, 1] * y_mm + old_affine_inv[2, 2] * z_mm + old_affine_inv[2, 3]
                         
-                        i_int = int(i)
-                        j_int = int(j)
-                        k_int = int(k)
-                        
-                        if 0 <= i_int < data_in.shape[0] and 0 <= j_int < data_in.shape[1] and 0 <= k_int < data_in.shape[2]:
-                            chunk_data[x, y, z] = data_in[i_int, j_int, k_int]
+                        # Use cubic interpolation for high quality results
+                        val = interpolate_point(data_in, i, j, k)
+                        chunk_data[x, y, z] = val
                 
                 for x_start in range(0, new_shape[0], max_chunk_size[0]):
                     x_end = min(x_start + max_chunk_size[0], new_shape[0])

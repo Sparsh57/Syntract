@@ -1,13 +1,4 @@
-#!/usr/bin/env python
-"""
-Streamlined MRI Synthesis and Visualization Pipeline
-
-This script provides a unified interface for processing NIfTI/TRK data
-and generating visualizations with minimal parameters.
-
-Usage:
-    python syntract.py --input brain.nii.gz --trk fibers.trk [options]
-"""
+#!/usr/bin/env python\n\"\"\"\nStreamlined MRI Synthesis and Visualization Pipeline\n\nThis script provides a unified interface for processing NIfTI/TRK data\nand generating visualizations with minimal parameters.\n\nENHANCED CORNUCOPIA FEATURES:\n- Expanded cornucopia preset options from 6 to 16+ different background styles\n- Added new creative presets: high_contrast, minimal_noise, speckle_heavy, \n  debris_field, smooth_gradients, mixed_effects, clean_gradients, textured_background\n- Implemented weighted selection system for balanced distribution of preset types\n- Categorized presets into clean (35%), subtle (35%), moderate (20%), heavy (10%)\n- This ensures diverse background appearances while maintaining medical realism\n\nUsage:\n    python syntract.py --input brain.nii.gz --trk fibers.trk [options]\n\"\"\"
 
 import argparse
 import os
@@ -310,11 +301,35 @@ def run_patch_extraction_stage(nifti_file, trk_files, args):
             viz_output_dir = os.path.join(patch_output_dir, "visualizations")
             os.makedirs(viz_output_dir, exist_ok=True)
             
-            # Create visualization arguments
+            # Create visualization arguments with full configuration
             viz_args = argparse.Namespace()
             viz_args.viz_output_dir = viz_output_dir
             viz_args.n_examples = min(10, results['patches_extracted'])  # Generate examples for up to 10 patches
             viz_args.viz_prefix = "patch_viz_"
+            
+            # Add comprehensive visualization parameters 
+            viz_args.n_slices = 1
+            viz_args.slice_mode = "axial"
+            viz_args.cmap = "gray"
+            viz_args.tract_color = (1.0, 0.8, 0.1)
+            viz_args.tract_color_variation = 0.3
+            viz_args.tract_linewidth = 1.0
+            viz_args.streamline_percentage = 100.0
+            viz_args.save_masks = True
+            viz_args.mask_thickness = 1
+            viz_args.min_fiber_pct = 10.0
+            viz_args.max_fiber_pct = 100.0
+            viz_args.min_bundle_size = 20
+            viz_args.density_threshold = 0.15
+            viz_args.contrast_method = "clahe"
+            viz_args.background_preset = "preserve_edges"
+                        # Use comprehensive cornucopia presets for maximum variation\n            available_presets = [\n                'disabled', 'clean_optical', 'gamma_speckle', 'optical_with_debris', \n                'heavy_speckle', 'subtle_debris', 'clinical_simulation', 'aggressive',\n                'high_contrast', 'minimal_noise', 'speckle_light', 'debris_field',\n                'smooth_gradients', 'mixed_effects', 'clean_gradients', 'textured_background',\n                # Additional combinations for even more variety\n                'clean_optical', 'gamma_speckle', 'optical_with_debris', # Repeat popular ones\n                'heavy_speckle', 'subtle_debris', 'minimal_noise'  # For balanced distribution\n            ]\n            viz_args.cornucopia_preset = \"disabled\"  # Will be overridden per patch
+            viz_args.enable_sharpening = False
+            viz_args.sharpening_strength = 1.0
+            viz_args.close_gaps = False
+            viz_args.closing_footprint_size = 3
+            viz_args.randomize = True
+            viz_args.random_state = None  # Use different random state for each patch
             
             try:
                 # Find and visualize some of the extracted patches
@@ -344,6 +359,17 @@ def run_patch_extraction_stage(nifti_file, trk_files, args):
                         patch_viz_args = argparse.Namespace(**vars(viz_args))
                         patch_viz_args.viz_output_dir = patch_viz_dir
                         patch_viz_args.viz_prefix = f"{patch_info['name']}_"
+                        
+                        # Randomize parameters for each patch to add variation
+                        import random
+                        import time
+                        random.seed(int(time.time() * 1000000) % (2**32))  # Truly random seed
+                        
+                                                # Sophisticated weighted cornucopia preset selection for maximum variety\n                        # Organize presets by category for balanced distribution\n                        clean_presets = ['disabled', 'clean_optical', 'minimal_noise', 'smooth_gradients', 'clean_gradients']\n                        subtle_presets = ['gamma_speckle', 'subtle_debris', 'clinical_simulation']\n                        moderate_presets = ['optical_with_debris', 'mixed_effects']\n                        heavy_presets = ['heavy_speckle', 'aggressive', 'high_contrast', 'speckle_light', 'debris_field', 'textured_background']\n                        \n                        # Weighted selection: favor medical realism but ensure variety\n                        preset_weights = {\n                            'clean': 0.35,    # 35% clean/minimal for medical realism\n                            'subtle': 0.35,   # 35% subtle effects\n                            'moderate': 0.20, # 20% moderate effects\n                            'heavy': 0.10     # 10% heavy effects for variety\n                        }\n                        \n                        rand_val = random.random()\n                        if rand_val < preset_weights['clean']:\n                            selected_presets = clean_presets\n                        elif rand_val < preset_weights['clean'] + preset_weights['subtle']:\n                            selected_presets = subtle_presets\n                        elif rand_val < preset_weights['clean'] + preset_weights['subtle'] + preset_weights['moderate']:\n                            selected_presets = moderate_presets\n                        else:\n                            selected_presets = heavy_presets\n                        \n                        patch_viz_args.cornucopia_preset = random.choice(selected_presets)\n                        print(f\"    Selected cornucopia preset: {patch_viz_args.cornucopia_preset}\")
+                        
+                        # Randomize other parameters
+                        patch_viz_args.tract_color_variation = random.uniform(0.2, 0.4)
+                        patch_viz_args.random_state = None  # Use truly random for each patch
                         
                         run_visualization_stage(patch_info['nifti'], patch_info['trk'], patch_viz_args)
                     
@@ -536,8 +562,8 @@ Examples:
                             help="Directory for patch outputs (default: 'patches')")
     patch_group.add_argument("--total_patches", type=int, default=10,
                             help="Total number of patches to extract (default: 10)")
-    patch_group.add_argument("--patch_size", type=int, nargs='+', default=[128, 128, 128],
-                            help="Patch size - 3D: [width, height, depth] or 2D: [width, height] (default: 128x128x128)")
+    patch_group.add_argument("--patch_size", type=int, nargs='+', default=[300, 15, 300],
+                            help="Patch size - 3D: [width, height, depth] or 2D: [width, height] (default: 300x15x300 for good resolution with reasonable thickness)")
     patch_group.add_argument("--min_streamlines_per_patch", type=int, default=30,
                             help="Minimum streamlines required per patch (default: 30)")
     patch_group.add_argument("--max_patch_trials", type=int, default=100,

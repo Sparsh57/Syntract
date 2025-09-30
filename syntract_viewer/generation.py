@@ -443,7 +443,8 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
                 except ImportError:
                     from cornucopia_augmentation import create_augmentation_presets
                 
-                presets = create_augmentation_presets()
+                # Use truly random presets when randomizing
+                presets = create_augmentation_presets(truly_random=True)
                 cornucopia_configs.update(presets)
             except Exception as e:
                 print(f"Warning: Failed to load cornucopia presets: {e}")
@@ -451,10 +452,18 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
     # Generate examples
     for i in range(n_examples):
         example_random_state = None
-        if random_state is not None:
+        if random_state is not None and not randomize:
+            # Only use fixed random state if randomization is disabled
             example_random_state = random_state + i
             random.seed(example_random_state)
             np.random.seed(example_random_state)
+        elif randomize:
+            # For true randomization, use current time + example index as seed
+            import time
+            true_random_seed = int(time.time() * 1000000) + i * 1000 + random.randint(1, 999)
+            random.seed(true_random_seed)
+            np.random.seed(true_random_seed)
+            print(f"Example {i+1} using truly random seed: {true_random_seed}")
 
         # Randomize parameters if requested
         if randomize:
@@ -632,7 +641,7 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
             dark_field_slice[background_areas] *= background_dimming_factor
     
     # Create visualization
-    fig, ax = plt.subplots(figsize=(8, 8))
+    fig, ax = plt.subplots(figsize=(10, 10))  # Increased for better 1024x1024 output
     fig.patch.set_facecolor('black')
     
     # Get colormap
@@ -684,16 +693,18 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
     
     # Save result
     output_file = os.path.join(output_dir, f"{prefix}{example_idx+1:03d}.png")
-    plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor='black', pad_inches=0)
-    print(f"Generated example {example_idx+1}: {output_file}")
+    # Import resize utility
+    from .utils import save_image_1024
+    save_image_1024(output_file, fig, is_mask=False)
+    print(f"Generated example {example_idx+1}: {output_file} (1024x1024)")
     
     # Save mask if requested
     if save_masks:
         mask_dir = os.path.dirname(output_file)
         mask_basename = os.path.splitext(os.path.basename(output_file))[0]
         mask_filename = f"{mask_dir}/{mask_basename}_mask_slice{slice_idx}.png"
-        plt.imsave(mask_filename, mask, cmap='gray')
-        print(f"Saved mask for slice {slice_idx} to {mask_filename}")
+        save_image_1024(mask_filename, mask, is_mask=True)
+        print(f"Saved mask for slice {slice_idx} to {mask_filename} (1024x1024)")
         
         # Save labeled bundles if requested
         label_bundles = kwargs.get('label_bundles', False)
@@ -848,8 +859,9 @@ def _apply_high_density_masks_axial(output_file, high_density_masks, high_densit
         mask_basename = os.path.splitext(os.path.basename(output_file))[0]
         mask_filename = f"{mask_dir}/{mask_basename}_mask_slice{slice_idx}.png"
         
-        plt.imsave(mask_filename, high_density_masks[slice_idx], cmap='gray')
-        print(f"Applied high-density mask for axial slice {slice_idx}: {mask_filename}")
+        from .utils import save_image_1024
+        save_image_1024(mask_filename, high_density_masks[slice_idx], is_mask=True)
+        print(f"Applied high-density mask for axial slice {slice_idx}: {mask_filename} (1024x1024)")
         
         if label_bundles and slice_idx in high_density_labeled_masks:
             from .utils import visualize_labeled_bundles
@@ -871,8 +883,9 @@ def _apply_high_density_masks_coronal(output_file, high_density_masks, high_dens
         mask_basename = os.path.splitext(os.path.basename(output_file))[0]
         mask_filename = f"{mask_dir}/{mask_basename}_mask_slice{slice_idx}.png"
         
-        plt.imsave(mask_filename, high_density_masks[slice_idx], cmap='gray')
-        print(f"Applied high-density mask for coronal slice {slice_idx}: {mask_filename}")
+        from .utils import save_image_1024
+        save_image_1024(mask_filename, high_density_masks[slice_idx], is_mask=True)
+        print(f"Applied high-density mask for coronal slice {slice_idx}: {mask_filename} (1024x1024)")
         
         if label_bundles and slice_idx in high_density_labeled_masks:
             from .utils import visualize_labeled_bundles
@@ -891,8 +904,9 @@ def _apply_high_density_masks_multiview(output_file, high_density_masks, high_de
     for view, mask in high_density_masks.items():
         if mask is not None:
             mask_filename = f"{mask_dir}/{mask_basename}_mask_{view}.png"
-            plt.imsave(mask_filename, mask, cmap='gray')
-            print(f"Applied high-density mask for {view} view: {mask_filename}")
+            from .utils import save_image_1024
+            save_image_1024(mask_filename, mask, is_mask=True)
+            print(f"Applied high-density mask for {view} view: {mask_filename} (1024x1024)")
             
             if label_bundles and view in high_density_labeled_masks:
                 from .utils import visualize_labeled_bundles

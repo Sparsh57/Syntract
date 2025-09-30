@@ -71,6 +71,18 @@ def batch_process_trk_files(nifti_path, trk_dir, **processing_kwargs):
     print(f"Using NIfTI file: {nifti_path}")
     print("="*60)
     
+    # Check if patch extraction is enabled
+    enable_patch_extraction = processing_kwargs.get('enable_patch_extraction', False)
+    total_patches = processing_kwargs.get('total_patches', 100)
+    
+    if enable_patch_extraction:
+        print(f"Patch extraction enabled - distributing {total_patches} patches across {len(files)} TRK files")
+        patches_per_file = max(1, total_patches // len(files))
+        remaining_patches = total_patches - (patches_per_file * len(files))
+        print(f" Base patches per file: {patches_per_file}")
+        if remaining_patches > 0:
+            print(f"Extra patches distributed to first {remaining_patches} files")
+    
     for i, trk_filename in enumerate(files, 1):
         trk_path = os.path.join(trk_dir, trk_filename)
         # Use naming pattern similar to your CLI command
@@ -89,7 +101,22 @@ def batch_process_trk_files(nifti_path, trk_dir, **processing_kwargs):
         output_prefix = os.path.join(processed_files_dir, f"processed_{base_name}")
         viz_output = visualizations_dir
         
-        print(f"\nProcessing {i}/{len(files)}: {trk_filename}")
+        # Handle patch extraction distribution
+        current_kwargs = processing_kwargs.copy()
+        if enable_patch_extraction:
+            # Calculate patches for this specific file
+            extra_patch = 1 if (i - 1) < remaining_patches else 0
+            patches_for_file = patches_per_file + extra_patch
+            
+            # Update patch extraction parameters for this file
+            current_kwargs['total_patches'] = patches_for_file
+            current_kwargs['patch_output_dir'] = os.path.join(main_output_dir, "patches", base_name)
+            current_kwargs['patch_prefix'] = f"{base_name}_patch"
+            
+            print(f"\n📦 Processing {i}/{len(files)}: {trk_filename} ({patches_for_file} patches)")
+        else:
+            print(f"\nProcessing {i}/{len(files)}: {trk_filename}")
+        
         print("-" * 40)
         
         try:
@@ -99,7 +126,7 @@ def batch_process_trk_files(nifti_path, trk_dir, **processing_kwargs):
                 input_trk=trk_path,
                 output_base=output_prefix,
                 viz_output_dir=viz_output,
-                **processing_kwargs
+                **current_kwargs  # Use the updated kwargs with distributed patch counts
             )
             
             if result['success']:
@@ -285,6 +312,55 @@ def get_processing_configurations():
         'contrast_method': 'none',  # Minimal contrast adjustment
     })
     
+    # Patch extraction configuration - distributes patches across multiple TRK files
+    patch_extraction_config = base_config.copy()
+    patch_extraction_config.update({
+        'enable_patch_extraction': True,
+        'total_patches': 100,  # Total patches to distribute across all TRK files
+        'patch_size': [128, 128, 128],  # 3D patch size
+        'min_streamlines_per_patch': 30,
+        'patch_prefix': 'patch',
+        'max_patch_trials': 100,
+        'random_state': 42,  # For reproducible results
+        'n_examples': 5,  # Visualization examples per patch
+        'viz_prefix': 'patch_viz_',
+        # Lower the primary visualization count since we'll have many patches
+        'n_examples': 2,  # Reduce primary visualizations
+    })
+    
+    # High-throughput patch extraction (more patches, smaller size)
+    high_throughput_patches_config = base_config.copy()
+    high_throughput_patches_config.update({
+        'enable_patch_extraction': True,
+        'total_patches': 200,  # More patches
+        'patch_size': [64, 64, 64],  # Smaller patches for faster processing
+        'min_streamlines_per_patch': 15,  # Lower threshold
+        'patch_prefix': 'small_patch',
+        'max_patch_trials': 50,
+        'random_state': None,  # Random each time
+        'n_examples': 1,  # Minimal primary visualizations
+        'viz_prefix': 'ht_patch_viz_',
+    })
+    
+    # Quality patch extraction (fewer patches, larger size, high quality)
+    quality_patches_config = base_config.copy()
+    quality_patches_config.update({
+        'enable_patch_extraction': True,
+        'total_patches': 50,  # Fewer but higher quality patches
+        'patch_size': [256, 256, 256],  # Large patches
+        'min_streamlines_per_patch': 50,  # Higher threshold for better quality
+        'patch_prefix': 'quality_patch',
+        'max_patch_trials': 200,  # More trials to find good patches
+        'random_state': 123,
+        'n_examples': 3,
+        'viz_prefix': 'quality_patch_viz_',
+        # Enhanced visualization quality
+        'background_preset': 'preserve_edges',
+        'contrast_method': 'clahe',
+        'enable_sharpening': True,
+        'sharpening_strength': 1.0,
+    })
+    
     return {
         'standard': base_config,
         'ultra_crisp': ultra_crisp_config,
@@ -292,7 +368,10 @@ def get_processing_configurations():
         'sparse_subdivisions': sparse_subdivisions_config,
         'thin_dimension': thin_dimension_config,
         'debug_subdivisions': debug_subdivisions_config,
-        'crisp_subdivisions': crisp_subdivisions_config
+        'crisp_subdivisions': crisp_subdivisions_config,
+        'patch_extraction': patch_extraction_config,
+        'high_throughput_patches': high_throughput_patches_config,
+        'quality_patches': quality_patches_config
     }
 
 
@@ -330,7 +409,10 @@ def main():
     # 'thin_dimension' - same parameters + 8 subdivisions optimized for thin dimensions
     # 'debug_subdivisions' - minimal subdivision config for debugging subdivision issues
     # 'crisp_subdivisions' - high-detail subdivisions with edge preservation and sharpening ⭐ RECOMMENDED
-    config_choice = 'crisp_subdivisions'  # Best balance of subdivisions + crisp detail
+    # 'patch_extraction' - extract 100 patches distributed across all TRK files 🧩 NEW!
+    # 'high_throughput_patches' - extract 200 smaller patches for high throughput 🚀 NEW!
+    # 'quality_patches' - extract 50 high-quality large patches 💎 NEW!
+    config_choice = 'patch_extraction'  # Try the new patch extraction!
     
     processing_params = configs[config_choice]
     
@@ -338,14 +420,24 @@ def main():
     print(f"NIfTI file: {nifti_path}")
     print(f"TRK directory: {trk_dir}")
     print(f"Configuration: {config_choice}")
-    if processing_params.get('use_spatial_subdivisions', False):
+    
+    # Handle different configuration types
+    if processing_params.get('enable_patch_extraction', False):
+        print("PATCH EXTRACTION MODE ENABLED")
+        print(f"   - Total patches to distribute: {processing_params.get('total_patches', 100)}")
+        print(f"   - Patch size: {processing_params.get('patch_size', [128, 128, 128])}")
+        print(f"   - Min streamlines per patch: {processing_params.get('min_streamlines_per_patch', 30)}")
+        print(f"   - Random state: {processing_params.get('random_state', 'None (random)')}")
+        
+    elif processing_params.get('use_spatial_subdivisions', False):
         print("🔀 Spatial subdivisions ENABLED")
         print(f"   - Number of subdivisions: {processing_params.get('n_subdivisions', 8)}")
         print(f"   - Max streamlines per subdivision: {processing_params.get('max_streamlines_per_subdivision', 50000)}")
         print(f"   - Min streamlines per region: {processing_params.get('min_streamlines_per_region', 1)}")
         print(f"   - Skip empty regions: {processing_params.get('skip_empty_regions', True)}")
     else:
-        print("📊 Using standard processing (no subdivisions)")
+        print("📊 Using standard processing (no subdivisions/patches)")
+        
     print(f"Processing parameters: {processing_params}")
     
     # Run batch processing
@@ -363,6 +455,11 @@ def main():
     print(f"\n📁 Output folder structure:")
     print(f"syntract_submission/")
     print(f"├── processed_files/          # All processed .nii.gz and .trk files")
+    if processing_params.get('enable_patch_extraction', False):
+        print(f"├── patches/                  # Extracted patches organized by TRK file")
+        print(f"│   ├── [trk_file_1]/         # Patches from first TRK file")
+        print(f"│   ├── [trk_file_2]/         # Patches from second TRK file")
+        print(f"│   └── ...                   # etc.")
     print(f"└── visualizations/           # Visualization folders organized by TRK file")
     
     if results['successful']:
@@ -371,16 +468,16 @@ def main():
             print(f"  - {item['filename']}")
             if item['processed_nifti']:
                 processed_file = os.path.basename(item['processed_nifti'])
-                print(f"    📄 Processed files: syntract_submission/processed_files/{processed_file}")
+                print(f"     Processed files: syntract_submission/processed_files/{processed_file}")
             viz_folder = os.path.basename(item['visualization_dir'])
-            print(f"    🖼️  Visualizations: syntract_submission/visualizations/{viz_folder}/")
+            print(f"   Visualizations: syntract_submission/visualizations/{viz_folder}/")
     
     if results['failed']:
         print("\n✗ Failed to process files:")
         for item in results['failed']:
             print(f"  - {item['filename']}: {item['error']}")
     
-    print(f"\n📊 All outputs are organized in the 'syntract_submission' folder!")
+    print(f"\n All outputs are organized in the 'syntract_submission' folder!")
     print("Cumulative processing completed!")
 
 

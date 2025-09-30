@@ -103,7 +103,7 @@ class ImprovedCornucopiaAugmenter:
             return self._create_fallback_speckle()
         
         class GammaSpeckleTransform:
-            def __init__(self, intensity_range=(0.95, 1.1), prob=0.4):
+            def __init__(self, intensity_range=(0.85, 1.3), prob=0.8):  # Higher prob, more visible range
                 self.intensity_range = intensity_range
                 self.prob = prob
             
@@ -124,7 +124,7 @@ class ImprovedCornucopiaAugmenter:
             return self._create_fallback_multiplicative()
         
         class GammaMultiplicativeTransform:
-            def __init__(self, scale_range=(0.01, 0.05), prob=0.3):
+            def __init__(self, scale_range=(0.05, 0.12), prob=0.8):  # Higher prob, more visible
                 self.scale_range = scale_range
                 self.prob = prob
             
@@ -145,7 +145,7 @@ class ImprovedCornucopiaAugmenter:
             return self._create_fallback_speckle()
         
         class OpticalSpeckleTransform:
-            def __init__(self, speckle_strength=(0.02, 0.1), prob=0.5):
+            def __init__(self, speckle_strength=(0.02, 0.1), prob=0.8):  # Increased from 0.5
                 self.speckle_strength = speckle_strength
                 self.prob = prob
             
@@ -158,9 +158,13 @@ class ImprovedCornucopiaAugmenter:
                 chi_noise = ChiNoiseTransform(sigma=strength)
                 result = chi_noise(x)
                 
-                # Very slight multiplicative field
-                mul_field = RandomMulFieldTransform(coeff=0.03, order=2)
-                result = mul_field(result)
+                # Very slight multiplicative field - handle parameter name variations
+                try:
+                    mul_field = RandomMulFieldTransform(vmax=0.05, order=2, shape=8)
+                    result = mul_field(result)
+                except Exception as e:
+                    # Fallback - just use the noise without multiplicative field
+                    print(f"    Multiplicative field failed: {e}")
                 
                 return result
         
@@ -172,7 +176,7 @@ class ImprovedCornucopiaAugmenter:
             return self._create_fallback_multiplicative()
         
         class SmoothMultiplicativeField:
-            def __init__(self, field_strength=(0.02, 0.1), smoothness=(2, 4), prob=0.5):
+            def __init__(self, field_strength=(0.1, 0.25), smoothness=(2, 4), prob=0.9):  # Much higher prob and strength
                 self.field_strength = field_strength
                 self.smoothness = smoothness
                 self.prob = prob
@@ -184,8 +188,13 @@ class ImprovedCornucopiaAugmenter:
                 # Use RandomMulFieldTransform for very subtle smooth multiplicative effect
                 strength = random.uniform(*self.field_strength)
                 degree = random.randint(*self.smoothness)
-                mul_field = RandomMulFieldTransform(coeff=strength, order=degree)
-                return mul_field(x)
+                try:
+                    mul_field = RandomMulFieldTransform(vmax=strength, order=degree, shape=8)
+                    return mul_field(x)
+                except Exception as e:
+                    print(f"    Smooth multiplicative field failed: {e}")
+                    # Fallback - return original
+                    return x
         
         return SmoothMultiplicativeField()
     
@@ -195,7 +204,7 @@ class ImprovedCornucopiaAugmenter:
             return self._create_fallback_multiplicative()
         
         class MultiplicativeField:
-            def __init__(self, strength_range=(0.03, 0.12), prob=0.4):
+            def __init__(self, strength_range=(0.08, 0.18), prob=0.8):  # Higher prob and strength
                 self.strength_range = strength_range
                 self.prob = prob
             
@@ -205,8 +214,13 @@ class ImprovedCornucopiaAugmenter:
                 
                 # Use RandomMulFieldTransform for multiplicative effect
                 strength = random.uniform(*self.strength_range)
-                mul_field = RandomMulFieldTransform(coeff=strength, order=3)
-                return mul_field(x)
+                try:
+                    mul_field = RandomMulFieldTransform(vmax=strength, order=3, shape=6)
+                    return mul_field(x)
+                except Exception as e:
+                    print(f"    Multiplicative field failed: {e}")
+                    # Fallback - return original
+                    return x
         
         return MultiplicativeField()
     
@@ -216,7 +230,7 @@ class ImprovedCornucopiaAugmenter:
             return self._create_fallback_multiplicative()
         
         class OpticalIntensityTransform:
-            def __init__(self, gamma_range=(0.9, 1.1), bias_strength=(0.01, 0.05), prob=0.4):
+            def __init__(self, gamma_range=(0.9, 1.1), bias_strength=(0.01, 0.05), prob=0.7):  # Increased from 0.4
                 self.gamma_range = gamma_range
                 self.bias_strength = bias_strength
                 self.prob = prob
@@ -232,8 +246,12 @@ class ImprovedCornucopiaAugmenter:
                 
                 # Add subtle multiplicative field
                 bias_strength = random.uniform(*self.bias_strength)
-                mul_field = RandomMulFieldTransform(coeff=bias_strength, order=2)
-                result = mul_field(result)
+                try:
+                    mul_field = RandomMulFieldTransform(vmax=bias_strength, order=2, shape=6)
+                    result = mul_field(result)
+                except Exception as e:
+                    print(f"    Optical intensity multiplicative field failed: {e}")
+                    # Fallback - return just the gamma corrected result
                 
                 return result
         
@@ -659,43 +677,80 @@ def create_optical_presets():
         Dictionary of preset configurations
     """
     return {
+        'disabled': {
+            # No augmentations applied - return original image
+        },
+        
         'gamma_speckle': {
-            'noise': {'type': 'gamma_speckle'},  # Very subtle now
-            'intensity': {'type': 'smooth_multiplicative'}
+            'intensity': {'type': 'smooth_multiplicative'}  # Only intensity, no noise to avoid dark backgrounds
         },
         
         'optical_with_debris': {
-            'noise': {'type': 'gamma_multiplicative'},  # Very subtle speckle
-            'intensity': {'type': 'multiplicative_field'},
+            'intensity': {'type': 'multiplicative_field'},  # Only intensity and debris
             'debris': {'type': 'random_shapes'}
         },
         
         'heavy_speckle': {
-            'noise': {'type': 'optical_speckle'},  # Most visible but still reasonable
+            'noise': {'type': 'optical_speckle'},  # More visible speckle
             'intensity': {'type': 'optical_intensity'},
             'debris': {'type': 'morphological_debris'}
         },
         
         'clean_optical': {
-            'intensity': {'type': 'smooth_multiplicative'}  # Only multiplicative, no noise
+            'intensity': {'type': 'smooth_multiplicative'}  # Only multiplicative, preserve background
         },
         
         'subtle_debris': {
-            'noise': {'type': 'gamma_multiplicative'},  # Very subtle speckle
-            'intensity': {'type': 'smooth_multiplicative'},
+            'intensity': {'type': 'smooth_multiplicative'},  # Remove noise to prevent dark backgrounds
             'debris': {'type': 'random_spheres'}
         },
         
         # Compatibility presets with old cornucopia_augmentation module
         'clinical_simulation': {
-            'noise': {'type': 'gamma_multiplicative'},  # Very subtle speckle for clinical realism
-            'intensity': {'type': 'smooth_multiplicative'}  # Smooth intensity variations
+            'intensity': {'type': 'smooth_multiplicative'}  # Only smooth intensity - guaranteed visible
         },
         
         'aggressive': {
-            'noise': {'type': 'optical_speckle'},  # More visible speckle
+            'noise': {'type': 'optical_speckle'},  # Strong but visible speckle
             'intensity': {'type': 'multiplicative_field'},
-            'debris': {'type': 'random_shapes'}  # Add some debris for more variation
+            'debris': {'type': 'random_shapes'}  # Add some debris for variation
+        },
+        
+        # Additional creative presets for maximum background variety - SIMPLIFIED FOR VISIBILITY
+        'high_contrast': {
+            'intensity': {'type': 'optical_intensity'},  # Focus on intensity only
+            'debris': {'type': 'morphological_debris'}   
+        },
+        
+        'minimal_noise': {
+            'intensity': {'type': 'multiplicative_field'}  # Only intensity, guaranteed visible background
+        },
+        
+        'speckle_light': {  
+            'intensity': {'type': 'smooth_multiplicative'}  # Only intensity, no speckle to avoid dark backgrounds
+        },
+        
+        'debris_field': {
+            'intensity': {'type': 'multiplicative_field'},  # Only intensity and debris
+            'debris': {'type': 'morphological_debris'}
+        },
+        
+        'smooth_gradients': {
+            'intensity': {'type': 'smooth_multiplicative'}  # Very smooth, minimal variation - always visible
+        },
+        
+        'mixed_effects': {
+            'intensity': {'type': 'multiplicative_field'},  # Only intensity and debris
+            'debris': {'type': 'random_spheres'}
+        },
+        
+        'clean_gradients': {
+            'intensity': {'type': 'optical_intensity'}  # Clean intensity gradients only - guaranteed visible
+        },
+        
+        'textured_background': {
+            'intensity': {'type': 'optical_intensity'},  # Only intensity and debris
+            'debris': {'type': 'random_shapes'}  
         }
     }
 

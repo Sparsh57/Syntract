@@ -41,7 +41,8 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
                              density_threshold=0.15, gaussian_sigma=2.0, random_state=None,
                              close_gaps=False, closing_footprint_size=5, label_bundles=False,
                              min_bundle_size=20, contrast_method='clahe', contrast_params=None,
-                             background_enhancement=None, cornucopia_augmentation=None):
+                             background_enhancement=None, cornucopia_augmentation=None,
+                             truly_random=False):
     """
     Visualize multiple axial slices of a nifti file with tractography overlaid.
 
@@ -51,8 +52,16 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
         Background enhancement configuration to reduce pixelation
     cornucopia_augmentation : str or dict, optional
         Cornucopia augmentation configuration
+    truly_random : bool, optional
+        If True, uses truly random parameters for visualization effects
     """
-    if random_state is not None:
+    if truly_random:
+        # Use current time for truly random parameters
+        import time
+        true_random_seed = int(time.time() * 1000000) % (2**32)
+        random.seed(true_random_seed)
+        np.random.seed(true_random_seed)
+    elif random_state is not None:
         random.seed(random_state)
         np.random.seed(random_state)
 
@@ -194,7 +203,7 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
                 points = np.array([x, y_plot]).T.reshape(-1, 1, 2)
                 segs = np.concatenate([points[:-1], points[1:]], axis=1)
 
-                tract_color = generate_tract_color_variation(tract_color_base, tract_color_variation, random_state=random_state)
+                tract_color = generate_tract_color_variation(tract_color_base, tract_color_variation, random_state=random_state, truly_random=truly_random)
                 # Reduce fiber contrast to make them less obvious and blend better with dark background
                 base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.4)
 
@@ -213,8 +222,10 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
 
     # Save or display
     if output_file:
-        plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor='black', pad_inches=0)
-        print(f"Figure saved to {output_file}")
+        # Import resize utility
+        from .utils import save_image_1024
+        save_image_1024(output_file, fig, is_mask=False)
+        print(f"Figure saved to {output_file} (1024x1024)")
 
         # Save masks if requested
         if save_masks and fiber_masks:
@@ -236,7 +247,8 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                              density_threshold=0.15, gaussian_sigma=2.0, random_state=None,
                              close_gaps=False, closing_footprint_size=5, label_bundles=False,
                              min_bundle_size=20, contrast_method='clahe', contrast_params=None,
-                             background_enhancement=None, cornucopia_augmentation=None):
+                             background_enhancement=None, cornucopia_augmentation=None,
+                             truly_random=False):
     """
     Visualize multiple coronal slices of a nifti file with tractography overlaid.
 
@@ -246,8 +258,16 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
         Background enhancement configuration to reduce pixelation
     cornucopia_augmentation : str or dict, optional
         Cornucopia augmentation configuration
+    truly_random : bool, optional
+        If True, uses truly random parameters for visualization effects
     """
-    if random_state is not None:
+    if truly_random:
+        # Use current time for truly random parameters
+        import time
+        true_random_seed = int(time.time() * 1000000) % (2**32)
+        random.seed(true_random_seed)
+        np.random.seed(true_random_seed)
+    elif random_state is not None:
         random.seed(random_state)
         np.random.seed(random_state)
 
@@ -291,7 +311,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
         slice_positions = np.linspace(dims[1] // 4, 3 * dims[1] // 4, n_slices).astype(int)
 
     # Create figure
-    fig, axes = plt.subplots(1, n_slices, figsize=(5 * n_slices, 5))
+    fig, axes = plt.subplots(1, n_slices, figsize=(10 * n_slices, 10))  # Increased for better 1024x1024 output
     if n_slices == 1:
         axes = [axes]
 
@@ -389,7 +409,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                 points = np.array([x, z_plot]).T.reshape(-1, 1, 2)
                 segs = np.concatenate([points[:-1], points[1:]], axis=1)
 
-                tract_color = generate_tract_color_variation(tract_color_base, tract_color_variation, random_state=random_state)
+                tract_color = generate_tract_color_variation(tract_color_base, tract_color_variation, random_state=random_state, truly_random=truly_random)
                 # Reduce fiber contrast to make them less obvious and blend better with dark background
                 base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.4)
 
@@ -408,8 +428,10 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
 
     # Save or display
     if output_file:
-        plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor='black', pad_inches=0)
-        print(f"Figure saved to {output_file}")
+        # Import resize utility
+        from .utils import save_image_1024
+        save_image_1024(output_file, fig, is_mask=False)
+        print(f"Figure saved to {output_file} (1024x1024)")
 
         # Save masks if requested
         if save_masks and fiber_masks:
@@ -430,11 +452,18 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
                              tract_linewidth=1.0, save_masks=False, mask_thickness=1,
                              density_threshold=0.15, gaussian_sigma=2.0, random_state=None,
                              close_gaps=False, closing_footprint_size=5, label_bundles=False,
-                             min_bundle_size=20, contrast_method='clahe', contrast_params=None):
+                             min_bundle_size=20, contrast_method='clahe', contrast_params=None,
+                             truly_random=False):
     """
     Visualize axial, coronal, and sagittal views of a nifti file with tractography overlaid.
     """
-    if random_state is not None:
+    if truly_random:
+        # Use current time for truly random parameters
+        import time
+        true_random_seed = int(time.time() * 1000000) % (2**32)
+        random.seed(true_random_seed)
+        np.random.seed(true_random_seed)
+    elif random_state is not None:
         random.seed(random_state)
         np.random.seed(random_state)
 
@@ -465,7 +494,7 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
             print(f"Selected {len(streamlines_voxel)} streamlines")
 
     # Create figure with three orientations
-    fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+    fig, axes = plt.subplots(1, 3, figsize=(30, 10))  # Increased for better 1024x1024 output
 
     # Default intensity parameters
     if intensity_params is None:
@@ -570,7 +599,7 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
                     points = np.array([y, z_plot]).T.reshape(-1, 1, 2)
                 
                 segs = np.concatenate([points[:-1], points[1:]], axis=1)
-                tract_color = generate_tract_color_variation(tract_color_base, tract_color_variation, random_state=random_state)
+                tract_color = generate_tract_color_variation(tract_color_base, tract_color_variation, random_state=random_state, truly_random=truly_random)
                 # Reduce fiber contrast to make them less obvious and blend better with dark background
                 base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.4)
                 
@@ -589,8 +618,10 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
 
     # Save or display
     if output_file:
-        plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor='black', pad_inches=0)
-        print(f"Figure saved to {output_file}")
+        # Import resize utility
+        from .utils import save_image_1024
+        save_image_1024(output_file, fig, is_mask=False)
+        print(f"Figure saved to {output_file} (1024x1024)")
         
         # Save masks if requested
         if save_masks and has_streamlines:
@@ -602,8 +633,10 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
             for view, mask in fiber_masks.items():
                 if mask is not None:
                     mask_filename = f"{mask_dir}/{mask_basename}_mask_{view}.png"
-                    plt.imsave(mask_filename, mask, cmap='gray')
-                    print(f"Saved {view} mask to {mask_filename}")
+                    # Import resize utility
+                    from .utils import save_image_1024
+                    save_image_1024(mask_filename, mask, is_mask=True)
+                    print(f"Saved {view} mask to {mask_filename} (1024x1024)")
     else:
         plt.show()
 
@@ -620,8 +653,10 @@ def _save_masks(output_file, fiber_masks, labeled_masks, slice_positions, label_
     for i, mask in enumerate(fiber_masks):
         slice_id = slice_positions[i]
         mask_filename = f"{mask_dir}/{mask_basename}_mask_slice{slice_id}.png"
-        plt.imsave(mask_filename, mask, cmap='gray')
-        print(f"Saved mask for slice {slice_id} to {mask_filename}")
+        # Import resize utility
+        from .utils import save_image_1024
+        save_image_1024(mask_filename, mask, is_mask=True)
+        print(f"Saved mask for slice {slice_id} to {mask_filename} (1024x1024)")
         
         if label_bundles and labeled_masks:
             from .utils import visualize_labeled_bundles

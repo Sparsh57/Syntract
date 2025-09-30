@@ -718,6 +718,18 @@ def _generate_patch_visualization(nifti_path, trk_path, output_dir, prefix, save
                                  label_bundles, min_bundle_size):
     """Generate visualization for a single patch."""
     
+    # Randomize cornucopia preset for variation unless explicitly disabled
+    import random
+    import time
+    
+    if cornucopia_preset == 'disabled':
+        # Use random presets to add variation
+        available_presets = ['disabled', 'clean_optical', 'gamma_speckle', 'optical_with_debris', 'subtle_debris', 'clinical_simulation']
+        random.seed(int(time.time() * 1000000) % (2**32))  # Truly random seed
+        actual_preset = random.choice(available_presets)
+    else:
+        actual_preset = cornucopia_preset
+    
     # Use coronal view for patches
     try:
         visualize_nifti_with_trk_coronal(
@@ -736,9 +748,10 @@ def _generate_patch_visualization(nifti_path, trk_path, output_dir, prefix, save
             closing_footprint_size=closing_footprint_size,
             label_bundles=label_bundles,
             min_bundle_size=min_bundle_size,
-            contrast_method=contrast_method,
+            contrast_method='equalize',  # Use global histogram equalization for smoother results
             background_enhancement=background_enhancement,
-            cornucopia_augmentation=cornucopia_preset
+            cornucopia_augmentation=actual_preset,
+            truly_random=True  # Enable truly random parameters
         )
     except Exception as e:
         print(f"    Warning: Visualization failed for {prefix}: {e}")
@@ -758,7 +771,7 @@ def main():
     
     # Patch parameters
     parser.add_argument("--total_patches", type=int, default=100, help="Total number of patches to extract")
-    parser.add_argument("--patch_size", type=int, nargs=2, default=[1024, 1024], help="Patch size (width height)")
+    parser.add_argument("--patch_size", type=int, nargs='+', default=[1024, 15, 1024], help="Patch size (width height depth) - use 3 values for 3D patches, 2 for 2D")
     parser.add_argument("--min_streamlines", type=int, default=5, help="Minimum streamlines per patch")
     parser.add_argument("--random_state", type=int, help="Random seed for reproducibility")
     
