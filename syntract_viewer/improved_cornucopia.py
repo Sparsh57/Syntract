@@ -145,7 +145,7 @@ class ImprovedCornucopiaAugmenter:
             return self._create_fallback_speckle()
         
         class OpticalSpeckleTransform:
-            def __init__(self, speckle_strength=(0.02, 0.1), prob=0.8):  # Increased from 0.5
+            def __init__(self, speckle_strength=(0.01, 0.05), prob=0.7):  # Reduced for less grain
                 self.speckle_strength = speckle_strength
                 self.prob = prob
             
@@ -751,6 +751,20 @@ def create_optical_presets():
         'textured_background': {
             'intensity': {'type': 'optical_intensity'},  # Only intensity and debris
             'debris': {'type': 'random_shapes'}  
+        },
+        
+        # New preset based on user's generated image - grainy texture with scattered artifacts (reduced intensity)
+        'grainy_textured': {
+            'noise': {'type': 'optical_speckle'},        # Subtle grainy speckle texture
+            'intensity': {'type': 'smooth_multiplicative'}, # Gentler intensity variations
+            'debris': {'type': 'random_spheres'}          # Subtle scattered artifacts
+        },
+        
+        # Alternative version with morphological debris for moderate texture
+        'heavy_textured': {
+            'noise': {'type': 'optical_speckle'},           # Moderate speckle noise
+            'intensity': {'type': 'multiplicative_field'},   # Moderate intensity effects
+            'debris': {'type': 'random_shapes'}             # Moderate debris patterns
         }
     }
 

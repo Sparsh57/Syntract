@@ -733,8 +733,7 @@ def _generate_patch_visualization(nifti_path, trk_path, output_dir, prefix, save
     import time
     
     if cornucopia_preset == 'disabled':
-        # Use random presets to add variation
-        available_presets = ['disabled', 'clean_optical', 'gamma_speckle', 'optical_with_debris', 'subtle_debris', 'clinical_simulation']
+        available_presets = ['disabled', 'clean_optical', 'gamma_speckle', 'optical_with_debris', 'subtle_debris', 'clinical_simulation', 'grainy_textured']
         random.seed(int(time.time() * 1000000) % (2**32))  # Truly random seed
         actual_preset = random.choice(available_presets)
     else:
