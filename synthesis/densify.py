@@ -786,14 +786,6 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     try:
         debug_tangents = os.environ.get("DEBUG_TANGENTS") == "1"
 
-        # DEBUG: Add comprehensive type and shape information
-        print(f"  - streamline type: {type(streamline)}")
-        print(f"  - streamline shape: {getattr(streamline, 'shape', 'N/A')}")
-        print(f"  - streamline dtype: {getattr(streamline, 'dtype', 'N/A')}")
-        print(f"  - step_size: {step_size}")
-        print(f"  - use_gpu: {use_gpu}")
-        print(f"  - interp_method: {interp_method}")
-
         # Handle CuPy arrays first
         if hasattr(streamline, 'get'):  # CuPy array
             streamline = streamline.get()  # Convert to numpy array
@@ -1122,7 +1114,6 @@ if __name__ == "__main__":
         [2, 0, 0]
     ], dtype=np.float32)
     
-    print(f"Original streamline shape: {test_stream.shape}")
     
     # Test linear interpolation
     linear_result = densify_streamline_subvoxel(

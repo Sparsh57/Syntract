@@ -257,10 +257,6 @@ def process_and_save(
         
         def process_streamline(streamline):
             try:
-                print(f"  - streamline type: {type(streamline)}")
-                print(f"  - streamline shape: {getattr(streamline, 'shape', 'N/A')}")
-                print(f"  - streamline dtype: {getattr(streamline, 'dtype', 'N/A')}")
-                
                 # Convert to float32 if it's float64
                 if hasattr(streamline, 'dtype') and streamline.dtype == np.float64:
                     streamline = streamline.astype(np.float32)
@@ -282,13 +278,6 @@ def process_and_save(
                             if hasattr(segment, 'dtype') and segment.dtype != np.float32:
                                 segment = segment.astype(np.float32)
                             
-                            print(f"  - segment type: {type(segment)}")
-                            print(f"  - segment shape: {segment.shape}")
-                            print(f"  - segment dtype: {segment.dtype}")
-                            print(f"  - step_size: {step_size}")
-                            print(f"  - interp_method: {interpolation_method}")
-                            print(f"  - use_gpu: {use_gpu}")
-                            
                             try:
                                 densified = densify_streamline_subvoxel(
                                     segment, step_size=step_size, 
@@ -308,17 +297,12 @@ def process_and_save(
                             print(f"Error densifying segment {i}: {e}")
                             print(f"  - type: {type(segment)}")
                             print(f"  - shape: {getattr(segment, 'shape', 'N/A')}")
-                            print(f"  - dtype: {getattr(segment, 'dtype', 'N/A')}")
-                            print(f"  - min/max values: {np.min(segment) if hasattr(segment, 'min') else 'N/A'} / {np.max(segment) if hasattr(segment, 'max') else 'N/A'}")
                             import traceback
                             traceback.print_exc()
                             densified_segments.append(segment)
                 return densified_segments
             except Exception as e:
                 print(f"Error processing streamline: {e}")
-                print(f"  - streamline type: {type(streamline)}")
-                print(f"  - streamline shape: {getattr(streamline, 'shape', 'N/A')}")
-                print(f"  - streamline dtype: {getattr(streamline, 'dtype', 'N/A')}")
                 import traceback
                 traceback.print_exc()
                 return []
