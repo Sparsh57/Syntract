@@ -1,102 +1,157 @@
-# SynTract: MRI Processing & Tractography Visualization
+# SynTract: MRI Synthesis & Tractography Visualization
 
-A Python package for advanced MRI processing, tractography synthesis, and dark field microscopy-style visualization. Features high-performance pipelines, augmentation, and a unified CLI for neuroimaging research.
+A streamlined Python pipeline for MRI processing, tractography synthesis, and dark field microscopy-style visualization. Features unified CLI, ANTs integration, and robust patch extraction for neuroimaging research.
 
-## 🚀 Key Features
+## ✨ Features
 
-### 🔄 Combined Pipeline
-- Unified processing and visualization in a single command
-- Automatic file handling between synthesis and visualization
-- Complete parameter mapping from both synthesis and syntract_viewer
-- End-to-end workflow from raw data to publication-ready visualizations
-- ANTs integration support for spatial transformations
-- Flexible output control with intermediate file retention options
+- **Unified Pipeline**: Single command processing from raw NIfTI/TRK to visualizations
+- **ANTs Integration**: Spatial transformations and registration workflows
+- **Patch Extraction**: 3D patches via re-synthesis at random coordinates
+- **Batch Processing**: Multiple TRK files with shared NIfTI
+- **Dark Field Visualization**: Publication-ready medical imaging with enhanced contrast
 
-### 🧠 Synthesis
-- GPU-accelerated processing with CUDA/CuPy support and CPU fallback
-- Advanced streamline interpolation (Linear, Hermite, RBF) with sub-voxel precision
-- Intelligent NIfTI resampling to arbitrary dimensions and voxel sizes
-- ANTs integration for spatial transformations and registration workflows
-- Memory-efficient processing with automatic chunking for large datasets
-- Parallel processing with configurable job counts
+## 🔧 Installation
 
-### 🎨 Visualization
-- Dark field microscopy-style visualization with publication-ready image generation
-- Multi-orientation support (axial, coronal, sagittal) with intelligent slice selection
-- Ground truth mask generation for machine learning with bundle labeling
-- Advanced contrast enhancement using CLAHE and adaptive methods
-- Smart brain masking preserving anatomical structures and ventricles
-- Spatial ROI selection with fiber density variation for diverse datasets
-- Cornucopia integration for realistic medical imaging augmentations
-- Batch processing tools for dataset generation
-- Smart fiber bundle detection with morphological operations and gap closing
-- Customizable color schemes including blue-tinted dark field effects
-
-### 🧩 Patch Extraction (New!)
-- Extract 3D patches via re-synthesis at random or specified centers
-- Each patch is a full synthesis run centered on a new coordinate
-- Output organized in subfolders for each patch
-
-### 🗂️ Batch Processing
-- Process multiple TRK files with a shared NIfTI using cumulative.py
-- Predefined configurations for different data types and quality levels
-
-### ⚡ Performance & Enhancement
-- GPU acceleration (optional, with CuPy)
-- Parallel jobs and memory optimization
-- Optional Cornucopia augmentations
-
-### 🏷️ Masking & Bundles
-- Save fiber masks and label distinct bundles
-- High-density masking and bundle size/density thresholds
-- Morphological gap closing and smart bundle detection
-
-### 🧩 Spatial Subdivisions
-- Enable spatial subdivisions for region-based analysis
-- Control number of subdivisions, streamline limits, and region skipping
-
-### 🛠️ Flexible API & CLI
-- Python API for programmatic control and integration
-- Command-line interface for quick processing and scripting
-
-### 📦 Output
-- Publication-ready images, masks, and batch outputs
-- Organized output directories for easy dataset management
-
-## Installation
 ```bash
-git clone https://github.com/yourusername/SynTract.git
-cd SynTract
-pip install -e .
-# Optional: pip install cupy-cuda11x cornucopia-pytorch
+git clone https://github.com/Sparsh57/Syntract.git
+cd Syntract
+pip install -r requirements.txt
 ```
 
-## Quick Start
+## 🚀 Quick Start
 
-### Combined Pipeline (CLI)
+### Basic Usage
 ```bash
-python syntract.py \
-  --input brain.nii.gz \
-  --trk fibers.trk \
-  --output processed_data \
-  --viz_output_dir visualization_dataset \
-  --n_examples 10 \
-  --save_masks
+python syntract.py --input brain.nii.gz --trk fibers.trk --output result
+```
+
+### With ANTs Transformation
+```bash
+python syntract.py --input brain.nii.gz --trk fibers.trk --use_ants \
+  --ants_warp warp.nii.gz --ants_iwarp iwarp.nii.gz --ants_aff affine.mat
 ```
 
 ### Patch Extraction
 ```bash
-python syntract.py \
-  --input brain.nii.gz \
-  --trk fibers.trk \
-  --output patch_data \
-  --patch_mode random \
-  --n_patches 5 \
-  --patch_size 64 64 64 \
-  --viz_output_dir patch_visualizations
+python syntract.py --input brain.nii.gz --trk fibers.trk \
+  --enable_patch_extraction --total_patches 100 --patch_size 200 1 200
 ```
 
-### Python API
+### Batch Processing
+```bash
+python cumulative.py  # Edit paths in script
+```
+
+## 📋 Parameters
+
+### Essential Arguments
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `--input` | str | Input NIfTI file path (required) |
+| `--trk` | str | Input TRK file path (required) |
+| `--output` | str | Output base name (default: "output") |
+
+### Synthesis Parameters
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `--new_dim` | int×3 | [116, 140, 96] | Target dimensions (X Y Z) |
+| `--voxel_size` | float | 0.5 | Target voxel size in mm |
+
+### ANTs Transformation
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `--use_ants` | flag | Enable ANTs transformation |
+| `--ants_warp` | str | ANTs warp field file |
+| `--ants_iwarp` | str | ANTs inverse warp field file |
+| `--ants_aff` | str | ANTs affine transformation file |
+
+### Patch Extraction
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `--enable_patch_extraction` | flag | | Enable 3D patch extraction |
+| `--patch_output_dir` | str | "patches" | Directory for patch outputs |
+| `--total_patches` | int | 10 | Total number of patches to extract |
+| `--patch_size` | int×3 | [300, 15, 300] | Patch dimensions (width, height, depth) |
+| `--min_streamlines_per_patch` | int | 30 | Minimum streamlines required per patch |
+| `--max_patch_trials` | int | 100 | Maximum trials to find adequate streamlines |
+| `--random_state` | int | | Random seed for reproducible extraction |
+| `--patch_prefix` | str | "patch" | Prefix for patch files |
+
+### Visualization
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `--n_examples` | int | 3 | Number of visualization examples |
+| `--viz_prefix` | str | "synthetic_" | Prefix for visualization files |
+| `--enable_orange_blobs` | flag | | Enable orange blob injection site artifacts |
+| `--orange_blob_probability` | float | 0.3 | Probability of applying orange blobs (0.0-1.0) |
+
+### Mask & Bundle Parameters
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `--save_masks` | flag | True | Save binary masks alongside visualizations |
+| `--use_high_density_masks` | flag | False | Use high-density mask generation |
+| `--mask_thickness` | int | 1 | Thickness of generated masks |
+| `--density_threshold` | float | 0.15 | Fiber density threshold for masking |
+| `--min_bundle_size` | int | 20 | Minimum size for bundle detection |
+| `--label_bundles` | flag | False | Label individual fiber bundles |
+
+### Slice Extraction
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `--slice_count` | int | Number of coronal slices to extract |
+| `--slice_output_dir` | str | Directory for slice outputs |
+| `--auto_batch_process` | flag | Automatically process all extracted slices |
+
+## 🗂️ Batch Processing (cumulative.py)
+
+Process multiple TRK files with a shared NIfTI file. Supports various configurations:
+
+### Available Configurations
+- `standard`: Basic processing with your CLI parameters
+- `ultra_crisp`: Maximum detail with edge preservation
+- `patch_extraction`: Extract patches distributed across TRK files
+- `high_throughput_patches`: 200 smaller patches for fast processing
+- `quality_patches`: 50 high-quality large patches
+
+### Key Batch Parameters
+| Parameter | Description |
+|-----------|-------------|
+| `nifti_path` | Common NIfTI file for all TRK files |
+| `trk_dir` | Directory containing TRK files |
+| `config_choice` | Processing configuration to use |
+
+Change the `config_choice` variable in `cumulative.py` to switch between configurations.
+
+## 📁 Output Structure
+
+### Standard Processing
+```
+output_name.nii.gz         # Processed NIfTI
+output_name.trk            # Processed TRK
+visualizations/            # Generated images
+```
+
+### Patch Extraction
+```
+patches/
+├── patch_0001.nii.gz     # Patch NIfTI
+├── patch_0001.trk        # Patch TRK
+├── patch_0001_visualization.png
+├── patch_0001_visualization_mask_slice0.png
+└── patch_extraction_summary.json
+```
+
+### Batch Processing
+```
+syntract_submission/
+├── processed_files/       # All processed .nii.gz and .trk files
+├── patches/              # Patches organized by TRK file
+└── visualizations/       # Visualizations organized by TRK file
+```
+
+## 🐍 Python API
+
+### Basic Processing
 ```python
 from syntract import process_syntract
 
@@ -104,55 +159,83 @@ result = process_syntract(
     input_nifti="brain.nii.gz",
     input_trk="fibers.trk",
     output_base="processed_data",
-    viz_output_dir="visualization_dataset",
-    n_examples=10,
-    save_masks=True
+    new_dim=[400, 50, 400],
+    voxel_size=0.05
 )
 ```
 
-### Patch Extraction via API
-```python
-result = process_syntract(
-    input_nifti="brain.nii.gz",
-    input_trk="fibers.trk",
-    patch_mode="random",
-    n_patches=5,
-    patch_size=[64,64,64],
-    viz_output_dir="patch_visualizations"
-)
-```
-
-### Batch Processing with cumulative.py
-You can process multiple TRK files in a directory using the batch API in `cumulative.py`:
+### Batch Processing
 ```python
 from cumulative import batch_process_trk_files
 
 results = batch_process_trk_files(
-  nifti_path="shared_brain.nii.gz",
-  trk_dir="trk_files_directory",
-  new_dim=[256, 256, 256],
-  voxel_size=[0.5],
-  n_examples=10,
-  save_masks=True
+    nifti_path="shared_brain.nii.gz",
+    trk_dir="trk_files_directory",
+    new_dim=[800, 20, 800],
+    voxel_size=0.05,
+    enable_patch_extraction=True,
+    total_patches=100
 )
-print(f"Processed {len(results['successful'])} files successfully")
-print(f"Failed: {len(results['failed'])} files")
-```
-## Architecture
-```
-SynTract/
-├── syntract.py           # CLI & main API
-├── cumulative.py         # Batch processing
-├── synthesis/            # Processing pipeline
-└── syntract_viewer/      # Visualization tools
 ```
 
-## Dependencies
-- numpy, nibabel, matplotlib, scikit-image, scipy, dipy, joblib, tqdm
-- Optional: cupy, cornucopia-pytorch, ants
+### Complete Function Signature
 
-## License
-MIT License. See LICENSE file.
+The `process_syntract` function accepts all these parameters:
 
----
-*Developed by the LINC Team for neuroimaging research.*
+```python
+from syntract import process_syntract
+
+result = process_syntract(
+    input_nifti,                    # Input NIfTI file path (required)
+    input_trk,                      # Input TRK file path (required) 
+    output_base,                    # Output base name (required)
+    new_dim,                        # Target dimensions [X, Y, Z] (required)
+    voxel_size,                     # Target voxel size in mm (required)
+    
+    # ANTs transformation
+    use_ants=False,                 # Enable ANTs transformation
+    ants_warp_path=None,           # ANTs warp field file
+    ants_iwarp_path=None,          # ANTs inverse warp field file 
+    ants_aff_path=None,            # ANTs affine transformation file
+    
+    # Slice extraction
+    slice_count=None,              # Number of coronal slices to extract
+    enable_slice_extraction=False, # Enable slice extraction mode
+    slice_output_dir=None,         # Directory for slice outputs
+    use_simplified_slicing=True,   # Use simplified slicing method
+    force_full_slicing=False,      # Force full-resolution slicing
+    auto_batch_process=False,      # Auto-process all extracted slices
+    
+    # Patch extraction
+    enable_patch_extraction=False, # Enable 3D patch extraction
+    patch_output_dir=None,         # Directory for patch outputs
+    total_patches=None,            # Total number of patches to extract
+    patch_size=None,               # Patch dimensions [width, height, depth]
+    min_streamlines_per_patch=5,   # Minimum streamlines per patch
+    patch_prefix="patch_",         # Prefix for patch files
+    
+    # Visualization
+    n_examples=10,                 # Number of visualization examples
+    viz_output_dir=None,           # Output directory for visualizations
+    viz_prefix="viz_",             # Prefix for visualization files
+    enable_orange_blobs=False,     # Enable orange blob artifacts
+    orange_blob_probability=0.3,   # Probability of orange blobs (0.0-1.0)
+    
+    # Mask & Bundle parameters
+    save_masks=True,               # Save binary masks alongside visualizations
+    use_high_density_masks=False,  # Use high-density mask generation
+    mask_thickness=1,              # Thickness of generated masks
+    density_threshold=0.15,        # Fiber density threshold for masking
+    min_bundle_size=20,            # Minimum size for bundle detection
+    label_bundles=False            # Label individual fiber bundles
+)
+```
+
+## 📦 Dependencies
+
+- Core: `numpy`, `nibabel`, `matplotlib`, `scikit-image`, `scipy`, `dipy`
+- Optional: `cupy`, `cornucopia-pytorch`, `ants`
+
+## 📄 License
+
+MIT License - see LICENSE file for details.

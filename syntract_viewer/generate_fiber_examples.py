@@ -431,7 +431,7 @@ def main():
     
     # Cornucopia parameters
     parser.add_argument('--cornucopia_preset', 
-                        choices=['aggressive', 'clinical_simulation'], 
+                        choices=['clinical_simulation'], 
                         help='Cornucopia preset for advanced medical imaging augmentations')
     
     # Background enhancement parameters  
@@ -448,7 +448,7 @@ def main():
     parser.add_argument('--randomize', action='store_true',
                         help='Randomize parameters per example: min/max streamline percentage (5-30%% to 70-100%% for balanced, '
                              '15-40%% to 80-100%% for blockface_preserving), streamline appearance (linewidth 0.5-1.5), '
-                             'cornucopia preset (None/aggressive/clinical_simulation), and background effect (balanced/blockface_preserving)')
+                             'cornucopia preset (None/clinical_simulation), and background effect (balanced/blockface_preserving)')
     
     # Orange blob injection site simulation parameters
     parser.add_argument('--enable_orange_blobs', action='store_true',
@@ -517,7 +517,7 @@ def main():
             print(f"- Randomized parameters per example:")
             print(f"  • Min/max streamline percentages: 5-30% to 70-100% (balanced), 15-40% to 80-100% (blockface_preserving)")
             print(f"  • Tract linewidth: 0.5-1.5")
-            print(f"  • Cornucopia preset: None/aggressive/clinical_simulation")
+            print(f"  • Cornucopia preset: None/clinical_simulation")
             print(f"  • Background effect: balanced/blockface_preserving")
         if args.label_bundles:
             print(f"- Labeled bundle visualizations with distinct colors for each bundle")

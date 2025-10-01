@@ -124,7 +124,7 @@ class ImprovedCornucopiaAugmenter:
             return self._create_fallback_multiplicative()
         
         class GammaMultiplicativeTransform:
-            def __init__(self, scale_range=(0.05, 0.12), prob=0.8):  # Higher prob, more visible
+            def __init__(self, scale_range=(0.02, 0.06), prob=0.7):  # Balanced range
                 self.scale_range = scale_range
                 self.prob = prob
             
@@ -132,12 +132,52 @@ class ImprovedCornucopiaAugmenter:
                 if random.random() > self.prob:
                     return x
                 
-                # Use GaussianNoiseTransform for very subtle multiplicative effect
+                # Use GaussianNoiseTransform for controlled multiplicative effect
                 scale = random.uniform(*self.scale_range)
                 gamma_noise = GaussianNoiseTransform(sigma=scale)
                 return gamma_noise(x)
         
         return GammaMultiplicativeTransform()
+    
+    def _create_custom_gamma_multiplicative(self, scale_range=(0.02, 0.06), prob=0.7):
+        """Create gamma multiplicative transform with custom parameters."""
+        if not CORNUCOPIA_AVAILABLE:
+            return self._create_fallback_multiplicative()
+        
+        class CustomGammaMultiplicativeTransform:
+            def __init__(self, scale_range, prob):
+                self.scale_range = scale_range
+                self.prob = prob
+            
+            def __call__(self, x):
+                if random.random() > self.prob:
+                    return x
+                
+                scale = random.uniform(*self.scale_range)
+                gamma_noise = GaussianNoiseTransform(sigma=scale)
+                return gamma_noise(x)
+        
+        return CustomGammaMultiplicativeTransform(scale_range, prob)
+    
+    def _create_custom_gamma_speckle(self, intensity_range=(0.9, 1.05), prob=0.8):
+        """Create gamma speckle transform with custom parameters."""
+        if not CORNUCOPIA_AVAILABLE:
+            return self._create_fallback_speckle()
+        
+        class CustomGammaSpeckleTransform:
+            def __init__(self, intensity_range, prob):
+                self.intensity_range = intensity_range
+                self.prob = prob
+            
+            def __call__(self, x):
+                if random.random() > self.prob:
+                    return x
+                
+                intensity = random.uniform(*self.intensity_range)
+                gamma_transform = RandomGammaTransform(gamma=intensity)
+                return gamma_transform(x)
+        
+        return CustomGammaSpeckleTransform(intensity_range, prob)
     
     def _create_optical_speckle_transform(self):
         """Create optical speckle transform."""
@@ -176,7 +216,7 @@ class ImprovedCornucopiaAugmenter:
             return self._create_fallback_multiplicative()
         
         class SmoothMultiplicativeField:
-            def __init__(self, field_strength=(0.1, 0.25), smoothness=(2, 4), prob=0.9):  # Much higher prob and strength
+            def __init__(self, field_strength=(0.02, 0.08), smoothness=(2, 3), prob=0.6):  # Much more conservative
                 self.field_strength = field_strength
                 self.smoothness = smoothness
                 self.prob = prob
@@ -204,7 +244,7 @@ class ImprovedCornucopiaAugmenter:
             return self._create_fallback_multiplicative()
         
         class MultiplicativeField:
-            def __init__(self, strength_range=(0.08, 0.18), prob=0.8):  # Higher prob and strength
+            def __init__(self, strength_range=(0.06, 0.12), prob=0.75):  # Balanced range
                 self.strength_range = strength_range
                 self.prob = prob
             
@@ -223,6 +263,30 @@ class ImprovedCornucopiaAugmenter:
                     return x
         
         return MultiplicativeField()
+    
+    def _create_custom_multiplicative_field(self, strength_range=(0.06, 0.12), prob=0.75):
+        """Create multiplicative field transform with custom parameters."""
+        if not CORNUCOPIA_AVAILABLE:
+            return self._create_fallback_multiplicative()
+        
+        class CustomMultiplicativeField:
+            def __init__(self, strength_range, prob):
+                self.strength_range = strength_range
+                self.prob = prob
+            
+            def __call__(self, x):
+                if random.random() > self.prob:
+                    return x
+                
+                strength = random.uniform(*self.strength_range)
+                try:
+                    mul_field = RandomMulFieldTransform(vmax=strength, order=3, shape=6)
+                    return mul_field(x)
+                except Exception as e:
+                    print(f"    Custom multiplicative field failed: {e}")
+                    return x
+        
+        return CustomMultiplicativeField(strength_range, prob)
     
     def _create_optical_intensity_transform(self):
         """Create optical intensity transform."""
@@ -328,7 +392,7 @@ class ImprovedCornucopiaAugmenter:
     def _create_random_shapes_debris(self):
         """Create random shapes debris simulation."""
         class RandomShapesDebris:
-            def __init__(self, n_shapes=(1, 4), size_range=(3, 12), intensity_range=(0.1, 0.7), prob=0.4):
+            def __init__(self, n_shapes=(1, 3), size_range=(4, 10), intensity_range=(0.15, 0.35), prob=0.5):
                 self.n_shapes = n_shapes
                 self.size_range = size_range
                 self.intensity_range = intensity_range
@@ -372,23 +436,21 @@ class ImprovedCornucopiaAugmenter:
                     else:  # ellipse
                         y_coords, x_coords = np.ogrid[:h, :w]
                         a = size
-                        b = int(size * random.uniform(0.5, 1.5))
+                        b = int(size * random.uniform(0.8, 1.2))  # More consistent aspect ratio
                         mask = ((x_coords - center_x) ** 2 / a ** 2 + (y_coords - center_y) ** 2 / b ** 2) <= 1
                     
-                    # Apply morphological operations if available
-                    if SCIPY_AVAILABLE and random.random() < 0.5:
-                        operation = random.choice(['erosion', 'dilation', 'opening', 'closing'])
+                    # Apply morphological operations if available (controlled)
+                    if SCIPY_AVAILABLE and random.random() < 0.4:
+                        operation = random.choice(['erosion', 'dilation', 'opening'])
                         if operation == 'erosion':
-                            mask = morphology.binary_erosion(mask, morphology.disk(2))
+                            mask = morphology.binary_erosion(mask, morphology.disk(1))
                         elif operation == 'dilation':
-                            mask = morphology.binary_dilation(mask, morphology.disk(2))
-                        elif operation == 'opening':
+                            mask = morphology.binary_dilation(mask, morphology.disk(1))
+                        else:  # opening
                             mask = morphology.binary_opening(mask, morphology.disk(1))
-                        else:  # closing
-                            mask = morphology.binary_closing(mask, morphology.disk(1))
                     
-                    # Apply debris with alpha blending
-                    alpha = random.uniform(0.3, 0.7)
+                    # Apply debris with controlled alpha blending
+                    alpha = random.uniform(0.25, 0.45)  # More controlled blending
                     result[mask] = result[mask] * (1 - alpha) + intensity * alpha
                 
                 # Convert back to tensor if needed
@@ -398,6 +460,76 @@ class ImprovedCornucopiaAugmenter:
                     return result
         
         return RandomShapesDebris()
+    
+    def _create_custom_random_shapes_debris(self, n_shapes=(1, 3), size_range=(4, 10), intensity_range=(0.15, 0.35), prob=0.5):
+        """Create random shapes debris simulation with custom parameters."""
+        class CustomRandomShapesDebris:
+            def __init__(self, n_shapes, size_range, intensity_range, prob):
+                self.n_shapes = n_shapes
+                self.size_range = size_range
+                self.intensity_range = intensity_range
+                self.prob = prob
+            
+            def __call__(self, x):
+                if random.random() > self.prob:
+                    return x
+                
+                # Convert to numpy for processing
+                if hasattr(x, 'cpu'):
+                    x_np = x.squeeze().cpu().numpy()
+                    was_tensor = True
+                else:
+                    x_np = x
+                    was_tensor = False
+                
+                result = x_np.copy()
+                h, w = result.shape
+                n_shapes = random.randint(*self.n_shapes)
+                
+                for _ in range(n_shapes):
+                    size = random.randint(*self.size_range)
+                    center_x = random.randint(size, w - size)
+                    center_y = random.randint(size, h - size)
+                    intensity = random.uniform(*self.intensity_range)
+                    
+                    # Create random shape (circle, rectangle, or ellipse)
+                    shape_type = random.choice(['circle', 'rectangle', 'ellipse'])
+                    
+                    if shape_type == 'circle':
+                        y_coords, x_coords = np.ogrid[:h, :w]
+                        mask = ((x_coords - center_x) ** 2 + (y_coords - center_y) ** 2) <= size ** 2
+                    elif shape_type == 'rectangle':
+                        mask = np.zeros((h, w), dtype=bool)
+                        y_start = max(0, center_y - size//2)
+                        y_end = min(h, center_y + size//2)
+                        x_start = max(0, center_x - size//2)
+                        x_end = min(w, center_x + size//2)
+                        mask[y_start:y_end, x_start:x_end] = True
+                    else:  # ellipse
+                        y_coords, x_coords = np.ogrid[:h, :w]
+                        a = size
+                        b = int(size * random.uniform(0.8, 1.2))
+                        mask = ((x_coords - center_x) ** 2 / a ** 2 + (y_coords - center_y) ** 2 / b ** 2) <= 1
+                    
+                    # Apply morphological operations if available (controlled)
+                    if SCIPY_AVAILABLE and random.random() < 0.3:
+                        operation = random.choice(['erosion', 'dilation'])
+                        if operation == 'erosion':
+                            mask = morphology.binary_erosion(mask, morphology.disk(1))
+                        else:  # dilation
+                            mask = morphology.binary_dilation(mask, morphology.disk(1))
+                    
+                    # Apply debris with controlled alpha blending
+                    alpha = random.uniform(0.2, 0.4)
+                    result[mask] = result[mask] * (1 - alpha) + intensity * alpha
+                
+                # Convert back to tensor if needed
+                if was_tensor:
+                    return torch.from_numpy(result).unsqueeze(0).unsqueeze(0).to(x.device)
+                else:
+                    return result
+        
+        return CustomRandomShapesDebris(n_shapes, size_range, intensity_range, prob)
     
     def _create_morphological_debris(self):
         """Create morphological debris simulation."""
@@ -638,18 +770,51 @@ class ImprovedCornucopiaAugmenter:
                 intensity_config = augmentation_config['intensity']
                 transform_type = intensity_config.get('type', 'multiplicative_field')
                 if transform_type in self.intensity_transforms:
-                    tensor_img = self.intensity_transforms[transform_type](tensor_img)
+                    # Create transform with custom parameters if provided
+                    if transform_type == 'multiplicative_field' and 'strength_range' in intensity_config:
+                        custom_transform = self._create_custom_multiplicative_field(
+                            strength_range=intensity_config.get('strength_range', (0.06, 0.12)),
+                            prob=intensity_config.get('prob', 0.75)
+                        )
+                        tensor_img = custom_transform(tensor_img)
+                    else:
+                        tensor_img = self.intensity_transforms[transform_type](tensor_img)
             
             if 'noise' in augmentation_config:
                 noise_config = augmentation_config['noise']
                 noise_type = noise_config.get('type', 'gamma_speckle')
                 if noise_type in self.noise_transforms:
-                    tensor_img = self.noise_transforms[noise_type](tensor_img)
+                    # Create transform with custom parameters if provided
+                    if noise_type == 'gamma_multiplicative' and 'scale_range' in noise_config:
+                        custom_transform = self._create_custom_gamma_multiplicative(
+                            scale_range=noise_config.get('scale_range', (0.02, 0.06)),
+                            prob=noise_config.get('prob', 0.7)
+                        )
+                        tensor_img = custom_transform(tensor_img)
+                    elif noise_type == 'gamma_speckle' and 'intensity_range' in noise_config:
+                        custom_transform = self._create_custom_gamma_speckle(
+                            intensity_range=noise_config.get('intensity_range', (0.9, 1.05)),
+                            prob=noise_config.get('prob', 0.8)
+                        )
+                        tensor_img = custom_transform(tensor_img)
+                    else:
+                        tensor_img = self.noise_transforms[noise_type](tensor_img)
             
             if 'debris' in augmentation_config:
                 debris_config = augmentation_config['debris']
                 debris_type = debris_config.get('type', 'random_shapes')
                 if debris_type in self.debris_transforms:
+                    # Create transform with custom parameters if provided
+                    if debris_type == 'random_shapes' and 'n_shapes' in debris_config:
+                        custom_transform = self._create_custom_random_shapes_debris(
+                            n_shapes=debris_config.get('n_shapes', (1, 3)),
+                            size_range=debris_config.get('size_range', (4, 10)),
+                            intensity_range=debris_config.get('intensity_range', (0.15, 0.35)),
+                            prob=debris_config.get('prob', 0.5)
+                        )
+                        tensor_img = custom_transform(tensor_img)
+                    else:
+                        tensor_img = self.debris_transforms[debris_type](tensor_img)
                     tensor_img = self.debris_transforms[debris_type](tensor_img)
             
             # Convert back to numpy
@@ -677,94 +842,33 @@ def create_optical_presets():
         Dictionary of preset configurations
     """
     return {
-        'disabled': {
-            # No augmentations applied - return original image
-        },
-        
         'gamma_speckle': {
-            'intensity': {'type': 'smooth_multiplicative'}  # Only intensity, no noise to avoid dark backgrounds
+            'noise': {'type': 'gamma_speckle', 'intensity_range': (0.9995, 1.0005), 'prob': 0.3},  # Like subtle_debris level
+            'intensity': {'type': 'smooth_multiplicative'}
         },
         
         'optical_with_debris': {
-            'intensity': {'type': 'multiplicative_field'},  # Only intensity and debris
-            'debris': {'type': 'random_shapes'}
+            'noise': {'type': 'gamma_multiplicative', 'scale_range': (0.0005, 0.0005), 'prob': 0.2},  # Same as subtle_debris
+            'intensity': {'type': 'smooth_multiplicative'}
         },
         
         'heavy_speckle': {
-            'noise': {'type': 'optical_speckle'},  # More visible speckle
-            'intensity': {'type': 'optical_intensity'},
-            'debris': {'type': 'morphological_debris'}
+            'noise': {'type': 'gamma_multiplicative', 'scale_range': (0.0008, 0.0008), 'prob': 0.25},  # Just slightly more than subtle_debris
+            'intensity': {'type': 'smooth_multiplicative'}  # Change to smooth like others
         },
         
         'clean_optical': {
-            'intensity': {'type': 'smooth_multiplicative'}  # Only multiplicative, preserve background
+            'intensity': {'type': 'smooth_multiplicative'}  # Keep this one completely clean
         },
         
         'subtle_debris': {
-            'intensity': {'type': 'smooth_multiplicative'},  # Remove noise to prevent dark backgrounds
-            'debris': {'type': 'random_spheres'}
+            'noise': {'type': 'gamma_multiplicative', 'scale_range': (0.0005, 0.0005), 'prob': 0.2},  # Keep this as is - it works!
+            'intensity': {'type': 'smooth_multiplicative'}
         },
         
         # Compatibility presets with old cornucopia_augmentation module
         'clinical_simulation': {
-            'intensity': {'type': 'smooth_multiplicative'}  # Only smooth intensity - guaranteed visible
-        },
-        
-        'aggressive': {
-            'noise': {'type': 'optical_speckle'},  # Strong but visible speckle
-            'intensity': {'type': 'multiplicative_field'},
-            'debris': {'type': 'random_shapes'}  # Add some debris for variation
-        },
-        
-        # Additional creative presets for maximum background variety - SIMPLIFIED FOR VISIBILITY
-        'high_contrast': {
-            'intensity': {'type': 'optical_intensity'},  # Focus on intensity only
-            'debris': {'type': 'morphological_debris'}   
-        },
-        
-        'minimal_noise': {
-            'intensity': {'type': 'multiplicative_field'}  # Only intensity, guaranteed visible background
-        },
-        
-        'speckle_light': {  
-            'intensity': {'type': 'smooth_multiplicative'}  # Only intensity, no speckle to avoid dark backgrounds
-        },
-        
-        'debris_field': {
-            'intensity': {'type': 'multiplicative_field'},  # Only intensity and debris
-            'debris': {'type': 'morphological_debris'}
-        },
-        
-        'smooth_gradients': {
-            'intensity': {'type': 'smooth_multiplicative'}  # Very smooth, minimal variation - always visible
-        },
-        
-        'mixed_effects': {
-            'intensity': {'type': 'multiplicative_field'},  # Only intensity and debris
-            'debris': {'type': 'random_spheres'}
-        },
-        
-        'clean_gradients': {
-            'intensity': {'type': 'optical_intensity'}  # Clean intensity gradients only - guaranteed visible
-        },
-        
-        'textured_background': {
-            'intensity': {'type': 'optical_intensity'},  # Only intensity and debris
-            'debris': {'type': 'random_shapes'}  
-        },
-        
-        # New preset based on user's generated image - grainy texture with scattered artifacts (reduced intensity)
-        'grainy_textured': {
-            'noise': {'type': 'optical_speckle'},        # Subtle grainy speckle texture
-            'intensity': {'type': 'smooth_multiplicative'}, # Gentler intensity variations
-            'debris': {'type': 'random_spheres'}          # Subtle scattered artifacts
-        },
-        
-        # Alternative version with morphological debris for moderate texture
-        'heavy_textured': {
-            'noise': {'type': 'optical_speckle'},           # Moderate speckle noise
-            'intensity': {'type': 'multiplicative_field'},   # Moderate intensity effects
-            'debris': {'type': 'random_shapes'}             # Moderate debris patterns
+            'intensity': {'type': 'smooth_multiplicative'}  # Keep this completely clean
         }
     }
 

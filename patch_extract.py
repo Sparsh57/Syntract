@@ -111,18 +111,20 @@ def validate_input_files(nifti_path: str, trk_path: str) -> dict:
         return validation
     
     try:
-        # Load and validate NIfTI
-        nimg = nib.load(nifti_path)
-        validation['nifti_info']['shape'] = nimg.shape
-        validation['nifti_info']['dtype'] = str(nimg.get_data_dtype())
+        # Fast loading without validation overhead
+        nimg = nib.load(nifti_path, mmap=False)  # Direct loading for speed
+        data = nimg.get_fdata().astype(np.float32)
+        
+        validation['nifti_info']['shape'] = data.shape
+        validation['nifti_info']['dtype'] = str(data.dtype)
         validation['nifti_info']['affine_det'] = np.linalg.det(nimg.affine[:3, :3])
         validation['nifti_info']['voxel_sizes'] = nib.affines.voxel_sizes(nimg.affine)
         
         # Check for reasonable dimensions
-        if any(dim < 10 for dim in nimg.shape[:3]):
-            validation['warnings'].append(f"Very small NIfTI dimensions: {nimg.shape[:3]}")
-        if any(dim > 2000 for dim in nimg.shape[:3]):
-            validation['warnings'].append(f"Very large NIfTI dimensions: {nimg.shape[:3]}")
+        if any(dim < 10 for dim in data.shape[:3]):
+            validation['warnings'].append(f"Very small NIfTI dimensions: {data.shape[:3]}")
+        if any(dim > 2000 for dim in data.shape[:3]):
+            validation['warnings'].append(f"Very large NIfTI dimensions: {data.shape[:3]}")
             
         # Load and validate TRK
         trk = nib.streamlines.load(trk_path)

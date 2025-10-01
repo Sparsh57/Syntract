@@ -453,13 +453,6 @@ class CornucopiaAugmenter:
 def create_augmentation_presets():
     """Create predefined augmentation presets for fiber tract visualization."""
     return {
-        'aggressive': {
-            'spatial': {'type': 'elastic_deformation'},
-            'intensity': {'type': 'bias_field'},
-            'noise': {'type': 'rician_noise', 'intensity': 0.1},
-            'contrast': {'type': 'local_contrast'}
-        },
-        
         'clinical_simulation': {
             'spatial': {'type': 'affine_medical'},
             'intensity': {'type': 'bias_field'},
@@ -479,10 +472,6 @@ def create_augmentation_presets(truly_random=False):
     if CORNUCOPIA_AVAILABLE:
         presets['clinical_simulation'] = CornucopiaAugmenter(
             random_state=None if truly_random else 42, 
-            truly_random=truly_random
-        )
-        presets['aggressive'] = CornucopiaAugmenter(
-            random_state=None if truly_random else 123, 
             truly_random=truly_random
         )
     

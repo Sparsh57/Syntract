@@ -480,7 +480,7 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
     # Prepare available options for randomization
     if randomize:
         # Available cornucopia presets (including None for no cornucopia)
-        cornucopia_options = [None, 'aggressive', 'clinical_simulation']
+        cornucopia_options = [None, 'clinical_simulation']
         
         # Available background effects 
         background_effects = ['balanced', 'blockface_preserving']

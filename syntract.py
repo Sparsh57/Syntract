@@ -71,7 +71,7 @@ def run_visualization_stage(nifti_file, trk_file, args):
     viz_output_dir = args.viz_output_dir
     os.makedirs(viz_output_dir, exist_ok=True)
     
-    # Prepare visualization arguments
+    # Prepare visualization arguments  
     viz_args = argparse.Namespace()
     
     # Set essential visualization parameters  
@@ -85,19 +85,19 @@ def run_visualization_stage(nifti_file, trk_file, args):
     viz_args.streamline_percentage = 100.0
     viz_args.roi_sphere = None
     viz_args.tract_linewidth = 1.0
-    viz_args.save_masks = True
-    viz_args.use_high_density_masks = False
-    viz_args.label_bundles = False
+    viz_args.save_masks = args.save_masks
+    viz_args.use_high_density_masks = args.use_high_density_masks
+    viz_args.label_bundles = args.label_bundles
     viz_args.enable_orange_blobs = args.enable_orange_blobs
     viz_args.orange_blob_probability = args.orange_blob_probability
-    viz_args.mask_thickness = 1
+    viz_args.mask_thickness = args.mask_thickness
     viz_args.min_fiber_pct = 10.0
     viz_args.max_fiber_pct = 100.0
-    viz_args.min_bundle_size = 20
-    viz_args.density_threshold = 0.15
+    viz_args.min_bundle_size = args.min_bundle_size
+    viz_args.density_threshold = args.density_threshold
     viz_args.contrast_method = "clahe"
     viz_args.background_preset = "preserve_edges"
-    viz_args.cornucopia_preset = "disabled"
+    viz_args.cornucopia_preset = "clean_optical"
     viz_args.enable_sharpening = False
     viz_args.sharpening_strength = 1.0
     viz_args.close_gaps = False
@@ -274,18 +274,18 @@ def run_patch_extraction_stage(nifti_file, trk_files, args):
             min_streamlines_per_patch=getattr(args, 'min_streamlines_per_patch', 30),
             random_state=getattr(args, 'random_state', None),
             prefix=getattr(args, 'patch_prefix', 'patch').rstrip('_'),
-            save_masks=True,
+            save_masks=getattr(args, 'save_masks', True),
             contrast_method='clahe',
             background_enhancement='preserve_edges',
-            cornucopia_preset='disabled',
+            cornucopia_preset='clean_optical',
             tract_linewidth=1.0,
-            mask_thickness=1,
-            density_threshold=0.15,
+            mask_thickness=getattr(args, 'mask_thickness', 1),
+            density_threshold=getattr(args, 'density_threshold', 0.15),
             gaussian_sigma=2.0,
             close_gaps=False,
             closing_footprint_size=3,
-            label_bundles=False,
-            min_bundle_size=20,
+            label_bundles=getattr(args, 'label_bundles', False),
+            min_bundle_size=getattr(args, 'min_bundle_size', 20),
             enable_orange_blobs=getattr(args, 'enable_orange_blobs', False),
             orange_blob_probability=getattr(args, 'orange_blob_probability', 0.3)
         )
@@ -297,94 +297,11 @@ def run_patch_extraction_stage(nifti_file, trk_files, args):
         print(f"Success rate: {results['patches_extracted']/results['total_patches_requested']*100:.1f}%")
         print(f"Output directory: {patch_output_dir}")
         
-        # Add automatic visualization generation for extracted patches
-        if results['patches_extracted'] > 0:
-            print(f"\n🎨 Generating visualizations for extracted patches...")
-            
-            # Set up visualization output directory
-            viz_output_dir = os.path.join(patch_output_dir, "visualizations")
-            os.makedirs(viz_output_dir, exist_ok=True)
-            
-            # Create visualization arguments with full configuration
-            viz_args = argparse.Namespace()
-            viz_args.viz_output_dir = viz_output_dir
-            viz_args.n_examples = min(10, results['patches_extracted'])  # Generate examples for up to 10 patches
-            viz_args.viz_prefix = "patch_viz_"
-            
-            # Add comprehensive visualization parameters 
-            viz_args.n_slices = 1
-            viz_args.slice_mode = "axial"
-            viz_args.cmap = "gray"
-            viz_args.tract_color = (1.0, 0.8, 0.1)
-            viz_args.tract_color_variation = 0.3
-            viz_args.tract_linewidth = 1.0
-            viz_args.streamline_percentage = 100.0
-            viz_args.save_masks = True
-            viz_args.mask_thickness = 1
-            viz_args.min_fiber_pct = 10.0
-            viz_args.max_fiber_pct = 100.0
-            viz_args.min_bundle_size = 20
-            viz_args.density_threshold = 0.15
-            viz_args.contrast_method = "clahe"
-            viz_args.background_preset = "preserve_edges"
-                        # Use comprehensive cornucopia presets for maximum variation\n            available_presets = [\n                'disabled', 'clean_optical', 'gamma_speckle', 'optical_with_debris', \n                'heavy_speckle', 'subtle_debris', 'clinical_simulation', 'aggressive',\n                'high_contrast', 'minimal_noise', 'speckle_light', 'debris_field',\n                'smooth_gradients', 'mixed_effects', 'clean_gradients', 'textured_background',\n                # Additional combinations for even more variety\n                'clean_optical', 'gamma_speckle', 'optical_with_debris', # Repeat popular ones\n                'heavy_speckle', 'subtle_debris', 'minimal_noise'  # For balanced distribution\n            ]\n            viz_args.cornucopia_preset = \"disabled\"  # Will be overridden per patch
-            viz_args.enable_sharpening = False
-            viz_args.sharpening_strength = 1.0
-            viz_args.close_gaps = False
-            viz_args.closing_footprint_size = 3
-            viz_args.randomize = True
-            viz_args.random_state = None  # Use different random state for each patch
-            
-            try:
-                # Find and visualize some of the extracted patches
-                patch_folders = []
-                for item in os.listdir(patch_output_dir):
-                    item_path = os.path.join(patch_output_dir, item)
-                    if os.path.isdir(item_path) and item.startswith('patch_'):
-                        nifti_file = os.path.join(item_path, f"{item}.nii.gz")
-                        trk_file = os.path.join(item_path, f"{item}.trk")
-                        if os.path.exists(nifti_file) and os.path.exists(trk_file):
-                            patch_folders.append({
-                                'name': item,
-                                'nifti': nifti_file,
-                                'trk': trk_file
-                            })
-                
-                if patch_folders:
-                    # Generate visualizations for first few patches
-                    viz_count = min(5, len(patch_folders))  # Limit to 5 patches to avoid overwhelming output
-                    for i, patch_info in enumerate(patch_folders[:viz_count]):
-                        print(f"Generating visualization for {patch_info['name']} ({i+1}/{viz_count})")
-                        
-                        # Create individual viz output directory for this patch
-                        patch_viz_dir = os.path.join(viz_output_dir, patch_info['name'])
-                        os.makedirs(patch_viz_dir, exist_ok=True)
-                        
-                        patch_viz_args = argparse.Namespace(**vars(viz_args))
-                        patch_viz_args.viz_output_dir = patch_viz_dir
-                        patch_viz_args.viz_prefix = f"{patch_info['name']}_"
-                        
-                        # Randomize parameters for each patch to add variation
-                        import random
-                        import time
-                        random.seed(int(time.time() * 1000000) % (2**32))  # Truly random seed
-                        
-                                                # Sophisticated weighted cornucopia preset selection for maximum variety\n                        # Organize presets by category for balanced distribution\n                        clean_presets = ['disabled', 'clean_optical', 'minimal_noise', 'smooth_gradients', 'clean_gradients']\n                        subtle_presets = ['gamma_speckle', 'subtle_debris', 'clinical_simulation']\n                        moderate_presets = ['optical_with_debris', 'mixed_effects']\n                        heavy_presets = ['heavy_speckle', 'aggressive', 'high_contrast', 'speckle_light', 'debris_field', 'textured_background', 'grainy_textured', 'heavy_textured']\n                        \n                        # Weighted selection: favor medical realism but ensure variety\n                        preset_weights = {\n                            'clean': 0.35,    # 35% clean/minimal for medical realism\n                            'subtle': 0.35,   # 35% subtle effects\n                            'moderate': 0.20, # 20% moderate effects\n                            'heavy': 0.10     # 10% heavy effects for variety\n                        }\n                        \n                        rand_val = random.random()\n                        if rand_val < preset_weights['clean']:\n                            selected_presets = clean_presets\n                        elif rand_val < preset_weights['clean'] + preset_weights['subtle']:\n                            selected_presets = subtle_presets\n                        elif rand_val < preset_weights['clean'] + preset_weights['subtle'] + preset_weights['moderate']:\n                            selected_presets = moderate_presets\n                        else:\n                            selected_presets = heavy_presets\n                        \n                        patch_viz_args.cornucopia_preset = random.choice(selected_presets)\n                        print(f\"    Selected cornucopia preset: {patch_viz_args.cornucopia_preset}\")
-                        
-                        # Randomize other parameters
-                        patch_viz_args.tract_color_variation = random.uniform(0.2, 0.4)
-                        patch_viz_args.random_state = None  # Use truly random for each patch
-                        
-                        run_visualization_stage(patch_info['nifti'], patch_info['trk'], patch_viz_args)
-                    
-                    print(f"✅ Generated visualizations for {viz_count} patches in: {viz_output_dir}")
-                else:
-                    print("⚠️  No patch files found for visualization generation")
-                    
-            except Exception as viz_error:
-                print(f"⚠️  Visualization generation failed: {viz_error}")
-                # Don't fail the entire patch extraction if visualization fails
-                pass
+        # Visualizations are already generated by the patch extraction process
+        print(f"\n✅ Patch extraction completed with integrated visualizations!")
+        print(f"    - {results['patches_extracted']} patches extracted")
+        print(f"    - Visualizations saved as patch_XXXX_visualization.png")
+        print(f"    - Masks saved as patch_XXXX_visualization_mask_slice0.png")
         
         return results
         
@@ -407,7 +324,9 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                     enable_patch_extraction=False, patch_output_dir=None, total_patches=None,
                     patch_size=None, min_streamlines_per_patch=5, patch_prefix="patch_",
                     n_examples=10, viz_output_dir=None, viz_prefix="viz_",
-                    enable_orange_blobs=False, orange_blob_probability=0.3):
+                    enable_orange_blobs=False, orange_blob_probability=0.3,
+                    save_masks=True, use_high_density_masks=False, mask_thickness=1,
+                    density_threshold=0.15, min_bundle_size=20, label_bundles=False):
     """Main processing function"""
     import signal
     import sys
@@ -460,7 +379,7 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
         
         # Check if patch extraction is enabled (after base synthesis)
         if enable_patch_extraction:
-            print("\n📦 Patch extraction enabled - starting patch processing...")
+            print("\n Patch extraction enabled - starting patch processing...")
             
             # Use the synthesized files as input for patch extraction
             base_nifti = f"{output_base}.nii.gz"
@@ -591,6 +510,21 @@ Examples:
     viz_group.add_argument("--orange_blob_probability", type=float, default=0.3,
                           help="Probability of applying orange blobs to each visualization (0.0-1.0, default: 0.3)")
     
+    # Mask and Bundle parameters
+    mask_group = parser.add_argument_group("Mask & Bundle Detection")
+    mask_group.add_argument("--save_masks", action="store_true", default=True,
+                           help="Save binary masks alongside visualizations (default: True)")
+    mask_group.add_argument("--use_high_density_masks", action="store_true",
+                           help="Use high-density mask generation (default: False)")
+    mask_group.add_argument("--mask_thickness", type=int, default=1,
+                           help="Thickness of generated masks (default: 1)")
+    mask_group.add_argument("--density_threshold", type=float, default=0.15,
+                           help="Fiber density threshold for masking (default: 0.15)")
+    mask_group.add_argument("--min_bundle_size", type=int, default=20,
+                           help="Minimum size for bundle detection (default: 20)")
+    mask_group.add_argument("--label_bundles", action="store_true",
+                           help="Label individual fiber bundles (default: False)")
+    
     
     args = parser.parse_args()
     
@@ -630,7 +564,13 @@ Examples:
         n_examples=args.n_examples,
         viz_prefix=args.viz_prefix,
         enable_orange_blobs=args.enable_orange_blobs,
-        orange_blob_probability=args.orange_blob_probability
+        orange_blob_probability=args.orange_blob_probability,
+        save_masks=args.save_masks,
+        use_high_density_masks=args.use_high_density_masks,
+        mask_thickness=args.mask_thickness,
+        density_threshold=args.density_threshold,
+        min_bundle_size=args.min_bundle_size,
+        label_bundles=args.label_bundles
     )
     
     if not result['success']:
