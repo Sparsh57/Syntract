@@ -120,6 +120,46 @@ def resample_nifti(old_img, new_affine, new_shape, chunk_size=(64, 64, 64), n_jo
         try:
             import cupy as xp
             from numba import cuda
+            import math
+            
+            @cuda.jit(device=True)
+            def cubic_kernel_device(x):
+                """Cubic interpolation kernel for CUDA device"""
+                x = abs(x)
+                if x < 1:
+                    return (21*x*x*x - 36*x*x + 16) / 18
+                elif x < 2:
+                    return (-7*x*x*x + 36*x*x - 60*x + 32) / 18
+                else:
+                    return 0.0
+            
+            @cuda.jit(device=True)
+            def interpolate_point_device(data_in, i, j, k):
+                """High-quality cubic interpolation for CUDA device"""
+                i_center = int(round(i))
+                j_center = int(round(j))
+                k_center = int(round(k))
+                
+                result = 0.0
+                total_weight = 0.0
+                
+                for di in range(-1, 3):  # 4x4x4 neighborhood
+                    for dj in range(-1, 3):
+                        for dk in range(-1, 3):
+                            ii = i_center + di
+                            jj = j_center + dj
+                            kk = k_center + dk
+                            
+                            if (0 <= ii < data_in.shape[0] and 0 <= jj < data_in.shape[1] and 0 <= kk < data_in.shape[2]):
+                                weight_i = cubic_kernel_device(i - ii)
+                                weight_j = cubic_kernel_device(j - jj)
+                                weight_k = cubic_kernel_device(k - kk)
+                                weight = weight_i * weight_j * weight_k
+                                
+                                result += data_in[ii, jj, kk] * weight
+                                total_weight += weight
+                
+                return result / max(total_weight, 1e-10)
             
             @cuda.jit
             def resample_kernel(new_data, data_in, new_affine, old_affine_inv, new_shape):
@@ -134,7 +174,7 @@ def resample_nifti(old_img, new_affine, new_shape, chunk_size=(64, 64, 64), n_jo
                     k = old_affine_inv[2, 0] * x_mm + old_affine_inv[2, 1] * y_mm + old_affine_inv[2, 2] * z_mm + old_affine_inv[2, 3]
                     
                     # Use cubic interpolation for high quality results
-                    new_data[x, y, z] = interpolate_point(data_in, i, j, k)
+                    new_data[x, y, z] = interpolate_point_device(data_in, i, j, k)
             
             data_in = xp.asarray(old_img.get_fdata(), dtype=xp.float32)
             old_affine_inv = xp.linalg.inv(xp.asarray(old_img.affine))
@@ -160,7 +200,7 @@ def resample_nifti(old_img, new_affine, new_shape, chunk_size=(64, 64, 64), n_jo
                         k = old_affine_inv[2, 0] * x_mm + old_affine_inv[2, 1] * y_mm + old_affine_inv[2, 2] * z_mm + old_affine_inv[2, 3]
                         
                         # Use cubic interpolation for high quality results
-                        val = interpolate_point(data_in, i, j, k)
+                        val = interpolate_point_device(data_in, i, j, k)
                         chunk_data[x, y, z] = val
                 
                 for x_start in range(0, new_shape[0], max_chunk_size[0]):

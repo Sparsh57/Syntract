@@ -257,39 +257,94 @@ def process_and_save(
         
         def process_streamline(streamline):
             try:
-                clipped_segments = clip_streamline_to_fov(streamline, target_dimensions, use_gpu=use_gpu)
+                print(f"  - streamline type: {type(streamline)}")
+                print(f"  - streamline shape: {getattr(streamline, 'shape', 'N/A')}")
+                print(f"  - streamline dtype: {getattr(streamline, 'dtype', 'N/A')}")
+                
+                # Convert to float32 if it's float64
+                if hasattr(streamline, 'dtype') and streamline.dtype == np.float64:
+                    streamline = streamline.astype(np.float32)
+                
+                try:
+                    clipped_segments = clip_streamline_to_fov(streamline, target_dimensions, use_gpu=use_gpu)
+                except Exception as clip_error:
+                    print(f"  Error: {clip_error}")
+                    print(f"  Error type: {type(clip_error)}")
+                    import traceback
+                    traceback.print_exc()
+                    raise clip_error
+                
                 densified_segments = []
-                for segment in clipped_segments:
+                for i, segment in enumerate(clipped_segments):
                     if len(segment) >= 2:
                         try:
-                            densified = densify_streamline_subvoxel(
-                                segment, step_size=step_size, 
-                                interp_method=interpolation_method, use_gpu=use_gpu
-                            )
-                            if len(densified) >= 2:
-                                densified_segments.append(densified)
+                            # Ensure segment is float32
+                            if hasattr(segment, 'dtype') and segment.dtype != np.float32:
+                                segment = segment.astype(np.float32)
+                            
+                            print(f"  - segment type: {type(segment)}")
+                            print(f"  - segment shape: {segment.shape}")
+                            print(f"  - segment dtype: {segment.dtype}")
+                            print(f"  - step_size: {step_size}")
+                            print(f"  - interp_method: {interpolation_method}")
+                            print(f"  - use_gpu: {use_gpu}")
+                            
+                            try:
+                                densified = densify_streamline_subvoxel(
+                                    segment, step_size=step_size, 
+                                    interp_method=interpolation_method, use_gpu=use_gpu
+                                )
+                                
+                                if len(densified) >= 2:
+                                    densified_segments.append(densified)
+                            except Exception as densify_error:
+                                print(f"  Error: {densify_error}")
+                                print(f"  Error type: {type(densify_error)}")
+                                import traceback
+                                traceback.print_exc()
+                                raise densify_error
+                                
                         except Exception as e:
-                            print(f"Error densifying segment: {e}")
+                            print(f"Error densifying segment {i}: {e}")
+                            print(f"  - type: {type(segment)}")
+                            print(f"  - shape: {getattr(segment, 'shape', 'N/A')}")
+                            print(f"  - dtype: {getattr(segment, 'dtype', 'N/A')}")
+                            print(f"  - min/max values: {np.min(segment) if hasattr(segment, 'min') else 'N/A'} / {np.max(segment) if hasattr(segment, 'max') else 'N/A'}")
+                            import traceback
+                            traceback.print_exc()
                             densified_segments.append(segment)
                 return densified_segments
             except Exception as e:
                 print(f"Error processing streamline: {e}")
+                print(f"  - streamline type: {type(streamline)}")
+                print(f"  - streamline shape: {getattr(streamline, 'shape', 'N/A')}")
+                print(f"  - streamline dtype: {getattr(streamline, 'dtype', 'N/A')}")
+                import traceback
+                traceback.print_exc()
                 return []
         
-        # Configure joblib with proper timeout and memory management
-        results = Parallel(
-            n_jobs=num_jobs,
-            timeout=500,  # 5 minutes timeout per job
-            batch_size='auto',  # Automatic batch sizing
-            max_nbytes=None,  # No memory limit per job
-            backend='loky',  # Use loky backend for better memory management
-            prefer='processes'  # Use processes instead of threads for CPU-bound work
-        )(
-            delayed(process_streamline)(streamline) for streamline in voxel_streamlines
-        )
+        # Use sequential processing to avoid import/scope issues completely
         
-        for result in results:
-            densified_vox.extend(result)
+        densified_vox = []
+        success_count = 0
+        
+        for i, streamline in enumerate(voxel_streamlines):
+            if i % 1000 == 0:
+                print(f"Processing streamline {i}/{len(voxel_streamlines)}...")
+            
+            try:
+                result = process_streamline(streamline)
+                if result is not None:
+                    densified_vox.extend(result)
+                    success_count += 1
+            except Exception as e:
+                print(f"Error processing streamline {i}: {e}")
+                print(f"Error type: {type(e)}")
+                import traceback
+                traceback.print_exc()
+                continue
+        
+        print(f"Successfully processed {success_count}/{len(voxel_streamlines)} streamlines")
             
         print(f"Processed {len(voxel_streamlines)} streamlines into {len(densified_vox)} segments")
     else:

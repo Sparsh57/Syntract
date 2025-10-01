@@ -9,6 +9,7 @@ typing_extensions==4.12.2
 matplotlib==3.9.4
 dipy
 psutil>=5.0.0
+opencv-python>=4.5.0
 
 # Cornucopia integration dependencies
 torch>=1.9.0

@@ -397,8 +397,36 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
                     except Exception as e:
                         print(f"Error densifying streamline {i}: Failed to convert list to array: {e}")
                         continue
-                elif not isinstance(streamline, np.ndarray):
-                    print(f"Error densifying streamline {i}: Unsupported type {type(streamline)}")
+                # Enhanced type checking that handles various numpy array types
+                def is_array_like(obj):
+                    """Check if object is array-like (numpy, cupy, or convertible to numpy)"""
+                    if isinstance(obj, np.ndarray):
+                        return True
+                    if hasattr(obj, 'get') and hasattr(obj, 'shape'):  # CuPy array
+                        return True
+                    if hasattr(obj, 'shape') and hasattr(obj, 'dtype') and hasattr(obj, '__array__'):
+                        return True
+                    if str(type(obj)).find('numpy.ndarray') >= 0:  # Different numpy instance
+                        return True
+                    return False
+                
+                if not is_array_like(streamline):
+                    print(f"[densify_streamlines_parallel] Error densifying streamline {i}: Unsupported type {type(streamline)}")
+                    print(f"  isinstance(np.ndarray): {isinstance(streamline, np.ndarray)}")
+                    print(f"  type string: {str(type(streamline))}")
+                    print(f"  has array attributes: shape={hasattr(streamline, 'shape')}, dtype={hasattr(streamline, 'dtype')}, __array__={hasattr(streamline, '__array__')}")
+                    continue
+                
+                # Convert to numpy array with explicit type conversion
+                try:
+                    if hasattr(streamline, 'get'):  # CuPy array
+                        streamline = streamline.get()
+                    if not isinstance(streamline, np.ndarray):
+                        streamline = np.asarray(streamline, dtype=np.float32)
+                    elif streamline.dtype != np.float32:
+                        streamline = streamline.astype(np.float32)
+                except Exception as conv_e:
+                    print(f"Error converting streamline {i} to numpy array: {conv_e}")
                     continue
                     
                 # Apply densification
@@ -440,8 +468,8 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
         # Import numpy here to ensure it's available in both code paths
         import numpy as np
         
-        # Parallel processing with proper timeout and memory management
-        from joblib import Parallel, delayed
+        # Use sequential processing to avoid import issues with threading backend
+        import numpy as np
         
         def _process_one(streamline, idx, total):
             if idx % 1000 == 0:
@@ -515,19 +543,11 @@ def densify_streamlines_parallel(streamlines, step_size, n_jobs=8, use_gpu=True,
         
         total = len(streamlines)
         
-        # Configure joblib with proper timeout and memory management
-        # This prevents the "worker stopped" warnings
-        results = Parallel(
-            n_jobs=n_jobs,
-            timeout=300,  # 5 minutes timeout per job
-            batch_size='auto',  # Automatic batch sizing
-            max_nbytes=None,  # No memory limit per job
-            backend='loky',  # Use loky backend for better memory management
-            prefer='processes'  # Use processes instead of threads for CPU-bound work
-        )(
-            delayed(_process_one)(streamline, idx, total) 
-            for idx, streamline in enumerate(streamlines)
-        )
+        # Process sequentially to avoid import issues
+        results = []
+        for idx, streamline in enumerate(streamlines):
+            result = _process_one(streamline, idx, total)
+            results.append(result)
         
         # Filter out None results and ensure each streamline has at least 2 points
         densified = []
@@ -766,6 +786,18 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
     try:
         debug_tangents = os.environ.get("DEBUG_TANGENTS") == "1"
 
+        # DEBUG: Add comprehensive type and shape information
+        print(f"  - streamline type: {type(streamline)}")
+        print(f"  - streamline shape: {getattr(streamline, 'shape', 'N/A')}")
+        print(f"  - streamline dtype: {getattr(streamline, 'dtype', 'N/A')}")
+        print(f"  - step_size: {step_size}")
+        print(f"  - use_gpu: {use_gpu}")
+        print(f"  - interp_method: {interp_method}")
+
+        # Handle CuPy arrays first
+        if hasattr(streamline, 'get'):  # CuPy array
+            streamline = streamline.get()  # Convert to numpy array
+        
         if isinstance(streamline, list):
             try:
                 if not all(isinstance(point, (list, tuple, np.ndarray)) for point in streamline):
@@ -783,12 +815,26 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                         raise TypeError(f"Unexpected point type: {type(point)}")
                 streamline = np.array(clean_points, dtype=np.float32)
             except Exception as e:
+                import traceback
+                traceback.print_exc()
                 raise TypeError(f"Failed to convert list to numpy array: {e}")
+
+        # DEBUG: Check streamline after list processing
 
         if len(streamline) < 2:
             if not isinstance(streamline, np.ndarray):
                 streamline = np.array(streamline, dtype=np.float32)
             return streamline
+
+        # Ensure streamline is a numpy array at this point
+        if not isinstance(streamline, np.ndarray):
+            try:
+                streamline = np.array(streamline, dtype=np.float32)
+            except Exception as e:
+                import traceback
+                traceback.print_exc()
+                raise TypeError(f"Cannot convert streamline of type {type(streamline)} to numpy array: {e}")
+
 
         if use_gpu:
             try:
@@ -1057,6 +1103,10 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                         
         return densified_streamline
     except Exception as e:
+        import traceback
+        traceback.print_exc()
+        
+        # Return a safe fallback
         result = np.zeros((2, 3), dtype=np.float32)
         return result
 

@@ -10,20 +10,61 @@ except ImportError:
 
 def clip_streamline_to_fov(stream, new_shape, use_gpu=True, epsilon=1e-6):
     """Clip a streamline to the field of view."""
+    import numpy as np
+    
+    # Ensure stream is a numpy array first
+    if not isinstance(stream, np.ndarray):
+        try:
+            stream = np.array(stream, dtype=np.float32)
+        except Exception as e:
+            raise TypeError(f"Cannot convert stream of type {type(stream)} to numpy array: {e}")
+    
+    # Ensure stream is float32
+    if stream.dtype != np.float32:
+        stream = stream.astype(np.float32)
+    
+    # Auto-detect and setup array module
+    xp = np
+    use_cupy = False
+    
     if use_gpu:
         try:
-            import cupy as xp
+            import cupy as cp
+            # Test CuPy availability and functionality
+            try:
+                test_array = cp.array([1.0], dtype=cp.float32)
+                _ = cp.sum(test_array)  # Simple operation test
+                xp = cp
+                use_cupy = True
+            except Exception as e:
+                xp = np
+                use_cupy = False
         except ImportError:
-            import numpy as xp
-            use_gpu = False
+            xp = np
+            use_cupy = False
     else:
-        import numpy as xp
+        xp = np
+        use_cupy = False
+    
+    # Convert data to appropriate array type
+    if use_cupy:
+        try:
+            stream_device = xp.asarray(stream)
+            new_shape_device = xp.array(new_shape)
+        except Exception as e:
+            xp = np
+            use_cupy = False
+            stream_device = stream
+            new_shape_device = np.array(new_shape)
+    else:
+        stream_device = stream
+        new_shape_device = np.array(new_shape)
         
-    if len(stream) == 0:
+    if len(stream_device) == 0:
         return []
         
-    new_shape = xp.array(new_shape)
-    inside = xp.all((stream >= -epsilon) & (stream < new_shape + epsilon), axis=1)
+    # GPU-accelerated inside/outside computation
+    inside = xp.all((stream_device >= -epsilon) & (stream_device < new_shape_device + epsilon), axis=1)
     
     if not xp.any(inside):
         return []
@@ -31,57 +72,95 @@ def clip_streamline_to_fov(stream, new_shape, use_gpu=True, epsilon=1e-6):
     segments = []
     current_segment = []
 
-    for i in range(len(stream)):
+    for i in range(len(stream_device)):
         if inside[i]:
-            current_segment.append(stream[i])
+            # Convert to CPU for list operations to avoid CuPy/NumPy mixing issues
+            if use_cupy:
+                point = stream_device[i].get()  # Convert CuPy to NumPy
+            else:
+                point = np.array(stream_device[i])  # Ensure NumPy array
+            current_segment.append(point)
         else:
             if len(current_segment) >= 2:
-                segments.append(xp.array(current_segment, dtype=xp.float32))
+                # Create numpy array from the accumulated points
+                segment_array = np.array(current_segment, dtype=np.float32)
+                segments.append(segment_array)
             current_segment = []
 
             if i > 0 and inside[i - 1]:
-                p1, p2 = stream[i - 1], stream[i]
-                clipped_point = interpolate_to_fov(p1, p2, new_shape, use_gpu)
+                p1 = stream_device[i - 1]
+                p2 = stream_device[i]
+                
+                # Convert to numpy for interpolation to maintain consistency
+                if use_cupy:
+                    p1_np = p1.get()
+                    p2_np = p2.get()
+                    new_shape_np = new_shape_device.get()
+                else:
+                    p1_np = np.array(p1)
+                    p2_np = np.array(p2)
+                    new_shape_np = new_shape_device
+                    
+                clipped_point = interpolate_to_fov(p1_np, p2_np, new_shape_np, use_gpu=use_cupy)
                 if clipped_point is not None:
-                    segments.append(xp.array([p1, clipped_point], dtype=xp.float32))
-            elif i < len(stream) - 1 and inside[i + 1]:
-                p1, p2 = stream[i], stream[i + 1]
-                clipped_point = interpolate_to_fov(p2, p1, new_shape, use_gpu)
+                    segment_array = np.array([p1_np, clipped_point], dtype=np.float32)
+                    segments.append(segment_array)
+                    
+            elif i < len(stream_device) - 1 and inside[i + 1]:
+                p1 = stream_device[i]
+                p2 = stream_device[i + 1]
+                
+                # Convert to numpy for interpolation to maintain consistency
+                if use_cupy:
+                    p1_np = p1.get()
+                    p2_np = p2.get()
+                    new_shape_np = new_shape_device.get()
+                else:
+                    p1_np = np.array(p1)
+                    p2_np = np.array(p2)
+                    new_shape_np = new_shape_device
+                    
+                clipped_point = interpolate_to_fov(p2_np, p1_np, new_shape_np, use_gpu=use_cupy)
                 if clipped_point is not None:
-                    segments.append(xp.array([clipped_point, p2], dtype=xp.float32))
+                    segment_array = np.array([clipped_point, p2_np], dtype=np.float32)
+                    segments.append(segment_array)
 
     if len(current_segment) >= 2:
-        segments.append(xp.array(current_segment, dtype=xp.float32))
+        # Create numpy array from the accumulated points
+        segment_array = np.array(current_segment, dtype=np.float32)
+        segments.append(segment_array)
 
-    if use_gpu:
-        try:
-            import numpy as np
-            numpy_segments = []
-            for segment in segments:
-                if hasattr(xp, 'asnumpy'):
-                    numpy_segments.append(np.array(xp.asnumpy(segment), dtype=np.float32))
-                else:
-                    numpy_segments.append(np.array(segment, dtype=np.float32))
-            return numpy_segments
-        except Exception:
-            return segments
-    else:
-        import numpy as np
-        return [np.array(segment, dtype=np.float32) if not isinstance(segment, np.ndarray) else segment 
-                for segment in segments]
+    # Ensure all segments are numpy arrays with float32 dtype
+    numpy_segments = []
+    for segment in segments:
+        if isinstance(segment, np.ndarray):
+            numpy_segments.append(segment.astype(np.float32))
+        else:
+            numpy_segments.append(np.array(segment, dtype=np.float32))
+    
+    return numpy_segments
 
 
 def interpolate_to_fov(p1, p2, new_shape, use_gpu=True):
     """Interpolate a point on the boundary of the field of view."""
+    import numpy as np
+    
+    # Auto-detect array module
+    xp = np
     if use_gpu:
         try:
-            import cupy as xp
+            import cupy as cp
+            # Test if CuPy is working
+            try:
+                test_array = cp.array([1.0])
+                _ = cp.sum(test_array)
+                xp = cp
+            except Exception:
+                xp = np
         except ImportError:
-            import numpy as xp
-            use_gpu = False
-    else:
-        import numpy as xp
-        
+            xp = np
+    
+    # Convert inputs to appropriate array type
     p1 = xp.asarray(p1, dtype=xp.float32)
     p2 = xp.asarray(p2, dtype=xp.float32)
     new_shape = xp.asarray(new_shape)
@@ -101,16 +180,19 @@ def interpolate_to_fov(p1, p2, new_shape, use_gpu=True):
                     t_min = t
 
     if t_min == float('inf') or t_min < 0:
-        clipped_point = xp.clip(p1, 0, xp.asarray(new_shape) - 1)
-        return clipped_point
+        clipped_point = xp.clip(p1, 0, new_shape - 1)
+        # Convert to NumPy for return consistency
+        if hasattr(clipped_point, 'get'):
+            return clipped_point.get().astype(np.float32)
+        return clipped_point.astype(np.float32)
 
     intersection = p1 + t_min * direction
-    intersection = xp.clip(intersection, 0, xp.asarray(new_shape) - 1)
+    intersection = xp.clip(intersection, 0, new_shape - 1)
     
-    if use_gpu and hasattr(xp, 'asnumpy'):
-        intersection = xp.asnumpy(intersection)
-    
-    return intersection
+    # Convert to NumPy for return consistency
+    if hasattr(intersection, 'get'):
+        return intersection.get().astype(np.float32)
+    return intersection.astype(np.float32)
 
 
 def transform_streamline(s_mm, A_new_inv, use_gpu=True):
@@ -118,38 +200,26 @@ def transform_streamline(s_mm, A_new_inv, use_gpu=True):
     if use_gpu:
         try:
             import cupy as xp
-            from numba import cuda
             
+            # Convert inputs to CuPy arrays
             s_mm_gpu = xp.asarray(s_mm, dtype=xp.float32)
-            output = xp.zeros_like(s_mm_gpu)
+            A_new_inv_gpu = xp.asarray(A_new_inv, dtype=xp.float32)
             
-            @cuda.jit
-            def transform_kernel(s_mm, A_new_inv, output):
-                idx = cuda.grid(1)
-                if idx < s_mm.shape[0]:
-                    hom_mm = xp.zeros(4, dtype=xp.float32)
-                    hom_mm[0] = s_mm[idx, 0]
-                    hom_mm[1] = s_mm[idx, 1]
-                    hom_mm[2] = s_mm[idx, 2]
-                    hom_mm[3] = 1.0
-                    
-                    result = xp.zeros(3, dtype=xp.float32)
-                    for i in range(3):
-                        for j in range(4):
-                            result[i] += A_new_inv[i, j] * hom_mm[j]
-                    
-                    output[idx, 0] = result[0]
-                    output[idx, 1] = result[1]
-                    output[idx, 2] = result[2]
+            # Create homogeneous coordinates
+            homogeneous = xp.hstack([s_mm_gpu, xp.ones((len(s_mm_gpu), 1), dtype=xp.float32)])
             
-            threads_per_block = 256
-            blocks_per_grid = (s_mm_gpu.shape[0] + threads_per_block - 1) // threads_per_block
-            transform_kernel[blocks_per_grid, threads_per_block](s_mm_gpu, A_new_inv, output)
+            # Matrix multiplication using CuPy
+            transformed = homogeneous @ A_new_inv_gpu.T
             
-            return output
+            # Return only the first 3 columns (x, y, z)
+            result = transformed[:, :3]
             
-        except ImportError:
-            import numpy as xp
+            # Convert back to NumPy for consistency
+            if hasattr(result, 'get'):
+                return result.get().astype(np.float32)
+            return result.astype(np.float32)
+            
+        except (ImportError, Exception) as e:
             use_gpu = False
     
     if not use_gpu:
