@@ -45,6 +45,7 @@ def extract_random_patches(nifti_file: str,
                           min_streamlines_per_patch: int = 50,
                           random_state: Optional[int] = None,
                           prefix: str = "patch",
+                          batch_size: int = 50,
                           save_masks: bool = True,
                           contrast_method: str = 'clahe',
                           background_enhancement: str = 'preserve_edges',
@@ -61,22 +62,11 @@ def extract_random_patches(nifti_file: str,
                           orange_blob_probability: float = 0.3,
                           **kwargs) -> List[Dict]:
     """
-    Extract random patches from NIfTI with overlaid tractography using robust extraction.
-    Optimized version with NIfTI caching for better performance.
-    """
-    
-    if not ROBUST_PATCH_AVAILABLE:
-        raise ImportError("Robust patch extraction module not available")
-    
-    # Fast loading without overhead
-    print(f"Fast loading: {nifti_file}")
-    nifti_img = nib.load(nifti_file, mmap=False)  # Direct loading for speed
-    nifti_data = nifti_img.get_fdata().astype(np.float32)  # Always load in memory for speed
-    """
-    Extract random patches using robust methodology with visualization generation.
+    Extract random patches using robust methodology with memory-efficient batch processing.
     
     This function uses the robust patch extraction from patch_extract.py and adds
-    visualization capabilities for the syntract viewer pipeline.
+    visualization capabilities for the syntract viewer pipeline. Optimized for large
+    volumes with memory-mapping and batch processing to prevent OOM errors.
     
     Args:
         nifti_file: Path to the NIfTI file
@@ -87,6 +77,7 @@ def extract_random_patches(nifti_file: str,
         min_streamlines_per_patch: Minimum streamlines required in a patch
         random_state: Random seed for reproducibility
         prefix: Prefix for output files
+        batch_size: Number of patches per batch before memory cleanup (default: 50)
         save_masks: Whether to save fiber masks
         enable_orange_blobs: Whether to add orange injection sites
         orange_blob_probability: Probability of adding orange blobs
@@ -294,7 +285,7 @@ def _generate_patch_visualization(nifti_path, trk_path, output_dir, prefix, save
             closing_footprint_size=closing_footprint_size,
             label_bundles=label_bundles,
             min_bundle_size=min_bundle_size,
-            contrast_method='equalize',  # Use global histogram equalization for smoother results
+            contrast_method=contrast_method,  # Use the passed contrast method parameter
             background_enhancement=background_enhancement,
             cornucopia_augmentation=actual_preset,
             truly_random=True  # Enable truly random parameters

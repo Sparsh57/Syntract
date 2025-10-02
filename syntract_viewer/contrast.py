@@ -90,6 +90,11 @@ def apply_enhanced_contrast_and_augmentation(slice_data,
     """
     processed_slice = slice_data.copy()
     
+    # Create mask for actual tissue vs empty/padding regions
+    # Use a small threshold to identify truly empty areas
+    zero_threshold = np.percentile(slice_data[slice_data > 0], 1) if np.any(slice_data > 0) else 0.01
+    tissue_mask = slice_data > zero_threshold
+    
     original_unique_count = len(np.unique(slice_data[slice_data > 0]))
     was_quantized = original_unique_count < 200
     
@@ -156,6 +161,10 @@ def apply_enhanced_contrast_and_augmentation(slice_data,
         tile_grid_size=contrast_params.get('tile_grid_size', (8, 8)),
         gentle_mode=gentle_mode
     )
+    
+    # Apply tissue mask to ensure empty/padding regions stay black
+    # This prevents background enhancement from brightening non-tissue areas
+    enhanced_slice = enhanced_slice * tissue_mask
     
     return enhanced_slice
 

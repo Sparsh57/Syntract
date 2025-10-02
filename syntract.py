@@ -263,7 +263,11 @@ def run_patch_extraction_stage(nifti_file, trk_files, args):
     
     print(f"Using patch dimensions: {patch_dimensions}")
     
-    # Run robust patch extraction
+    # Get batch size for memory management
+    batch_size = getattr(args, 'patch_batch_size', 50)
+    print(f"Batch size for memory management: {batch_size}")
+    
+    # Run robust patch extraction with memory-efficient batch processing
     try:
         results = extract_random_patches(
             nifti_file=nifti_file,
@@ -274,6 +278,7 @@ def run_patch_extraction_stage(nifti_file, trk_files, args):
             min_streamlines_per_patch=getattr(args, 'min_streamlines_per_patch', 30),
             random_state=getattr(args, 'random_state', None),
             prefix=getattr(args, 'patch_prefix', 'patch').rstrip('_'),
+            batch_size=batch_size,  # Pass batch size for memory management
             save_masks=getattr(args, 'save_masks', True),
             contrast_method='clahe',
             background_enhancement='preserve_edges',
@@ -323,6 +328,7 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                     use_simplified_slicing=True, force_full_slicing=False, auto_batch_process=False,
                     enable_patch_extraction=False, patch_output_dir=None, total_patches=None,
                     patch_size=None, min_streamlines_per_patch=5, patch_prefix="patch_",
+                    patch_batch_size=50, skip_synthesis=False,
                     n_examples=10, viz_output_dir=None, viz_prefix="viz_",
                     enable_orange_blobs=False, orange_blob_probability=0.3,
                     save_masks=True, use_high_density_masks=False, mask_thickness=1,
@@ -359,43 +365,54 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
         print(f"Input TRK: {input_trk}")
         print(f"Output base: {output_base}")
         
-        # Always run base synthesis first to create files at target dimensions
-        print("\n🧠 Running base synthesis...")
-        from synthesis.main import process_and_save
+        # Determine which files to use for downstream processing
+        base_nifti = input_nifti
+        base_trk = input_trk
+        synthesis_result = None
         
-        synthesis_result = process_and_save(
-            original_nifti_path=input_nifti,
-            original_trk_path=input_trk,
-            target_voxel_size=voxel_size,
-            target_dimensions=new_dim,
-            output_prefix=output_base,
-            use_ants=use_ants,
-            ants_warp_path=ants_warp_path,
-            ants_iwarp_path=ants_iwarp_path,
-            ants_aff_path=ants_aff_path,
-            step_size=voxel_size * 0.5,  # Use fine step size (0.5x voxel) for good curvature preservation
-            interpolation_method='hermite'  # Use Hermite for base synthesis too
-        )
-        
-        # Check if patch extraction is enabled (after base synthesis)
-        if enable_patch_extraction:
-            print("\n Patch extraction enabled - starting patch processing...")
+        if skip_synthesis:
+            print("\n⏭️  Skipping synthesis step (--skip_synthesis enabled)")
+            print(f"✅ Using input files directly:")
+            print(f"    NIfTI: {base_nifti}")
+            print(f"    TRK: {base_trk}")
+        else:
+            # Run base synthesis first to create files at target dimensions
+            print("\n🧠 Running base synthesis...")
+            from synthesis.main import process_and_save
             
-            # Use the synthesized files as input for patch extraction
+            synthesis_result = process_and_save(
+                original_nifti_path=input_nifti,
+                original_trk_path=input_trk,
+                target_voxel_size=voxel_size,
+                target_dimensions=new_dim,
+                output_prefix=output_base,
+                use_ants=use_ants,
+                ants_warp_path=ants_warp_path,
+                ants_iwarp_path=ants_iwarp_path,
+                ants_aff_path=ants_aff_path,
+                step_size=voxel_size * 0.5,  # Use fine step size (0.5x voxel) for good curvature preservation
+                interpolation_method='hermite'  # Use Hermite for base synthesis too
+            )
+            
+            # Use synthesized files for downstream processing
             base_nifti = f"{output_base}.nii.gz"
             base_trk = f"{output_base}.trk"
             
             if not os.path.exists(base_nifti) or not os.path.exists(base_trk):
-                print(f"⚠️  Base synthesis files not found:")
+                print(f"⚠️  Synthesis output files not found:")
                 print(f"    Expected NIfTI: {base_nifti}")
                 print(f"    Expected TRK: {base_trk}")
-                print(f"    Using original files instead")
+                print(f"    Falling back to original files")
                 base_nifti = input_nifti
                 base_trk = input_trk
             else:
-                print(f"✅ Using synthesized base files:")
-                print(f"    Base NIfTI: {base_nifti}")
-                print(f"    Base TRK: {base_trk}")
+                print(f"✅ Using synthesized files:")
+                print(f"    NIfTI: {base_nifti}")
+                print(f"    TRK: {base_trk}")
+        
+        # Check if patch extraction is enabled
+        if enable_patch_extraction:
+            print("\n📦 Patch extraction enabled - starting patch processing...")
             
             patch_result = run_patch_extraction_stage(base_nifti, [base_trk], 
                 argparse.Namespace(**{
@@ -403,6 +420,7 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                     'total_patches': total_patches,
                     'min_streamlines_per_patch': min_streamlines_per_patch,
                     'patch_prefix': patch_prefix,
+                    'patch_batch_size': patch_batch_size,
                     'patch_output_dir': patch_output_dir or 'patches',
                     'voxel_size': voxel_size,
                     'new_dim': new_dim,
@@ -413,10 +431,18 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                     'n_examples': n_examples,
                     'viz_prefix': viz_prefix,
                     'enable_orange_blobs': enable_orange_blobs,
-                    'orange_blob_probability': orange_blob_probability
+                    'orange_blob_probability': orange_blob_probability,
+                    'save_masks': save_masks,
+                    'mask_thickness': mask_thickness,
+                    'density_threshold': density_threshold,
+                    'min_bundle_size': min_bundle_size,
+                    'label_bundles': label_bundles
                 }))
             
             return {'success': True, 'stage': 'patch_extraction', 'result': patch_result}
+        
+        if skip_synthesis:
+            return {'success': True, 'stage': 'skipped', 'message': 'Synthesis skipped'}
         
         return {'success': True, 'stage': 'synthesis', 'result': synthesis_result}
         
@@ -458,6 +484,8 @@ Examples:
     
     # Synthesis parameters
     synthesis_group = parser.add_argument_group("Synthesis Parameters")
+    synthesis_group.add_argument("--skip_synthesis", action="store_true",
+                                help="Skip synthesis step and use input files directly (useful for pre-processed data)")
     synthesis_group.add_argument("--new_dim", nargs=3, type=int, default=[116, 140, 96],
                                 help="Target dimensions (X Y Z)")
     synthesis_group.add_argument("--voxel_size", type=float, default=0.5,
@@ -494,6 +522,8 @@ Examples:
                             help="Minimum streamlines required per patch (default: 30)")
     patch_group.add_argument("--max_patch_trials", type=int, default=100,
                             help="Maximum trials per patch to find adequate streamlines (default: 100)")
+    patch_group.add_argument("--patch_batch_size", type=int, default=50,
+                            help="Number of patches to process before memory cleanup (default: 50, lower for HPC/OOM issues)")
     patch_group.add_argument("--random_state", type=int, 
                             help="Random seed for reproducible patch extraction")
     patch_group.add_argument("--patch_prefix", default="patch",
@@ -545,6 +575,7 @@ Examples:
         output_base=args.output,
         new_dim=tuple(args.new_dim),
         voxel_size=args.voxel_size,
+        skip_synthesis=args.skip_synthesis,
         use_ants=args.use_ants,
         ants_warp_path=args.ants_warp,
         ants_iwarp_path=args.ants_iwarp,
@@ -560,6 +591,7 @@ Examples:
         total_patches=args.total_patches,
         patch_size=args.patch_size,
         min_streamlines_per_patch=args.min_streamlines_per_patch,
+        patch_batch_size=args.patch_batch_size,
         patch_prefix=args.patch_prefix,
         n_examples=args.n_examples,
         viz_prefix=args.viz_prefix,

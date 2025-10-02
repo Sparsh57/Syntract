@@ -446,7 +446,9 @@ def extract_single_patch(nifti_path: str,
                         seed: int | None, 
                         out_prefix: str,
                         min_streamlines: int = 30, 
-                        max_trials: int = 100) -> dict:
+                        max_trials: int = 100,
+                        nimg_cached = None,
+                        trk_cached = None) -> dict:
     """
     Extract a single random patch from NIfTI and TRK files with validation.
     
@@ -466,6 +468,10 @@ def extract_single_patch(nifti_path: str,
         Minimum number of streamlines required in patch
     max_trials : int
         Maximum number of patch locations to try
+    nimg_cached : nibabel.Nifti1Image, optional
+        Pre-loaded NIfTI image to avoid redundant I/O
+    trk_cached : nibabel.streamlines.TrkFile, optional
+        Pre-loaded TRK file to avoid redundant I/O
         
     Returns
     -------
@@ -473,28 +479,28 @@ def extract_single_patch(nifti_path: str,
         Results dictionary with metadata and validation info
     """
     
-    # Validate environment
-    env_validation = validate_patch_extraction_environment()
-    if not env_validation['success']:
-        raise RuntimeError(f"Environment validation failed: {env_validation['missing_dependencies']}")
+    # Validate environment (only on first call)
+    if nimg_cached is None:
+        env_validation = validate_patch_extraction_environment()
+        if not env_validation['success']:
+            raise RuntimeError(f"Environment validation failed: {env_validation['missing_dependencies']}")
 
-    # Validate input files
-    file_validation = validate_input_files(nifti_path, trk_path)
-    if not file_validation['success']:
-        raise ValueError(f"Input file validation failed: {'; '.join(file_validation['errors'])}")
-
-    # Validate warnings (but don't print them unless critical)
-    if file_validation['warnings']:
-        for warning in file_validation['warnings']:
-            # Only print critical warnings
-            if 'outside' in warning and 'bounds' in warning:
-                pass  # Skip bounds warnings as they're common and handled
+        # Validate input files
+        file_validation = validate_input_files(nifti_path, trk_path)
+        if not file_validation['success']:
+            raise ValueError(f"Input file validation failed: {'; '.join(file_validation['errors'])}")
     
-    # Skip verbose validation output to reduce console clutter
+    # Load inputs with memory-mapping for efficiency
+    if nimg_cached is not None:
+        nimg = nimg_cached
+    else:
+        # Use memory-mapping to avoid loading entire volume into RAM
+        nimg = nib.load(nifti_path, mmap=True)
     
-    # Load inputs
-    nimg = nib.load(nifti_path)
-    trk = nib.streamlines.load(trk_path)
+    if trk_cached is not None:
+        trk = trk_cached
+    else:
+        trk = nib.streamlines.load(trk_path)
 
     # Basic dimensional consistency check (redundant but explicit)
     _validate_consistency(nimg, trk)
@@ -608,9 +614,10 @@ def extract_multiple_patches(nifti_path: str,
                            seed: int | None = None,
                            prefix: str = "patch",
                            min_streamlines: int = 30,
-                           max_trials: int = 100) -> dict:
+                           max_trials: int = 100,
+                           batch_size: int = 50) -> dict:
     """
-    Extract multiple random patches from NIfTI and TRK files.
+    Extract multiple random patches from NIfTI and TRK files with memory-efficient batch processing.
     
     Parameters
     ----------
@@ -632,12 +639,15 @@ def extract_multiple_patches(nifti_path: str,
         Minimum number of streamlines required in patch
     max_trials : int
         Maximum number of patch locations to try per patch
+    batch_size : int
+        Number of patches to process before cleanup (default: 50)
         
     Returns
     -------
     dict
         Results dictionary with metadata for all patches
     """
+    import gc
     
     # Create output directory
     os.makedirs(output_dir, exist_ok=True)
@@ -658,60 +668,92 @@ def extract_multiple_patches(nifti_path: str,
             'seed': seed,
             'min_streamlines': min_streamlines,
             'max_trials': max_trials,
-            'prefix': prefix
+            'prefix': prefix,
+            'batch_size': batch_size
         }
     }
     
-    print(f"=== Extracting {num_patches} patches ===")
+    print(f"=== Extracting {num_patches} patches (batch size: {batch_size}) ===")
     print(f"Input NIfTI: {nifti_path}")
     print(f"Input TRK: {trk_path}")
     print(f"Patch size: {patch_xyz}")
     print(f"Output directory: {output_dir}")
     print(f"Min streamlines per patch: {min_streamlines}")
     
-    for i in range(num_patches):
-        patch_id = i + 1
-        patch_seed = rng.integers(0, 2**32-1) if seed is not None else None
-        out_prefix = os.path.join(output_dir, f"{prefix}_{patch_id:04d}")
+    # Pre-load volumes once with memory-mapping
+    print("\n🔄 Loading volumes with memory-mapping...")
+    nimg_cached = nib.load(nifti_path, mmap=True)
+    trk_cached = nib.streamlines.load(trk_path)
+    print("✅ Volumes loaded")
+    
+    # Process in batches to control memory usage
+    num_batches = (num_patches + batch_size - 1) // batch_size
+    
+    for batch_idx in range(num_batches):
+        batch_start = batch_idx * batch_size
+        batch_end = min(batch_start + batch_size, num_patches)
         
-        print(f"\nExtracting patch {patch_id}/{num_patches}...")
+        print(f"\n=== Batch {batch_idx + 1}/{num_batches}: Patches {batch_start + 1}-{batch_end} ===")
         
-        try:
-            meta = extract_single_patch(
-                nifti_path=nifti_path,
-                trk_path=trk_path,
-                patch_xyz=patch_xyz,
-                seed=patch_seed,
-                out_prefix=out_prefix,
-                min_streamlines=min_streamlines,
-                max_trials=max_trials
-            )
+        for i in range(batch_start, batch_end):
+            patch_id = i + 1
+            patch_seed = rng.integers(0, 2**32-1) if seed is not None else None
+            out_prefix = os.path.join(output_dir, f"{prefix}_{patch_id:04d}")
             
-            results['patches'].append({
-                'patch_id': patch_id,
-                'success': True,
-                'streamlines_kept': meta['validations']['streamlines_kept'],
-                'trials': meta['validations']['trials'],
-                'origin': meta['patch_origin'],
-                'files': {
-                    'nifti': f"{out_prefix}.nii.gz",
-                    'trk': f"{out_prefix}.trk",
-                    'meta': f"{out_prefix}.meta.json"
-                }
-            })
+            print(f"Extracting patch {patch_id}/{num_patches}...", end=' ')
             
-            results['num_patches_extracted'] += 1
-            print(f"✓ Patch {patch_id}: {meta['validations']['streamlines_kept']} streamlines "
-                  f"({meta['validations']['trials']} trials)")
-            
-        except Exception as e:
-            print(f"✗ Patch {patch_id} failed: {e}")
-            results['patches'].append({
-                'patch_id': patch_id,
-                'success': False,
-                'error': str(e)
-            })
-            results['num_patches_failed'] += 1
+            try:
+                meta = extract_single_patch(
+                    nifti_path=nifti_path,
+                    trk_path=trk_path,
+                    patch_xyz=patch_xyz,
+                    seed=patch_seed,
+                    out_prefix=out_prefix,
+                    min_streamlines=min_streamlines,
+                    max_trials=max_trials,
+                    nimg_cached=nimg_cached,
+                    trk_cached=trk_cached
+                )
+                
+                results['patches'].append({
+                    'patch_id': patch_id,
+                    'success': True,
+                    'streamlines_kept': meta['validations']['streamlines_kept'],
+                    'trials': meta['validations']['trials'],
+                    'origin': meta['patch_origin'],
+                    'files': {
+                        'nifti': f"{out_prefix}.nii.gz",
+                        'trk': f"{out_prefix}.trk",
+                        'meta': f"{out_prefix}.meta.json"
+                    }
+                })
+                
+                results['num_patches_extracted'] += 1
+                print(f"✓ {meta['validations']['streamlines_kept']} streamlines ({meta['validations']['trials']} trials)")
+                
+            except Exception as e:
+                print(f"✗ Failed: {e}")
+                results['patches'].append({
+                    'patch_id': patch_id,
+                    'success': False,
+                    'error': str(e)
+                })
+                results['num_patches_failed'] += 1
+        
+        # Cleanup after each batch to prevent memory accumulation
+        print(f"\n🧹 Cleaning up after batch {batch_idx + 1}...")
+        gc.collect()
+        
+        # Save checkpoint after each batch
+        checkpoint_path = os.path.join(output_dir, f"{prefix}_checkpoint_batch{batch_idx + 1}.json")
+        with open(checkpoint_path, 'w') as f:
+            json.dump({
+                'completed_batches': batch_idx + 1,
+                'total_batches': num_batches,
+                'patches_extracted': results['num_patches_extracted'],
+                'patches_failed': results['num_patches_failed']
+            }, f, indent=2)
+        print(f"💾 Checkpoint saved: {checkpoint_path}")
     
     # Save overall summary
     summary_path = os.path.join(output_dir, f"{prefix}_extraction_summary.json")

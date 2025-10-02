@@ -7,6 +7,8 @@ A streamlined Python pipeline for MRI processing, tractography synthesis, and da
 - **Unified Pipeline**: Single command processing from raw NIfTI/TRK to visualizations
 - **ANTs Integration**: Spatial transformations and registration workflows
 - **Patch Extraction**: 3D patches via re-synthesis at random coordinates
+- **Memory-Optimized**: Batch processing with checkpoints for large datasets (500+ patches)
+- **Skip Synthesis**: Direct patch extraction from preprocessed files
 - **Batch Processing**: Multiple TRK files with shared NIfTI
 - **Dark Field Visualization**: Publication-ready medical imaging with enhanced contrast
 
@@ -31,10 +33,17 @@ python syntract.py --input brain.nii.gz --trk fibers.trk --use_ants \
   --ants_warp warp.nii.gz --ants_iwarp iwarp.nii.gz --ants_aff affine.mat
 ```
 
-### Patch Extraction
+### Patch Extraction (Memory-Optimized)
 ```bash
+# With synthesis
 python syntract.py --input brain.nii.gz --trk fibers.trk \
-  --enable_patch_extraction --total_patches 100 --patch_size 200 1 200
+  --enable_patch_extraction --total_patches 500 --patch_size 600 1 600 \
+  --patch_batch_size 50
+
+# Skip synthesis (use preprocessed files directly)
+python syntract.py --input whole_output.nii.gz --trk whole_output.trk \
+  --skip_synthesis --enable_patch_extraction --total_patches 500 \
+  --patch_batch_size 50
 ```
 
 ### Batch Processing
@@ -235,6 +244,40 @@ result = process_syntract(
 
 - Core: `numpy`, `nibabel`, `matplotlib`, `scikit-image`, `scipy`, `dipy`
 - Optional: `cupy`, `cornucopia-pytorch`, `ants`
+
+## 🧠 Memory Optimization for Large Datasets
+
+For extracting 500+ patches from large volumes (>5GB), we've implemented several memory optimizations:
+
+### Key Features
+- **Memory-Mapped Loading**: Uses `mmap=True` to avoid loading entire volumes into RAM
+- **Batch Processing**: Processes patches in batches with garbage collection between batches
+- **Volume Caching**: Pre-loads volumes once and reuses for all patches (eliminates redundant I/O)
+- **Checkpoint System**: Saves progress every N patches to allow recovery from OOM kills
+
+### Usage
+```bash
+python3 syntract.py \
+  --input large_volume.nii.gz \
+  --trk fibers.trk \
+  --skip_synthesis \              # Skip if files already processed
+  --enable_patch_extraction \
+  --total_patches 500 \
+  --patch_batch_size 50 \        # Adjust based on available memory
+  --patch_size 600 1 600
+```
+
+### Memory Guidelines
+| System Memory | Recommended `--patch_batch_size` |
+|---------------|----------------------------------|
+| 16 GB | 10-25 |
+| 32 GB | 25-50 |
+| 64 GB | 50-100 |
+| 128+ GB | 100-200 |
+
+For detailed information, see:
+- **[MEMORY_OPTIMIZATIONS.md](MEMORY_OPTIMIZATIONS.md)** - Complete memory optimization guide
+- **[SKIP_SYNTHESIS_GUIDE.md](SKIP_SYNTHESIS_GUIDE.md)** - Skip synthesis feature documentation
 
 ## 📄 License
 
