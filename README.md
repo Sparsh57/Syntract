@@ -267,17 +267,6 @@ python3 syntract.py \
   --patch_size 600 1 600
 ```
 
-### Memory Guidelines
-| System Memory | Recommended `--patch_batch_size` |
-|---------------|----------------------------------|
-| 16 GB | 10-25 |
-| 32 GB | 25-50 |
-| 64 GB | 50-100 |
-| 128+ GB | 100-200 |
-
-For detailed information, see:
-- **[MEMORY_OPTIMIZATIONS.md](MEMORY_OPTIMIZATIONS.md)** - Complete memory optimization guide
-- **[SKIP_SYNTHESIS_GUIDE.md](SKIP_SYNTHESIS_GUIDE.md)** - Skip synthesis feature documentation
 
 ## License
 

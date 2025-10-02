@@ -1,10 +1,10 @@
 #!/usr/bin/env python
 """
-Updated ANTs Transform Implementation
-Adapted to match the exact methodology provided by the user.
+Corrected ANTs Transform Implementation
+Fixed to properly handle orientation and alignment issues for visualization.
 
-This implementation follows the cleaner, more straightforward approach
-without complex orientation handling and clipping logic.
+This implementation includes proper orientation checking and flip correction
+to ensure correct visualization alignment while maintaining TrackVis compatibility.
 """
 
 import numpy as np
@@ -12,63 +12,45 @@ import nibabel as nib
 from nibabel.streamlines.trk import TrkFile, Tractogram
 from scipy.io import loadmat
 from scipy.ndimage import map_coordinates
+from nibabel.affines import apply_affine
 
 
 def load_ants_warp(path):
-    """Load ANTs warp and convert it into a RAS displacement.
-
-    NOTE (from ants wiki)
-        The forward displacement field is defined by the domain of the
-        fixed image. It has the same voxel grid, spacing, and orientation
-        as the fixed image, but each voxel is a displacement vector in
-        physical space for a point at the center of the voxel in fixed space,
-        towards the moving space, before applying the affine transform.
-
-        The inverse displacement field is also in the domain of the fixed
-        image. It has the same voxel grid, spacing, and orientation as
-        the forward warps - but the displacement vectors in each voxel
-        transform points towards the fixed space, after applying the
-        inverse affine.
-    """
+    """Load ANTs warp and convert it into a RAS displacement."""
     f = nib.load(path)
+    f = nib.as_closest_canonical(f)  # Ensure RAS orientation
     d = f.get_fdata()
-    # squeeze dimensions 3
+
     d = np.squeeze(d, 3)
     assert d.ndim == 4
-    # LPS -> RAS
     d[..., :2] *= -1
     return d, f.affine
 
 
 def load_ants_aff(path):
-    """Load ANTs affine and convert it into a RAS2RAS matrix.
-
-    My understanding is that this matrix maps "fixed" coordinates into
-    "moving" coordinates.
-    """
+    """Load ANTs affine and convert it into a RAS2RAS matrix."""
     f = loadmat(path)
-    mat33 = f.get(
-        "AffineTransform_double_3_3",
-        f.get("AffineTransform_float_3_3")
-    )
+    
+    # Try common ANTs affine matrix key names
+    mat33 = f.get("AffineTransform_double_3_3", 
+                  f.get("AffineTransform_float_3_3", None))
     
     if mat33 is None:
         # List available keys for debugging
         available_keys = list(f.keys())
-        raise KeyError(f"Could not find ANTs affine matrix. "
+        raise KeyError(f"Could not find ANTs affine matrix in {path}. "
                       f"Available keys: {available_keys}. "
                       f"Expected 'AffineTransform_double_3_3' or 'AffineTransform_float_3_3'")
     
     if 'fixed' not in f:
-        raise KeyError(f"Could not find 'fixed' key in ANTs affine file")
+        raise KeyError(f"Could not find 'fixed' key in ANTs affine file {path}")
     
     mat = np.eye(4)
     mat[:3, :3] = mat33[:-3].reshape([3, 3])
     mat[:3, -1] = mat33[-3:].flatten()
-    # center of rotation
+    
     offset = f['fixed'].flatten()
     mat[:3, -1] += (np.eye(3) - mat[:3, :3]) @ offset
-    # LPS2LPS -> RAS2RAS
     mat[:2, :] *= -1
     mat[:, :2] *= -1
     return mat
@@ -82,238 +64,207 @@ def load_trk(path):
 
 def load_volume(path):
     """Load a nifti volume."""
-    f = nib.load(path)
-    return f.get_fdata(), f.affine
+    img = nib.load(path)
+    img_ras = nib.as_closest_canonical(img)  # Ensure RAS orientation
+    return img_ras.get_fdata(), img_ras.affine
+
+
+def check_affine_orientation(affine):
+    """
+    Check the orientation of an affine matrix using nibabel orientation codes.
+
+    Parameters
+    ----------
+    affine : numpy.ndarray
+        4x4 affine matrix
+
+    Returns
+    -------
+    tuple
+        Tuple containing (x_flipped, y_flipped, z_flipped) booleans
+    """
+    # Use nibabel's robust orientation detection
+    ornt = nib.orientations.io_orientation(affine)
+    
+    # Extract flip information from orientation
+    # ornt is array of [axis, flip] pairs where flip is 1 or -1
+    x_flipped = ornt[0, 1] < 0
+    y_flipped = ornt[1, 1] < 0 
+    z_flipped = ornt[2, 1] < 0
+
+    return x_flipped, y_flipped, z_flipped
 
 
 def apply_ants_transform_to_mri(path_warp, path_aff, path_mri, output_path=None):
     """
-    Apply ANTs transforms to MRI data using the exact methodology provided.
-    
+    Apply ANTs transforms to MRI data.
+
     Parameters
     ----------
     path_warp : str
-        Path to ANTs forward warp file
+        Path to ANTs warp file.
     path_aff : str
-        Path to ANTs affine file
+        Path to ANTs affine file.
     path_mri : str
-        Path to input MRI file
+        Path to MRI file.
     output_path : str, optional
-        Path to save transformed MRI
-        
+        Path to save transformed MRI file. If None, doesn't save.
+
     Returns
     -------
     numpy.ndarray
-        Transformed MRI data
+        Transformed MRI data.
     numpy.ndarray
-        Affine matrix (vox2fix)
+        Affine matrix of the transformed MRI.
     """
-    print("=== Applying ANTs Transform to MRI ===")
-    
-    # Load transforms
     affine_fix2mov = load_ants_aff(path_aff)
     warp, affine_vox2fix = load_ants_warp(path_warp)
-    
-    print(f"Loaded warp field shape: {warp.shape}")
-    print(f"Fixed space affine (vox2fix):\n{affine_vox2fix}")
-    
-    # Load MRI
+
     dwi, affine_vox2mov = load_volume(path_mri)
     affine_mov2vox = np.linalg.inv(affine_vox2mov)
-    
-    print(f"Input MRI shape: {dwi.shape}")
-    print(f"Moving space affine (vox2mov):\n{affine_vox2mov}")
-    
-    # Create full warp field - this is the exact implementation from your code
+
     fullwarp = np.stack(np.meshgrid(*[np.arange(x) for x in warp.shape[:3]], indexing='ij'), -1)
     fullwarp = fullwarp @ affine_vox2fix[:3, :3].T + affine_vox2fix[:3, -1]
     fullwarp = fullwarp + warp
     fullwarp = fullwarp @ affine_fix2mov[:3, :3].T + affine_fix2mov[:3, -1]
     fullwarp = fullwarp @ affine_mov2vox[:3, :3].T + affine_mov2vox[:3, -1]
-    
-    # Apply transformation
+
     moved = map_coordinates(dwi, np.moveaxis(fullwarp, -1, 0))
-    
-    print(f"Transformed MRI shape: {moved.shape}")
-    
-    # Save if requested
+
     if output_path:
         img = nib.Nifti1Image(moved, affine_vox2fix)
         nib.save(img, output_path)
-        print(f"Saved transformed MRI to: {output_path}")
-    
+
     return moved, affine_vox2fix
 
 
 def apply_ants_transform_to_streamlines(path_iwarp, path_aff, path_trk, output_path=None):
     """
-    Apply ANTs transforms to streamlines using the exact methodology provided.
-    
+    Apply ANTs transforms to streamlines.
+
     Parameters
     ----------
     path_iwarp : str
-        Path to ANTs inverse warp file
+        Path to ANTs inverse warp file.
     path_aff : str
-        Path to ANTs affine file
+        Path to ANTs affine file.
     path_trk : str
-        Path to input TRK file
+        Path to TRK file.
     output_path : str, optional
-        Path to save transformed TRK file
-        
+        Path to save transformed TRK file. If None, doesn't save.
+
     Returns
     -------
-    nibabel.streamlines.ArraySequence
-        Transformed streamlines (in RAS coordinates)
+    nibabel.streamlines.tractogram.Tractogram
+        Transformed tractogram.
     numpy.ndarray
-        Streamlines in fixed voxel coordinates (for synthesis)
+        Streamlines in fixed voxel coordinates (for synthesis).
     """
-    print("=== Applying ANTs Transform to Streamlines ===")
-    
-    # Load transforms
     affine_fix2mov = load_ants_aff(path_aff)
     iwarp, affine_vox2fix = load_ants_warp(path_iwarp)
     affine_fix2vox = np.linalg.inv(affine_vox2fix)
-    
-    print(f"Loaded inverse warp field shape: {iwarp.shape}")
-    print(f"Fixed space affine (vox2fix):\n{affine_vox2fix}")
-    
-    # Load streamlines
+
+    # Check orientation of fixed and original spaces
+    fix_x_flip, fix_y_flip, fix_z_flip = check_affine_orientation(affine_vox2fix)
+
     streamlines, trk_affine = load_trk(path_trk)
+    trk_x_flip, trk_y_flip, trk_z_flip = check_affine_orientation(trk_affine)
+
     streamstack = streamlines._data
-    
-    print(f"Loaded {len(streamlines)} streamlines")
-    print(f"Total points: {len(streamstack)}")
-    print(f"TRK affine:\n{trk_affine}")
-    
-    # Apply transformation - this is the exact implementation from your code
-    
-    # 1. apply inverse affine to streamlines
+
+    # Determine if flipping is needed
+    needs_x_flip = (fix_x_flip != trk_x_flip)
+    needs_y_flip = (fix_y_flip != trk_y_flip)
+    needs_z_flip = (fix_z_flip != trk_z_flip)
+
+    # Apply inverse affine to streamlines
     affine_mov2fix = np.linalg.inv(affine_fix2mov)
     streamstack = streamstack @ affine_mov2fix[:3, :3].T + affine_mov2fix[:3, -1]
-    
-    # 2. convert streamline "fixed RAS" coordinates to "fixed voxels" coordinates
+
+    # Convert streamline "fixed RAS" coordinates to "fixed voxels" coordinates
     streamstack = streamstack @ affine_fix2vox[:3, :3].T + affine_fix2vox[:3, -1]
+
+    # Apply warp to streamlines (output is in fixed RAS)
+    warped_coords = np.stack([
+        map_coordinates(iwarp[..., 0], streamstack.T),
+        map_coordinates(iwarp[..., 1], streamstack.T),
+        map_coordinates(iwarp[..., 2], streamstack.T),
+    ], -1)
     
-    # 3. apply warp to streamlines (output is in fixed RAS)
-    streamstack = (
-        np.stack([
-            map_coordinates(iwarp[..., 0], streamstack.T),
-            map_coordinates(iwarp[..., 1], streamstack.T),
-            map_coordinates(iwarp[..., 2], streamstack.T),
-        ], -1) +
-        streamstack @ affine_vox2fix[:3, :3].T +
-        affine_vox2fix[:3, -1]
-    )
+    vox2fix_transformed = streamstack @ affine_vox2fix[:3, :3].T + affine_vox2fix[:3, -1]
+    streamstack = warped_coords + vox2fix_transformed
+
+    # Apply orientation corrections if needed
+    if needs_x_flip:
+        fixed_shape = iwarp.shape[:3]
+        fixed_center_vox = (np.array(fixed_shape) - 1) / 2
+        fixed_center_ras = apply_affine(affine_vox2fix, fixed_center_vox)
+        streamstack[:, 0] = 2 * fixed_center_ras[0] - streamstack[:, 0]
+
+    if needs_y_flip:
+        fixed_shape = iwarp.shape[:3]
+        fixed_center_vox = (np.array(fixed_shape) - 1) / 2
+        fixed_center_ras = apply_affine(affine_vox2fix, fixed_center_vox)
+        streamstack[:, 1] = 2 * fixed_center_ras[1] - streamstack[:, 1]
     
-    print(f"Applied warp transformation")
-    
-    # Save warped streamlines (in RAS coordinates)
+    if needs_z_flip:
+        fixed_shape = iwarp.shape[:3]
+        fixed_center_vox = (np.array(fixed_shape) - 1) / 2
+        fixed_center_ras = apply_affine(affine_vox2fix, fixed_center_vox)
+        streamstack[:, 2] = 2 * fixed_center_ras[2] - streamstack[:, 2]
+
+    # Update streamlines data
     streamlines._data = streamstack
-    
+
     if output_path:
         tract = Tractogram(streamlines, affine_to_rasmm=np.eye(4))
         trk = TrkFile(tract)
         trk.save(output_path)
-        print(f"Saved transformed streamlines to: {output_path}")
-    
-    # Move streamlines to fixed voxel coordinates for synthesis
-    streamstack_voxel = streamstack @ affine_fix2vox[:3, :3].T + affine_fix2vox[:3, -1]
-    
-    print(f"Converted to voxel coordinates for synthesis")
-    print(f"Voxel coordinate range:")
-    print(f"  X: {streamstack_voxel[:, 0].min():.2f} to {streamstack_voxel[:, 0].max():.2f}")
-    print(f"  Y: {streamstack_voxel[:, 1].min():.2f} to {streamstack_voxel[:, 1].max():.2f}")
-    print(f"  Z: {streamstack_voxel[:, 2].min():.2f} to {streamstack_voxel[:, 2].max():.2f}")
-    
-    return streamlines, streamstack_voxel
 
-
-def process_with_ants_updated(
-        path_warp,
-        path_iwarp,
-        path_aff,
-        path_mri,
-        path_trk,
-        output_mri=None,
-        output_trk=None,
-        transform_mri=True,
-):
-    """
-    Process MRI and streamlines using ANTs transforms with the updated methodology.
+    # Convert to voxel coordinates for synthesis
+    streamstack_for_synthesis = streamstack @ affine_fix2vox[:3, :3].T + affine_fix2vox[:3, -1]
     
-    This function exactly matches the workflow provided by the user.
-    
-    Parameters
-    ----------
-    path_warp : str
-        Path to ANTs forward warp file
-    path_iwarp : str
-        Path to ANTs inverse warp file  
-    path_aff : str
-        Path to ANTs affine file
-    path_mri : str
-        Path to input MRI file
-    path_trk : str
-        Path to input TRK file
-    output_mri : str, optional
-        Path to save transformed MRI
-    output_trk : str, optional
-        Path to save transformed TRK
-    transform_mri : bool, optional
-        Whether to transform MRI (default: True)
-        
-    Returns
-    -------
-    tuple
-        (moved_mri, affine_vox2fix, transformed_streamlines, streamlines_voxel)
-        - moved_mri: Transformed MRI data (or None if transform_mri=False)
-        - affine_vox2fix: Fixed space affine matrix
-        - transformed_streamlines: Streamlines in RAS coordinates
-        - streamlines_voxel: Streamlines in voxel coordinates (for synthesis)
-    """
-    print(f"=== Processing with ANTs (Updated Methodology) ===")
-    print(f"Forward warp: {path_warp}")
-    print(f"Inverse warp: {path_iwarp}")
-    print(f"Affine: {path_aff}")
-    print(f"MRI: {path_mri}")
-    print(f"TRK: {path_trk}")
-    print(f"Transform MRI: {transform_mri}")
-    
-    # Get fixed space affine from warp file
-    warp_img = nib.load(path_warp)
-    affine_vox2fix = warp_img.affine
-    
-    # Transform MRI if requested
-    if transform_mri:
-        moved_mri, affine_vox2fix = apply_ants_transform_to_mri(
-            path_warp, path_aff, path_mri, output_mri
-        )
-    else:
-        print("Skipping MRI transformation as requested")
-        moved_mri = None
-    
-    # Transform streamlines
-    transformed_streamlines, streamlines_voxel = apply_ants_transform_to_streamlines(
-        path_iwarp, path_aff, path_trk, output_trk
-    )
-    
-    # Convert voxel coordinates to list of individual streamlines
+    # Prepare streamlines list with smart clipping
+    fixed_shape = iwarp.shape[:3]
     streamlines_list = []
-    offsets = transformed_streamlines._offsets
+    offsets = streamlines._offsets
     
     for i in range(len(offsets) - 1):
         start, end = offsets[i], offsets[i + 1]
-        streamline_segment = streamlines_voxel[start:end]
+        streamline_segment = streamstack_for_synthesis[start:end]
         
-        if len(streamline_segment) >= 2:  # Only keep streamlines with at least 2 points
-            streamlines_list.append(streamline_segment.astype(np.float32))
+        if len(streamline_segment) < 2:
+            continue
+        
+        # Use smart clipping that preserves pass-through streamlines
+        inside_mask = np.all((streamline_segment >= 0) & (streamline_segment < fixed_shape), axis=1)
+        
+        if not np.any(inside_mask):
+            continue
+        
+        # Import the smart clipping function from streamline_processing
+        try:
+            from synthesis.streamline_processing import clip_streamline_to_fov
+        except ImportError:
+            try:
+                from .streamline_processing import clip_streamline_to_fov
+            except ImportError:
+                from streamline_processing import clip_streamline_to_fov
+        
+        # Apply smart clipping for ANTs-processed streamlines
+        clipped_segments = clip_streamline_to_fov(streamline_segment, fixed_shape, use_gpu=False)
+        
+        # Add all valid segments
+        for segment in clipped_segments:
+            if len(segment) >= 2:
+                streamlines_list.append(segment.astype(np.float32))
     
-    print(f"Final result: {len(streamlines_list)} valid streamlines for synthesis")
+    if len(streamlines_list) == 0:
+        print("WARNING: No valid streamlines found after ANTs transformation and clipping!")
     
-    return moved_mri, affine_vox2fix, transformed_streamlines, streamlines_list
+    return streamlines, streamlines_list
 
 
-# Compatibility function to replace the original process_with_ants
 def process_with_ants(
         path_warp,
         path_iwarp,
@@ -325,12 +276,77 @@ def process_with_ants(
         transform_mri=False,
 ):
     """
-    Compatibility wrapper for the updated ANTs processing.
-    
-    This maintains the same interface as the original function while using
-    the updated methodology.
+    Process MRI and streamlines using ANTs transforms.
+
+    Parameters
+    ----------
+    path_warp : str
+        Path to ANTs warp file.
+    path_iwarp : str
+        Path to ANTs inverse warp file.
+    path_aff : str
+        Path to ANTs affine file.
+    path_mri : str
+        Path to MRI file.
+    path_trk : str
+        Path to TRK file.
+    output_mri : str, optional
+        Path to save transformed MRI file.
+    output_trk : str, optional
+        Path to save transformed TRK file.
+    transform_mri : bool, optional
+        Whether to transform the MRI (default: False).
+
+    Returns
+    -------
+    tuple
+        Tuple containing:
+        - Transformed MRI data (or None if transform_mri=False)
+        - Affine matrix of the transformed MRI
+        - Transformed tractogram
+        - Streamlines in fixed voxel coordinates (for synthesis)
     """
-    return process_with_ants_updated(
+    warp_img = nib.load(path_warp)
+    warp_dims = warp_img.shape[:3]
+    warp_affine = warp_img.affine
+
+    if transform_mri:
+        moved_mri, affine_vox2fix = apply_ants_transform_to_mri(
+            path_warp, path_aff, path_mri, output_mri
+        )
+        
+        if moved_mri.shape[:3] != warp_dims:
+            print(f"WARNING: Transformed MRI dimensions {moved_mri.shape[:3]} don't match warp dimensions {warp_dims}")
+    else:
+        moved_mri = None
+        orig_img = nib.load(path_mri)
+        affine_vox2fix = orig_img.affine
+
+    transformed_streamlines, streamlines_list = apply_ants_transform_to_streamlines(
+        path_iwarp, path_aff, path_trk, output_trk
+    )
+
+    return moved_mri, affine_vox2fix, transformed_streamlines, streamlines_list
+
+
+# Compatibility function to replace the original process_with_ants
+def process_with_ants_updated(
+        path_warp,
+        path_iwarp,
+        path_aff,
+        path_mri,
+        path_trk,
+        output_mri=None,
+        output_trk=None,
+        transform_mri=False,
+):
+    """
+    Compatibility wrapper for the corrected ANTs processing.
+    
+    This maintains the same interface as the updated function while using
+    the corrected methodology with proper orientation handling.
+    """
+    return process_with_ants(
         path_warp=path_warp,
         path_iwarp=path_iwarp,
         path_aff=path_aff,

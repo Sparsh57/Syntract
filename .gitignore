@@ -1,2 +1,8 @@
 /venv/
 examples/
+.idea/
+.vscode/
+__pycache__/
+*.nii.gz
+*.trk
+synthesis/MRISynth.egg-info/*

@@ -27,13 +27,13 @@ try:
     from .transform import build_new_affine
     from .streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
     from .densify import densify_streamline_subvoxel
-    from .ants_transform_updated import process_with_ants_updated
+    from .ants_transform_updated import process_with_ants
 except ImportError:
     from nifti_preprocessing import resample_nifti
     from transform import build_new_affine
     from streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
     from densify import densify_streamline_subvoxel
-    from ants_transform_updated import process_with_ants_updated
+    from ants_transform_updated import process_with_ants
 from nibabel.streamlines import Tractogram, save as save_trk
 
 
@@ -102,7 +102,7 @@ def process_and_save(
         if not transform_mri_with_ants:
             print("Note: MRI transformation will be skipped as requested")
         
-        moved_mri, affine_vox2fix, transformed_streamlines, streamlines_voxel = process_with_ants_updated(
+        moved_mri, affine_vox2fix, transformed_streamlines, streamlines_voxel = process_with_ants(
             ants_warp_path, 
             ants_iwarp_path, 
             ants_aff_path, 

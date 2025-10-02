@@ -849,7 +849,10 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
     # Save result
     output_file = os.path.join(output_dir, f"{prefix}{example_idx+1:03d}.png")
     # Import resize utility
-    from .utils import save_image_1024
+    try:
+        from .utils import save_image_1024
+    except ImportError:
+        from utils import save_image_1024
     save_image_1024(output_file, fig, is_mask=False)
     print(f"Generated example {example_idx+1}: {output_file} (1024x1024)")
     
