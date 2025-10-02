@@ -848,7 +848,7 @@ def create_optical_presets():
         },
         
         'optical_with_debris': {
-            'noise': {'type': 'gamma_multiplicative', 'scale_range': (0.0005, 0.0005), 'prob': 0.2},  # Same as subtle_debris
+            'noise': {'type': 'gamma_multiplicative', 'scale_range': (0.0005, 0.0005), 'prob': 0.3},  # Same as subtle_debris
             'intensity': {'type': 'smooth_multiplicative'}
         },
         
@@ -876,7 +876,8 @@ def create_optical_presets():
 def augment_fiber_slice(slice_data: np.ndarray, 
                        preset: str = 'clean_optical',
                        custom_config: Optional[Dict[str, Any]] = None,
-                       random_state: Optional[int] = None) -> np.ndarray:
+                       random_state: Optional[int] = None,
+                       patch_size: Optional[Tuple[int, ...]] = None) -> np.ndarray:
     """
     Convenient function to augment a single slice with optical imaging effects.
     
@@ -890,6 +891,9 @@ def augment_fiber_slice(slice_data: np.ndarray,
         Custom augmentation configuration (overrides preset)
     random_state : int, optional
         Random seed for reproducible results
+    patch_size : tuple, optional
+        Patch dimensions (width, height, depth) for noise scaling.
+        If provided, noise will be reduced for small patches.
     
     Returns
     -------
@@ -897,33 +901,62 @@ def augment_fiber_slice(slice_data: np.ndarray,
         Augmented slice data
     """
     # Print debug information about Cornucopia settings
-    print(f" Applying Cornucopia augmentation:")
+    print(f"🔧 Applying Cornucopia augmentation:")
     print(f"    Preset: '{preset}'")
     print(f"    Cornucopia available: {CORNUCOPIA_AVAILABLE}")
+    if patch_size:
+        print(f"    Patch size: {patch_size}")
     if custom_config:
         print(f"   ️  Custom config: {custom_config}")
     
     augmenter = ImprovedCornucopiaAugmenter(random_state=random_state)
     
     if custom_config is not None:
-        config = custom_config
+        config = custom_config.copy()
         print(f"    Using custom configuration")
     else:
         presets = create_optical_presets()
         if preset in presets:
-            config = presets[preset]
-            print(f"    Using preset '{preset}': {config}")
+            config = presets[preset].copy()
+            print(f"    Using preset '{preset}'")
         else:
             available_presets = list(presets.keys())
-            print(f"   ️  Unknown preset '{preset}', available: {available_presets}")
-            config = presets['clean_optical']
-            print(f"    Falling back to 'clean_optical': {config}")
+            print(f"    Unknown preset '{preset}', available: {available_presets}")
+            config = presets['clean_optical'].copy()
+            print(f"    Falling back to 'clean_optical'")
+    
+    # Scale noise parameters if patch size is provided
+    if patch_size is not None and len(patch_size) >= 2:
+        if len(patch_size) == 3:
+            patch_area = patch_size[0] * patch_size[2]
+        else:
+            patch_area = patch_size[0] * patch_size[1]
+            
+        base_area = 200 * 200
+        size_factor = min(1.0, patch_area / base_area)
+        
+        # Only reduce noise for small patches
+        if size_factor < 0.8:
+            if 'noise' in config:
+                noise_config = config['noise']
+                
+                if 'scale_range' in noise_config:
+                    orig_range = noise_config['scale_range']
+                    new_range = (orig_range[0] * size_factor, orig_range[1] * size_factor)
+                    noise_config['scale_range'] = new_range
+                
+                if 'intensity_range' in noise_config:
+                    orig_range = noise_config['intensity_range']
+                    center = 1.0
+                    lower_dev = (center - orig_range[0]) * size_factor
+                    upper_dev = (orig_range[1] - center) * size_factor
+                    new_range = (center - lower_dev, center + upper_dev)
+                    noise_config['intensity_range'] = new_range
+                
+                if size_factor < 0.3 and 'prob' in noise_config:
+                    orig_prob = noise_config['prob']
+                    new_prob = orig_prob * (0.5 + size_factor)
+                    noise_config['prob'] = new_prob
     
     result = augmenter.apply_optical_augmentation(slice_data, config)
-    
-    if np.array_equal(result, slice_data):
-        print(f"   ️  Cornucopia had no effect (result identical to input)")
-    else:
-        print(f"    Cornucopia augmentation applied successfully")
-    
     return result 

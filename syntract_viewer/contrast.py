@@ -64,7 +64,8 @@ def apply_enhanced_contrast_and_augmentation(slice_data,
                                            background_enhancement=None,
                                            enable_sharpening=True,
                                            sharpening_strength=0.5,
-                                           random_state=None):
+                                           random_state=None,
+                                           patch_size=None):
     """
     Apply background enhancement, then Cornucopia augmentation, then contrast enhancement.
     
@@ -136,13 +137,15 @@ def apply_enhanced_contrast_and_augmentation(slice_data,
                     cornucopia_result = augment_fiber_slice(
                         processed_slice,
                         preset=cornucopia_augmentation,
-                        random_state=random_state
+                        random_state=random_state,
+                        patch_size=patch_size
                     )
                 elif isinstance(cornucopia_augmentation, dict):
                     cornucopia_result = augment_fiber_slice(
                         processed_slice,
                         custom_config=cornucopia_augmentation,
-                        random_state=random_state
+                        random_state=random_state,
+                        patch_size=patch_size
                     )
                 
                 if not (np.all(cornucopia_result == 0) or np.std(cornucopia_result) < 1e-6 or np.max(cornucopia_result) < 0.01):
@@ -228,7 +231,8 @@ def apply_comprehensive_slice_processing(slice_data,
                                        enable_sharpening=True,
                                        sharpening_strength=0.5,
                                        random_state=None,
-                                       preprocess_quantized=True):
+                                       preprocess_quantized=True,
+                                       patch_size=None):
     """
     Apply comprehensive slice processing with all available enhancement methods.
     
@@ -274,5 +278,6 @@ def apply_comprehensive_slice_processing(slice_data,
         background_enhancement=background_config,
         enable_sharpening=enable_sharpening,
         sharpening_strength=sharpening_strength,
-        random_state=random_state
+        random_state=random_state,
+        patch_size=patch_size
     ) 

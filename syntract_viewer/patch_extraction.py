@@ -266,7 +266,7 @@ def _generate_patch_visualization(nifti_path, trk_path, output_dir, prefix, save
         presets = ['clean_optical', 'gamma_speckle', 'optical_with_debris', 
                   'subtle_debris', 'clinical_simulation', 'heavy_speckle']
         # Weights: clean (30%), subtle (30%), moderate (20%), heavy (20%)
-        weights = [0.05, 0.25, 0.25, 0.25, 0.10, 0.10]  # heavy_speckle gets 20%
+        weights = [0.05, 0.25, 0.35, 0.25, 0.10, 0.10]  # heavy_speckle gets 20%
         random.seed(int(time.time() * 1000000) % (2**32))  # Truly random seed
         actual_preset = random.choices(presets, weights=weights, k=1)[0]
     else:
