@@ -38,7 +38,7 @@ def test_comprehensive_runner():
         # Assert that all tests passed (exit code 0)
         assert exit_code == 0, "Comprehensive tests failed - see output above for details"
         
-        print("\n✅ All comprehensive tests passed!")
+        print("\nAll comprehensive tests passed!")
         
     except ImportError as e:
         pytest.fail(f"Failed to import comprehensive test runner: {e}")
@@ -79,7 +79,7 @@ def test_comprehensive_runner_detailed():
         if exit_code != 0:
             pytest.fail("Comprehensive tests failed - check the detailed output above")
             
-        print("\n✅ All detailed comprehensive tests passed!")
+        print("\nAll detailed comprehensive tests passed!")
         
     except Exception as e:
         pytest.fail(f"Detailed comprehensive test runner failed: {e}")

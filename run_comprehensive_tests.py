@@ -144,13 +144,13 @@ def test_module_structure():
     for module_name in synthesis_modules:
         try:
             module = importlib.import_module(module_name)
-            print(f"✓ {module_name}")
+            print(f"{module_name}")
             results.add_pass()
         except ImportError as e:
-            print(f"✗ {module_name}: {e}")
+            print(f"ERROR: {module_name}: {e}")
             results.add_fail(f"Import error in {module_name}: {e}")
         except Exception as e:
-            print(f"✗ {module_name}: {e}")
+            print(f"ERROR: {module_name}: {e}")
             results.add_fail(f"Error in {module_name}: {e}")
     
     # Test syntract_viewer module structure  
@@ -172,13 +172,13 @@ def test_module_structure():
     for module_name in syntract_modules:
         try:
             module = importlib.import_module(module_name)
-            print(f"✓ {module_name}")
+            print(f"{module_name}")
             results.add_pass()
         except ImportError as e:
-            print(f"✗ {module_name}: {e}")
+            print(f"ERROR: {module_name}: {e}")
             results.add_fail(f"Import error in {module_name}: {e}")
         except Exception as e:
-            print(f"✗ {module_name}: {e}")
+            print(f"ERROR: {module_name}: {e}")
             results.add_fail(f"Error in {module_name}: {e}")
     
     return results
@@ -204,10 +204,10 @@ def test_basic_functionality(temp_dir: str):
         
         new_affine = build_new_affine(old_affine, old_shape, new_voxel_size, new_shape, use_gpu=False)
         assert new_affine.shape == (4, 4)
-        print("✓ build_new_affine basic test")
+        print("build_new_affine basic test")
         results.add_pass()
     except Exception as e:
-        print(f"✗ build_new_affine: {e}")
+        print(f"ERROR: build_new_affine: {e}")
         results.add_fail(f"build_new_affine error: {e}")
     
     # Test synthesis.densify
@@ -221,7 +221,7 @@ def test_basic_functionality(temp_dir: str):
         result = linear_interpolate(p0, p1, 0.5)
         expected = np.array([1, 1, 1])
         np.testing.assert_allclose(result, expected)
-        print("✓ linear_interpolate test")
+        print("linear_interpolate test")
         results.add_pass()
         
         # Test streamline densification
@@ -233,11 +233,11 @@ def test_basic_functionality(temp_dir: str):
         
         densified = densify_streamline_subvoxel(streamline, step_size=0.5, use_gpu=False, interp_method='linear')
         assert len(densified) >= len(streamline)
-        print("✓ densify_streamline_subvoxel test")
+        print("densify_streamline_subvoxel test")
         results.add_pass()
         
     except Exception as e:
-        print(f"✗ densify functions: {e}")
+        print(f"ERROR: densify functions: {e}")
         results.add_fail(f"densify functions error: {e}")
     
     # Test syntract_viewer.utils
@@ -256,7 +256,7 @@ def test_basic_functionality(temp_dir: str):
         selected = select_random_streamlines(streamlines, percentage=50.0, random_state=42)
         assert isinstance(selected, list)
         assert len(selected) <= len(streamlines)
-        print("✓ select_random_streamlines test")
+        print("select_random_streamlines test")
         results.add_pass()
         
         # Test densification
@@ -268,11 +268,11 @@ def test_basic_functionality(temp_dir: str):
         
         densified = densify_streamline(simple_streamline, step=1.0)
         assert len(densified) >= len(simple_streamline)
-        print("✓ densify_streamline test")
+        print("densify_streamline test")
         results.add_pass()
         
     except Exception as e:
-        print(f"✗ syntract_viewer.utils: {e}")
+        print(f"ERROR: syntract_viewer.utils: {e}")
         results.add_fail(f"syntract_viewer.utils error: {e}")
     
     return results
@@ -301,11 +301,11 @@ def test_file_operations(temp_dir: str):
         
         memory_gb = estimate_memory_usage((50, 50, 50), np.float32)
         assert memory_gb > 0
-        print("✓ estimate_memory_usage test")
+        print("estimate_memory_usage test")
         results.add_pass()
         
     except Exception as e:
-        print(f"✗ NIfTI preprocessing: {e}")
+        print(f"ERROR: NIfTI preprocessing: {e}")
         results.add_fail(f"NIfTI preprocessing error: {e}")
     
     # Test streamline processing if TRK file was created
@@ -324,11 +324,11 @@ def test_file_operations(temp_dir: str):
             
             new_shape = (50, 50, 50)
             clipped = clip_streamline_to_fov(streamline, new_shape, use_gpu=False)
-            print("✓ clip_streamline_to_fov test")
+            print("clip_streamline_to_fov test")
             results.add_pass()
             
         except Exception as e:
-            print(f"✗ streamline processing: {e}")
+            print(f"ERROR: streamline processing: {e}")
             results.add_fail(f"streamline processing error: {e}")
     else:
         results.add_skip("Could not create test TRK file")
@@ -352,19 +352,19 @@ def test_visualization_functions(temp_dir: str):
         # Test synthesis.visualize functions
         try:
             from synthesis.visualize import overlay_streamlines_on_blockface_coronal, visualize_trk_with_nifti
-            print("✓ synthesis.visualize imports successful")
+            print("synthesis.visualize imports successful")
             results.add_pass()
         except Exception as e:
-            print(f"✗ synthesis.visualize imports: {e}")
+            print(f"ERROR: synthesis.visualize imports: {e}")
             results.add_fail(f"synthesis.visualize import error: {e}")
         
         # Test syntract_viewer visualization
         try:
             from syntract_viewer.core import visualize_nifti_with_trk
-            print("✓ syntract_viewer.core imports successful")
+            print("syntract_viewer.core imports successful")
             results.add_pass()
         except Exception as e:
-            print(f"✗ syntract_viewer.core imports: {e}")
+            print(f"ERROR: syntract_viewer.core imports: {e}")
             results.add_fail(f"syntract_viewer.core import error: {e}")
             
         # Test utils functions
@@ -374,7 +374,7 @@ def test_visualization_functions(temp_dir: str):
             # Test colormap generation
             cmap = get_colormap(color_scheme='bw')
             assert cmap is not None
-            print("✓ get_colormap test")
+            print("get_colormap test")
             results.add_pass()
             
             # Test color variation
@@ -382,15 +382,15 @@ def test_visualization_functions(temp_dir: str):
             varied_color = generate_tract_color_variation(base_color, variation=0.2, random_state=42)
             assert isinstance(varied_color, tuple)
             assert len(varied_color) == 3
-            print("✓ generate_tract_color_variation test")
+            print("generate_tract_color_variation test")
             results.add_pass()
             
         except Exception as e:
-            print(f"✗ visualization utils: {e}")
+            print(f"ERROR: visualization utils: {e}")
             results.add_fail(f"visualization utils error: {e}")
         
     except Exception as e:
-        print(f"✗ matplotlib setup: {e}")
+        print(f"ERROR: matplotlib setup: {e}")
         results.add_fail(f"matplotlib setup error: {e}")
     
     return results
@@ -410,11 +410,11 @@ def test_edge_cases():
         # Test with empty streamline list
         empty_result = select_random_streamlines([], percentage=50.0, random_state=42)
         assert len(empty_result) == 0
-        print("✓ Empty streamlines handling")
+        print("Empty streamlines handling")
         results.add_pass()
         
     except Exception as e:
-        print(f"✗ Empty input handling: {e}")
+        print(f"ERROR: Empty input handling: {e}")
         results.add_fail(f"Empty input handling error: {e}")
     
     # Test invalid parameters
@@ -426,11 +426,11 @@ def test_edge_cases():
         p1 = np.array([1e6, 1e6, 1e6])
         result = linear_interpolate(p0, p1, 0.5)
         assert not np.any(np.isnan(result))
-        print("✓ Extreme value handling")
+        print("Extreme value handling")
         results.add_pass()
         
     except Exception as e:
-        print(f"✗ Extreme value handling: {e}")
+        print(f"ERROR: Extreme value handling: {e}")
         results.add_fail(f"Extreme value handling error: {e}")
     
     # Test GPU/CPU fallback
@@ -449,11 +449,11 @@ def test_edge_cases():
         # Test with GPU enabled (should fallback to CPU if no GPU)
         result_gpu_fallback = densify_streamline_subvoxel(streamline, step_size=0.5, use_gpu=True)
         
-        print("✓ GPU/CPU fallback handling")
+        print("GPU/CPU fallback handling")
         results.add_pass()
         
     except Exception as e:
-        print(f"✗ GPU/CPU fallback: {e}")
+        print(f"ERROR: GPU/CPU fallback: {e}")
         results.add_fail(f"GPU/CPU fallback error: {e}")
     
     return results
@@ -485,11 +485,11 @@ def test_integration():
         old_affine = np.eye(4)
         new_affine = build_new_affine(old_affine, (100, 100, 100), 1.0, (200, 200, 200), use_gpu=False)
         
-        print("✓ Module integration test")
+        print("Module integration test")
         results.add_pass()
         
     except Exception as e:
-        print(f"✗ Module integration: {e}")
+        print(f"ERROR: Module integration: {e}")
         results.add_fail(f"Module integration error: {e}")
     
     # Test cross-module compatibility
@@ -504,11 +504,11 @@ def test_integration():
         metrics = calculate_streamline_metrics(streamlines)
         assert isinstance(metrics, dict)
         assert 'mean_length' in metrics
-        print("✓ Cross-module compatibility test")
+        print("Cross-module compatibility test")
         results.add_pass()
         
     except Exception as e:
-        print(f"✗ Cross-module compatibility: {e}")
+        print(f"ERROR: Cross-module compatibility: {e}")
         results.add_fail(f"Cross-module compatibility error: {e}")
     
     return results
@@ -574,10 +574,10 @@ def main():
         success = all_results.summary()
         
         if success:
-            print(f"\n🎉 ALL TESTS COMPLETED SUCCESSFULLY! 🎉")
+            print(f"\nALL TESTS COMPLETED SUCCESSFULLY!")
             return 0
         else:
-            print(f"\n❌ SOME TESTS FAILED. Please review the errors above.")
+            print(f"\nERROR: SOME TESTS FAILED. Please review the errors above.")
             return 1
             
     except KeyboardInterrupt:

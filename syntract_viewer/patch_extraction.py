@@ -16,6 +16,7 @@ import json
 import random
 import time
 import argparse
+import gc
 import nibabel as nib
 import numpy as np
 from pathlib import Path
@@ -193,6 +194,9 @@ def extract_random_patches(nifti_file: str,
                         enable_orange_blobs, orange_blob_probability
                     )
                 
+                # CRITICAL: Force garbage collection after each visualization to prevent memory accumulation
+                gc.collect()
+                
                 # Record successful extraction
                 results['patches_extracted'] += 1
                 file_results['patches_extracted'] += 1
@@ -208,10 +212,10 @@ def extract_random_patches(nifti_file: str,
                     }
                 })
                 
-                print(f"    Patch {patch_counter}: ✓ ({meta['validations']['streamlines_kept']} streamlines, {meta['validations']['trials']} trials)")
+                print(f"    Patch {patch_counter}: OK ({meta['validations']['streamlines_kept']} streamlines, {meta['validations']['trials']} trials)")
                 
             except Exception as e:
-                print(f"    Patch {patch_counter}: ✗ Failed - {e}")
+                print(f"    Patch {patch_counter}: ERROR: Failed - {e}")
                 results['patches_failed'] += 1
                 file_results['patches_failed'] += 1
         
@@ -269,7 +273,7 @@ def _generate_patch_visualization(nifti_path, trk_path, output_dir, prefix, save
     try:
         # First, create the standard visualization
         output_path = os.path.join(output_dir, f"{prefix}_visualization.png")
-        visualize_nifti_with_trk_coronal(
+        result = visualize_nifti_with_trk_coronal(
             nifti_file=nifti_path,
             trk_file=trk_path,
             output_file=output_path,
@@ -290,13 +294,12 @@ def _generate_patch_visualization(nifti_path, trk_path, output_dir, prefix, save
             cornucopia_augmentation=actual_preset,
             truly_random=True  # Enable truly random parameters
         )
-        
         # Now add orange injection sites if enabled
         if enable_orange_blobs:
             from PIL import Image
             import matplotlib.pyplot as plt
             
-            print(f"🔥 ADDING ORANGE INJECTION SITE to patch visualization")
+            print(f"ADDING ORANGE INJECTION SITE to patch visualization")
             
             if random.random() < orange_blob_probability:
                 # Load the visualization image
@@ -309,7 +312,7 @@ def _generate_patch_visualization(nifti_path, trk_path, output_dir, prefix, save
                 center_y = random.randint(img_height // 4, 3 * img_height // 4)
                 radius = random.randint(30, 80)
                 
-                print(f"🧡 Adding dense orange injection site at ({center_x}, {center_y}), radius: {radius}")
+                print(f"Adding dense orange injection site at ({center_x}, {center_y}), radius: {radius}")
                 
                 # Create circular mask for injection site
                 y_coords, x_coords = np.ogrid[:img_height, :img_width]

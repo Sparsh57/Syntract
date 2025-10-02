@@ -113,7 +113,7 @@ def batch_process_trk_files(nifti_path, trk_dir, **processing_kwargs):
             current_kwargs['patch_output_dir'] = os.path.join(main_output_dir, "patches", base_name)
             current_kwargs['patch_prefix'] = f"{base_name}_patch"
             
-            print(f"\n📦 Processing {i}/{len(files)}: {trk_filename} ({patches_for_file} patches)")
+            print(f"\nProcessing {i}/{len(files)}: {trk_filename} ({patches_for_file} patches)")
         else:
             print(f"\nProcessing {i}/{len(files)}: {trk_filename}")
         
@@ -130,7 +130,7 @@ def batch_process_trk_files(nifti_path, trk_dir, **processing_kwargs):
             )
             
             if result['success']:
-                print(f"✓ Successfully processed {trk_filename}")
+                print(f"Successfully processed {trk_filename}")
                 results['successful'].append({
                     'filename': trk_filename,
                     'output_base': result['output_base'],
@@ -139,14 +139,14 @@ def batch_process_trk_files(nifti_path, trk_dir, **processing_kwargs):
                     'processed_trk': result['processed_trk']
                 })
             else:
-                print(f"✗ Failed to process {trk_filename}: {result['error']}")
+                print(f"ERROR: Failed to process {trk_filename}: {result['error']}")
                 results['failed'].append({
                     'filename': trk_filename,
                     'error': result['error']
                 })
                 
         except Exception as e:
-            print(f"✗ Error processing {trk_filename}: {str(e)}")
+            print(f"ERROR: Error processing {trk_filename}: {str(e)}")
             results['failed'].append({
                 'filename': trk_filename,
                 'error': str(e)
@@ -380,16 +380,16 @@ def main():
     Main function for batch processing.
     
     SUBDIVISION SUPPORT:
-    - ✅ Subdivisions are now FIXED and working!
+    - Subdivisions are now FIXED and working!
     - Fixed the 'NoneType' object has no attribute 'shape' error in subdivision processing
     - Subdivisions create additional output folders organized by spatial regions
     - When enabled, it generates fewer examples per TRK file but with spatial breakdown
     
     CURRENT STATUS:
-    - ✅ Standard processing: Works perfectly, generates 5 examples + masks per TRK file
-    - ✅ Batch processing: Processes multiple TRK files automatically  
-    - ✅ Organized output: Creates clean folder structure in syntract_submission/
-    - ✅ Subdivisions: FIXED and working - try 'debug_subdivisions' or 'thin_dimension'
+    - Standard processing: Works perfectly, generates 5 examples + masks per TRK file
+    - Batch processing: Processes multiple TRK files automatically  
+    - Organized output: Creates clean folder structure in syntract_submission/
+    - Subdivisions: FIXED and working - try 'debug_subdivisions' or 'thin_dimension'
     """
     # Path to your NIfTI file (common to all TRKs)
     nifti_path = "examples/example_data/sub-MF278_sample-brain_desc-blockface_stacked_masked_grayscale_level4.nii.gz"
@@ -408,10 +408,10 @@ def main():
     # 'sparse_subdivisions' - same parameters + 4 spatial subdivisions (better for sparse data)
     # 'thin_dimension' - same parameters + 8 subdivisions optimized for thin dimensions
     # 'debug_subdivisions' - minimal subdivision config for debugging subdivision issues
-    # 'crisp_subdivisions' - high-detail subdivisions with edge preservation and sharpening ⭐ RECOMMENDED
-    # 'patch_extraction' - extract 100 patches distributed across all TRK files 🧩 NEW!
-    # 'high_throughput_patches' - extract 200 smaller patches for high throughput 🚀 NEW!
-    # 'quality_patches' - extract 50 high-quality large patches 💎 NEW!
+    # 'crisp_subdivisions' - high-detail subdivisions with edge preservation and sharpening [RECOMMENDED]
+    # 'patch_extraction' - extract 100 patches distributed across all TRK files [NEW]
+    # 'high_throughput_patches' - extract 200 smaller patches for high throughput [NEW]
+    # 'quality_patches' - extract 50 high-quality large patches [NEW]
     config_choice = 'patch_extraction'  # Try the new patch extraction!
     
     processing_params = configs[config_choice]
@@ -430,13 +430,13 @@ def main():
         print(f"   - Random state: {processing_params.get('random_state', 'None (random)')}")
         
     elif processing_params.get('use_spatial_subdivisions', False):
-        print("🔀 Spatial subdivisions ENABLED")
+        print("Spatial subdivisions ENABLED")
         print(f"   - Number of subdivisions: {processing_params.get('n_subdivisions', 8)}")
         print(f"   - Max streamlines per subdivision: {processing_params.get('max_streamlines_per_subdivision', 50000)}")
         print(f"   - Min streamlines per region: {processing_params.get('min_streamlines_per_region', 1)}")
         print(f"   - Skip empty regions: {processing_params.get('skip_empty_regions', True)}")
     else:
-        print("📊 Using standard processing (no subdivisions/patches)")
+        print("Using standard processing (no subdivisions/patches)")
         
     print(f"Processing parameters: {processing_params}")
     
@@ -452,7 +452,7 @@ def main():
     print(f"Failed: {len(results['failed'])}")
     
     # Show organized folder structure
-    print(f"\n📁 Output folder structure:")
+    print(f"\nOutput folder structure:")
     print(f"syntract_submission/")
     print(f"├── processed_files/          # All processed .nii.gz and .trk files")
     if processing_params.get('enable_patch_extraction', False):
@@ -463,7 +463,7 @@ def main():
     print(f"└── visualizations/           # Visualization folders organized by TRK file")
     
     if results['successful']:
-        print("\n✓ Successfully processed files:")
+        print("\nSuccessfully processed files:")
         for item in results['successful']:
             print(f"  - {item['filename']}")
             if item['processed_nifti']:
@@ -473,7 +473,7 @@ def main():
             print(f"   Visualizations: syntract_submission/visualizations/{viz_folder}/")
     
     if results['failed']:
-        print("\n✗ Failed to process files:")
+        print("\nERROR: Failed to process files:")
         for item in results['failed']:
             print(f"  - {item['filename']}: {item['error']}")
     

@@ -2,7 +2,7 @@
 
 A streamlined Python pipeline for MRI processing, tractography synthesis, and dark field microscopy-style visualization. Features unified CLI, ANTs integration, and robust patch extraction for neuroimaging research.
 
-## ✨ Features
+## Features
 
 - **Unified Pipeline**: Single command processing from raw NIfTI/TRK to visualizations
 - **ANTs Integration**: Spatial transformations and registration workflows
@@ -12,7 +12,7 @@ A streamlined Python pipeline for MRI processing, tractography synthesis, and da
 - **Batch Processing**: Multiple TRK files with shared NIfTI
 - **Dark Field Visualization**: Publication-ready medical imaging with enhanced contrast
 
-## 🔧 Installation
+## Installation
 
 ```bash
 git clone https://github.com/Sparsh57/Syntract.git
@@ -20,7 +20,7 @@ cd Syntract
 pip install -r requirements.txt
 ```
 
-## 🚀 Quick Start
+## Quick Start
 
 ### Basic Usage
 ```bash
@@ -51,7 +51,7 @@ python syntract.py --input whole_output.nii.gz --trk whole_output.trk \
 python cumulative.py  # Edit paths in script
 ```
 
-## 📋 Parameters
+## Parameters
 
 ### Essential Arguments
 | Parameter | Type | Description |
@@ -111,7 +111,7 @@ python cumulative.py  # Edit paths in script
 | `--slice_output_dir` | str | Directory for slice outputs |
 | `--auto_batch_process` | flag | Automatically process all extracted slices |
 
-## 🗂️ Batch Processing (cumulative.py)
+## Batch Processing (cumulative.py)
 
 Process multiple TRK files with a shared NIfTI file. Supports various configurations:
 
@@ -131,7 +131,7 @@ Process multiple TRK files with a shared NIfTI file. Supports various configurat
 
 Change the `config_choice` variable in `cumulative.py` to switch between configurations.
 
-## 📁 Output Structure
+## Output Structure
 
 ### Standard Processing
 ```
@@ -158,7 +158,7 @@ syntract_submission/
 └── visualizations/       # Visualizations organized by TRK file
 ```
 
-## 🐍 Python API
+## Python API
 
 ### Basic Processing
 ```python
@@ -240,12 +240,12 @@ result = process_syntract(
 )
 ```
 
-## 📦 Dependencies
+## Dependencies
 
 - Core: `numpy`, `nibabel`, `matplotlib`, `scikit-image`, `scipy`, `dipy`
 - Optional: `cupy`, `cornucopia-pytorch`, `ants`
 
-## 🧠 Memory Optimization for Large Datasets
+## Memory Optimization for Large Datasets
 
 For extracting 500+ patches from large volumes (>5GB), we've implemented several memory optimizations:
 
@@ -279,6 +279,6 @@ For detailed information, see:
 - **[MEMORY_OPTIMIZATIONS.md](MEMORY_OPTIMIZATIONS.md)** - Complete memory optimization guide
 - **[SKIP_SYNTHESIS_GUIDE.md](SKIP_SYNTHESIS_GUIDE.md)** - Skip synthesis feature documentation
 
-## 📄 License
+## License
 
 MIT License - see LICENSE file for details.

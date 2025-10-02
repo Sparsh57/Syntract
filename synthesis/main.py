@@ -79,13 +79,13 @@ def process_and_save(
         use_gpu = gpu_result['cupy_available']
         
         if use_gpu:
-            print("✓ Using GPU acceleration with CuPy")
+            print("Using GPU acceleration with CuPy")
         else:
-            print("ℹ Using CPU processing (GPU libraries not available)")
+            print("INFO: Using CPU processing (GPU libraries not available)")
             # Note: No warning since this is expected when GPU libraries aren't installed
     else:
         import numpy as xp
-        print("ℹ Using CPU processing (GPU disabled by user)")
+        print("INFO: Using CPU processing (GPU disabled by user)")
 
     if use_ants:
         if not all([ants_warp_path, ants_iwarp_path, ants_aff_path]):
@@ -412,12 +412,12 @@ def process_and_save(
             
             if slice_result['success']:
                 slice_extraction_result = slice_result
-                print(f"✓ Slice extraction completed: {len(slice_result['metadata']['selected_slice_indices'])} slices")
+                print(f"Slice extraction completed: {len(slice_result['metadata']['selected_slice_indices'])} slices")
             else:
-                print(f"✗ Slice extraction failed")
+                print(f"ERROR: Slice extraction failed")
                 
         except Exception as e:
-            print(f"✗ Slice extraction failed: {e}")
+            print(f"ERROR: Slice extraction failed: {e}")
     
     return {
         'synthesis_outputs': synthesis_outputs,

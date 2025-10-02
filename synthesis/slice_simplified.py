@@ -591,7 +591,7 @@ def extract_coronal_slices_simple_body(nifti_path, trk_path, output_dir, n_slice
     # OVERRIDE COORDINATE SYSTEM DETECTION: If we found negative coordinates in the full distribution,
     # the streamlines are definitely in world coordinates
     if y_min < 0:
-        print(f"⚠️  OVERRIDE: Found negative Y coordinates ({y_min:.1f}) in full distribution!")
+        print(f"WARNING:️  OVERRIDE: Found negative Y coordinates ({y_min:.1f}) in full distribution!")
         print(f"   Streamlines are definitely in WORLD coordinates, not voxel coordinates")
         streamlines_in_world_coords = True
     
@@ -804,14 +804,14 @@ Examples:
         )
         
         if result['success']:
-            print(f"\n✅ Slice extraction completed successfully!")
+            print(f"\nSlice extraction completed successfully!")
             print(f"Output directory: {result['output_dir']}")
         else:
-            print(f"\n⚠️ Slice extraction completed with some failures")
+            print(f"\nWARNING:️ Slice extraction completed with some failures")
             print(f"Check output directory: {result['output_dir']}")
             
     except Exception as e:
-        print(f"\n❌ Slice extraction failed: {e}")
+        print(f"\nERROR: Slice extraction failed: {e}")
         return 1
     
     return 0

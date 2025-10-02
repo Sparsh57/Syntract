@@ -29,10 +29,10 @@ class GPUSupport:
             self.cupy_available = True
             self.cupy = cupy
             if verbose:
-                print("✓ CuPy available for GPU array operations")
+                print("CuPy available for GPU array operations")
         except ImportError:
             if verbose:
-                print("✗ CuPy not available (array operations will use CPU)")
+                print("ERROR: CuPy not available (array operations will use CPU)")
         
         # Try to import Numba CUDA
         try:
@@ -40,10 +40,10 @@ class GPUSupport:
             self.numba_cuda_available = True 
             self.cuda = cuda
             if verbose:
-                print("✓ Numba CUDA available for GPU kernels")
+                print("Numba CUDA available for GPU kernels")
         except ImportError:
             if verbose:
-                print("✗ Numba CUDA not available (kernels will use CPU)")
+                print("ERROR: Numba CUDA not available (kernels will use CPU)")
         
         self._initialized = True
     
@@ -59,7 +59,7 @@ class GPUSupport:
                 # Check if CUDA devices are available
                 device_count = cp.cuda.runtime.getDeviceCount()
                 if device_count == 0:
-                    print(f"ℹ CuPy available but no CUDA devices found. Using CPU processing.")
+                    print(f"INFO: CuPy available but no CUDA devices found. Using CPU processing.")
                     import numpy
                     return numpy
                 
@@ -67,15 +67,15 @@ class GPUSupport:
                 with cp.cuda.Device(0):
                     test = cp.array([1.0], dtype=cp.float32)
                     del test  # Clean up
-                print(f"ℹ Using GPU processing (GPU libraries available)")
+                print(f"INFO: Using GPU processing (GPU libraries available)")
                 return self.cupy
             except Exception as e:
                 # GPU not available or other CuPy error - fall back to NumPy
                 error_str = str(e)
                 if any(err in error_str for err in ["cudaErrorNoDevice", "CUDA", "cuda", "device"]):
-                    print(f"ℹ Using CPU processing (GPU libraries not available)")
+                    print(f"INFO: Using CPU processing (GPU libraries not available)")
                 else:
-                    print(f"⚠️  CuPy error: {e}. Falling back to CPU (NumPy).")
+                    print(f"WARNING:️  CuPy error: {e}. Falling back to CPU (NumPy).")
                 import numpy
                 return numpy
         else:

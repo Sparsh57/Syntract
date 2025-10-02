@@ -5,11 +5,17 @@ Core visualization functions for NIfTI tractography data.
 import os
 import numpy as np
 import nibabel as nib
+import matplotlib
 import matplotlib.pyplot as plt
 from nibabel.streamlines import load
 from matplotlib.collections import LineCollection
 from dipy.tracking.streamline import transform_streamlines
 import random
+
+# CRITICAL: Configure matplotlib to be aggressive about memory management
+# This prevents OOM issues when generating hundreds of figures
+matplotlib.rcParams['figure.max_open_warning'] = 5  # Warn earlier
+plt.ioff()  # Turn off interactive mode to prevent figure retention
 
 try:
     from .contrast import apply_contrast_enhancement, apply_comprehensive_slice_processing
@@ -230,13 +236,22 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
         # Save masks if requested
         if save_masks and fiber_masks:
             _save_masks(output_file, fiber_masks, labeled_masks, slice_positions, label_bundles)
+        
+        # CRITICAL: Close figure immediately after saving to prevent memory accumulation
+        plt.close(fig)
+        
+        # Return None for fig since it's been closed
+        if label_bundles and labeled_masks:
+            return None, None, fiber_masks, labeled_masks
+        else:
+            return None, None, fiber_masks if save_masks else None
     else:
         plt.show()
-
-    if label_bundles and labeled_masks:
-        return fig, axes, fiber_masks, labeled_masks
-    else:
-        return fig, axes, fiber_masks if save_masks else None
+        # Don't close if showing interactively
+        if label_bundles and labeled_masks:
+            return fig, axes, fiber_masks, labeled_masks
+        else:
+            return fig, axes, fiber_masks if save_masks else None
 
 
 def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_slices=1, cmap='gray',
@@ -436,13 +451,21 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
         # Save masks if requested
         if save_masks and fiber_masks:
             _save_masks(output_file, fiber_masks, labeled_masks, slice_positions, label_bundles)
+        
+        plt.close(fig)
+        
+        # Return None for fig since it's been closed
+        if label_bundles and labeled_masks:
+            return None, None, fiber_masks, labeled_masks
+        else:
+            return None, None, fiber_masks if save_masks else None
     else:
         plt.show()
-
-    if label_bundles and labeled_masks:
-        return fig, axes, fiber_masks, labeled_masks
-    else:
-        return fig, axes, fiber_masks if save_masks else None
+        # Don't close if showing interactively
+        if label_bundles and labeled_masks:
+            return fig, axes, fiber_masks, labeled_masks
+        else:
+            return fig, axes, fiber_masks if save_masks else None
 
 
 def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray',
@@ -637,10 +660,15 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
                     from .utils import save_image_1024
                     save_image_1024(mask_filename, mask, is_mask=True)
                     print(f"Saved {view} mask to {mask_filename} (1024x1024)")
+        
+        plt.close(fig)
+        
+        # Return None for fig since it's been closed
+        return None, None, fiber_masks if save_masks else None
     else:
         plt.show()
-
-    return fig, axes, fiber_masks if save_masks else None
+        # Don't close if showing interactively
+        return fig, axes, fiber_masks if save_masks else None
 
 
 def _save_masks(output_file, fiber_masks, labeled_masks, slice_positions, label_bundles):

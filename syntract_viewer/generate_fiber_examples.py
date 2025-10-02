@@ -36,14 +36,14 @@ except ImportError:
 
 def generate_examples_original_mode(args, background_enhancement_available):
     """Generate examples using the original mode with automatic background enhancement and optional Cornucopia."""
-    print("🎨 Running in Original Mode")
+    print("ART: Running in Original Mode")
     if args.randomize:
-        print("🎲 Randomization enabled - parameters will vary per example")
+        print("RANDOM: Randomization enabled - parameters will vary per example")
     else:
         if background_enhancement_available:
-            print("🌟 Automatic background enhancement enabled (high-quality preset for pixelation reduction)")
+            print("STAR: Automatic background enhancement enabled (high-quality preset for pixelation reduction)")
         if args.cornucopia_preset and ENHANCED_AVAILABLE:
-            print(f"🚀 Using Cornucopia augmentations with preset: {args.cornucopia_preset}")
+            print(f"Using Cornucopia augmentations with preset: {args.cornucopia_preset}")
     
     contrast_params = {
         'clip_limit': 0.04,
@@ -255,7 +255,7 @@ def generate_examples_with_spatial_subdivisions(args, background_enhancement_ava
             'examples_generated': args.examples
         })
     
-    print(f"\n🎉 Completed! Generated {total_examples} examples from {len(valid_subdivisions)} spatial subdivisions")
+    print(f"\nCompleted! Generated {total_examples} examples from {len(valid_subdivisions)} spatial subdivisions")
     
     _save_subdivision_summary(output_path, valid_subdivisions, total_examples, args)
     

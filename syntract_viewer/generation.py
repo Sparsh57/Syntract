@@ -744,7 +744,7 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
     
     # Add orange injection site streamlines if enabled - EXTREME VISIBILITY VERSION
     if enable_orange_blobs:  # Always add when enabled, ignore probability for now
-        print(f"��� GENERATING UNMISSABLE INJECTION SITE ���")
+        print(f"GENERATING UNMISSABLE INJECTION SITE")
         import random as rnd
         
         # Get image dimensions
@@ -754,7 +754,7 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
         elif slice_mode == 'sagittal':
             height, width = dims[2], dims[1]
         
-        print(f"� Image dimensions: {width} x {height}")
+        print(f"Image dimensions: {width} x {height}")
         
         # Create injection site at random location
         margin = int(min(width, height) * 0.1)  # Keep some margin from edges
@@ -762,12 +762,10 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
         center_y = rnd.randint(margin, height - margin)
         injection_radius = min(width, height) * 0.05  # Slightly larger injection area
         
-        print(f"� Injection center: ({center_x:.0f}, {center_y:.0f}), radius: {injection_radius:.0f}")
+        print(f"Injection center: ({center_x:.0f}, {center_y:.0f}), radius: {injection_radius:.0f}")
         
-
-
-        
-
+        # Number of orange streamlines to generate
+        num_orange_streamlines = rnd.randint(300, 500)
         
         # Simple orange circle
         circle = plt.Circle((center_x, center_y), injection_radius, color='orange', alpha=0.6, zorder=25)
@@ -840,10 +838,10 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
                 bbox=dict(boxstyle='round', facecolor='white', alpha=0.9),
                 zorder=35)
         
-        print(f"��� ADDED UNMISSABLE INJECTION SITE with {num_orange_streamlines} multicolor streamlines ���")
-        print(f"� Giant markers: MAGENTA, CYAN, YELLOW, RED at ({center_x:.0f}, {center_y:.0f})")
-        print(f"🔥 12 radiating lines + circle outline + text label")
-        print(f"� If you don't see THIS, please check if the image file is corrupted!")
+        print(f"ADDED UNMISSABLE INJECTION SITE with {num_orange_streamlines} multicolor streamlines")
+        print(f"Giant markers: MAGENTA, CYAN, YELLOW, RED at ({center_x:.0f}, {center_y:.0f})")
+        print(f"12 radiating lines + circle outline + text label")
+        print(f"If you don't see THIS, please check if the image file is corrupted!")
     
     ax.axis('off')
     plt.tight_layout()

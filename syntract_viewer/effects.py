@@ -229,6 +229,6 @@ def apply_blockface_preserving_dark_field_effect(slice_clahe, intensity_params=N
     # Light smoothing to clean up edges
     preserved_image = filters.gaussian(preserved_image, sigma=0.2)
     
-    print(f"   🔍 NO INVERSION: Original blockface preserved with three-level thresholding")
+    print(f"   NO INVERSION: Original blockface preserved with three-level thresholding")
     
     return preserved_image 

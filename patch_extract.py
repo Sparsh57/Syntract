@@ -681,10 +681,10 @@ def extract_multiple_patches(nifti_path: str,
     print(f"Min streamlines per patch: {min_streamlines}")
     
     # Pre-load volumes once with memory-mapping
-    print("\n🔄 Loading volumes with memory-mapping...")
+    print("\nPROCESSING: Loading volumes with memory-mapping...")
     nimg_cached = nib.load(nifti_path, mmap=True)
     trk_cached = nib.streamlines.load(trk_path)
-    print("✅ Volumes loaded")
+    print("Volumes loaded")
     
     # Process in batches to control memory usage
     num_batches = (num_patches + batch_size - 1) // batch_size
@@ -729,10 +729,10 @@ def extract_multiple_patches(nifti_path: str,
                 })
                 
                 results['num_patches_extracted'] += 1
-                print(f"✓ {meta['validations']['streamlines_kept']} streamlines ({meta['validations']['trials']} trials)")
+                print(f"{meta['validations']['streamlines_kept']} streamlines ({meta['validations']['trials']} trials)")
                 
             except Exception as e:
-                print(f"✗ Failed: {e}")
+                print(f"ERROR: Failed: {e}")
                 results['patches'].append({
                     'patch_id': patch_id,
                     'success': False,
@@ -741,7 +741,7 @@ def extract_multiple_patches(nifti_path: str,
                 results['num_patches_failed'] += 1
         
         # Cleanup after each batch to prevent memory accumulation
-        print(f"\n🧹 Cleaning up after batch {batch_idx + 1}...")
+        print(f"\nCleaning up after batch {batch_idx + 1}...")
         gc.collect()
         
         # Save checkpoint after each batch
@@ -753,7 +753,7 @@ def extract_multiple_patches(nifti_path: str,
                 'patches_extracted': results['num_patches_extracted'],
                 'patches_failed': results['num_patches_failed']
             }, f, indent=2)
-        print(f"💾 Checkpoint saved: {checkpoint_path}")
+        print(f"SAVING: Checkpoint saved: {checkpoint_path}")
     
     # Save overall summary
     summary_path = os.path.join(output_dir, f"{prefix}_extraction_summary.json")
@@ -776,7 +776,7 @@ def run(nifti_path: str, trk_path: str, patch_xyz: Tuple[int, int, int], seed: i
     try:
         meta = extract_single_patch(nifti_path, trk_path, patch_xyz, seed, out_prefix,
                                    min_streamlines, max_trials)
-        print("✔ Success")
+        print("OK: Success")
         print(json.dumps(meta, indent=2))
     except Exception as e:
         # On failure, emit a structured diagnostic and exit non-zero
