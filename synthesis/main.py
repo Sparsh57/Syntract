@@ -215,10 +215,50 @@ def process_and_save(
         new_data_np = new_data
     
     print(f"Final data shape before saving: {new_data_np.shape}")
+    
+    # Optimize saving for large volumes
+    total_voxels = np.prod(new_data_np.shape)
+    data_size_gb = new_data_np.nbytes / (1024**3)
+    
+    print(f"Volume size: {total_voxels:,} voxels ({data_size_gb:.2f} GB)")
+    
+    # Initialize save_compressed to None for auto-decision
+    save_compressed = None
+    
+    # Auto-decide compression based on size if not specified
+    if save_compressed is None:
+        save_compressed = data_size_gb < 2.0  # Use compression for volumes < 2GB
+        print(f"Auto-selected compression: {save_compressed} (based on {data_size_gb:.2f} GB size)")
+    
+    # Choose file extension and saving strategy
+    out_nifti_path = output_prefix + ".nii"
+    print("Saving uncompressed NIfTI (.nii) for faster I/O...")
+    
+    # Convert A_new to numpy if it's a GPU array
+    if hasattr(A_new, 'get'):
+        A_new_cpu = A_new.get()
+    else:
+        A_new_cpu = A_new
+    
+    # For very large volumes, use optimized data type
+    if data_size_gb > 5.0:
+        print(f"Large volume detected ({data_size_gb:.2f} GB). Using optimized saving...")
         
-    new_img = nib.Nifti1Image(new_data_np, A_new)
-    out_nifti_path = output_prefix + ".nii.gz"
+        # Ensure data is in efficient format
+        if new_data_np.dtype == np.float64:
+            print("Converting float64 to float32 to reduce file size and improve performance")
+            new_data_np = new_data_np.astype(np.float32)
+            print(f"New data size: {new_data_np.nbytes / (1024**3):.2f} GB")
+    
+    # Create and save NIfTI image 
+    print("Creating NIfTI image object...")
+    new_img = nib.Nifti1Image(new_data_np, A_new_cpu)
+    
+    print(f"Saving to: {out_nifti_path}")
+    start_time = time.time()
     nib.save(new_img, out_nifti_path)
+    save_time = time.time() - start_time
+    print(f"Save completed in {save_time:.2f} seconds")
 
     if tmp_mmap is not None and os.path.exists(tmp_mmap):
         os.remove(tmp_mmap)
@@ -492,6 +532,16 @@ def _run_main_with_args(args=None):
     if args.use_ants and not all([args.ants_warp, args.ants_iwarp, args.ants_aff]):
         parser.error("When --use_ants is specified, --ants_warp, --ants_iwarp, and --ants_aff must be provided.")
     
+    # Determine compression setting
+    if args.force_compression and args.no_compression:
+        parser.error("Cannot specify both --force_compression and --no_compression")
+    elif args.force_compression:
+        save_compressed = True
+    elif args.no_compression:
+        save_compressed = False
+    else:
+        save_compressed = None  # Auto-decide
+    
     process_and_save(
         original_nifti_path=original_nifti_path,
         original_trk_path=original_trk_path,
@@ -569,6 +619,16 @@ if __name__ == "__main__":
     
     if args.use_ants and not all([args.ants_warp, args.ants_iwarp, args.ants_aff]):
         parser.error("When --use_ants is specified, --ants_warp, --ants_iwarp, and --ants_aff must be provided.")
+    
+    # Determine compression setting
+    if args.force_compression and args.no_compression:
+        parser.error("Cannot specify both --force_compression and --no_compression")
+    elif args.force_compression:
+        save_compressed = True
+    elif args.no_compression:
+        save_compressed = False
+    else:
+        save_compressed = None  # Auto-decide
     
     process_and_save(
         original_nifti_path=original_nifti_path,

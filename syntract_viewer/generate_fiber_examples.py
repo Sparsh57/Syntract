@@ -471,10 +471,10 @@ def main():
     try:
         from background_enhancement import enhance_slice_background
         print(" Quantized data preprocessing enabled (eliminates tiling artifacts)")
-        print("️  Your data has few unique values - using smooth processing to prevent tiling")
+        print("Your data has few unique values - using smooth processing to prevent tiling")
         background_enhancement_available = True
     except ImportError:
-        print("️  Background enhancement module not found. Pixelation reduction disabled.")
+        print("Background enhancement module not found. Pixelation reduction disabled.")
         background_enhancement_available = False
     
     args.contrast_method = 'clahe'

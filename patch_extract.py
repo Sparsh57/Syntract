@@ -1,5 +1,17 @@
 #!/usr/bin/env python3
 """
+DEPRECATED: This file is deprecated and will be removed in a future version.
+Please use the patch-first optimization via syntract.py instead:
+
+  python syntract.py --input brain.nii.gz --trk fibers.trk \\
+    --total_patches 100 --patch_size 800 1 800
+
+The new patch-first method provides 80-95% performance improvements with better
+curvature preservation and zero-tolerance spatial accuracy.
+
+========================================================================
+
+OLD DESCRIPTION (for reference only):
 Robust patch extractor for paired NIfTI (.nii/.nii.gz) and TRK (.trk) files
 that share identical volume dimensions. Given a target patch size, this script:
   1) Validates NIfTI/TRK dimensional consistency

@@ -828,7 +828,7 @@ class ImprovedCornucopiaAugmenter:
             return np.clip(result, original_min, original_max).astype(image.dtype)
             
         except Exception as e:
-            print(f"   ️  Optical augmentation failed: {e}, returning original")
+            print(f"Optical augmentation failed: {e}, returning original")
             return image
 
 
@@ -848,7 +848,7 @@ def create_optical_presets():
         },
         
         'optical_with_debris': {
-            'noise': {'type': 'gamma_multiplicative', 'scale_range': (0.0005, 0.0005), 'prob': 0.3},  # Same as subtle_debris
+            'noise': {'type': 'gamma_multiplicative', 'scale_range': (0.0003, 0.0003), 'prob': 0.3},  # Same as subtle_debris
             'intensity': {'type': 'smooth_multiplicative'}
         },
         
@@ -901,13 +901,13 @@ def augment_fiber_slice(slice_data: np.ndarray,
         Augmented slice data
     """
     # Print debug information about Cornucopia settings
-    print(f"🔧 Applying Cornucopia augmentation:")
+    print(f"Applying Cornucopia augmentation:")
     print(f"    Preset: '{preset}'")
     print(f"    Cornucopia available: {CORNUCOPIA_AVAILABLE}")
     if patch_size:
         print(f"    Patch size: {patch_size}")
     if custom_config:
-        print(f"   ️  Custom config: {custom_config}")
+        print(f"Custom config: {custom_config}")
     
     augmenter = ImprovedCornucopiaAugmenter(random_state=random_state)
     

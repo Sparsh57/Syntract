@@ -242,22 +242,55 @@ def apply_ants_transform_to_streamlines(path_iwarp, path_aff, path_trk, output_p
         if not np.any(inside_mask):
             continue
         
-        # Import the smart clipping function from streamline_processing
-        try:
-            from synthesis.streamline_processing import clip_streamline_to_fov
-        except ImportError:
+        # For accurate patch-first processing, apply STRICT bounds checking 
+        # ZERO-TOLERANCE: All coordinates must be strictly within [0, fixed_shape)
+        
+        # First clip coordinates to be strictly within bounds with appropriate epsilon
+        for dim in range(3):
+            if fixed_shape[dim] == 1:
+                max_val = fixed_shape[dim] - 1e-3  # 0.001 margin for thin slices
+            else:
+                max_val = fixed_shape[dim] - 1e-3  # 0.001 margin for all dimensions
+            streamline_segment[:, dim] = np.clip(streamline_segment[:, dim], 0.0, max_val)
+        
+        # Then verify all points are within bounds
+        strict_inside = np.all(
+            (streamline_segment >= 0) & 
+            (streamline_segment < np.array(fixed_shape)), 
+            axis=1
+        )
+        
+        if np.any(strict_inside):
+            # Keep only strictly bounded segments
+            valid_streamline = streamline_segment[strict_inside]
+            
+            # FINAL SAFETY CHECK: Force all coordinates to be strictly within bounds
+            for dim in range(3):
+                if fixed_shape[dim] == 1:
+                    max_val = fixed_shape[dim] - 1e-3  # 0.001 margin for thin slices
+                else:
+                    max_val = fixed_shape[dim] - 1e-3  # 0.001 margin for all dimensions
+                valid_streamline[:, dim] = np.clip(valid_streamline[:, dim], 0.0, max_val)
+            
+            if len(valid_streamline) >= 2:  # Minimum 2 points for line segment
+                streamlines_list.append(valid_streamline.astype(np.float32))
+        else:
+            # For streamlines completely outside bounds, use minimal context clipping
             try:
-                from .streamline_processing import clip_streamline_to_fov
+                from synthesis.streamline_processing import clip_streamline_to_fov
             except ImportError:
-                from streamline_processing import clip_streamline_to_fov
-        
-        # Apply smart clipping for ANTs-processed streamlines
-        clipped_segments = clip_streamline_to_fov(streamline_segment, fixed_shape, use_gpu=False)
-        
-        # Add all valid segments
-        for segment in clipped_segments:
-            if len(segment) >= 2:
-                streamlines_list.append(segment.astype(np.float32))
+                try:
+                    from .streamline_processing import clip_streamline_to_fov
+                except ImportError:
+                    from streamline_processing import clip_streamline_to_fov
+            
+            # Apply accurate clipping for streamlines outside bounds
+            clipped_segments = clip_streamline_to_fov(streamline_segment, fixed_shape, use_gpu=False)
+            
+            # Add valid segments with minimum length requirement
+            for segment in clipped_segments:
+                if len(segment) >= 2:
+                    streamlines_list.append(segment.astype(np.float32))
     
     if len(streamlines_list) == 0:
         print("WARNING: No valid streamlines found after ANTs transformation and clipping!")

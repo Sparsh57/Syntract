@@ -75,7 +75,7 @@ class GPUSupport:
                 if any(err in error_str for err in ["cudaErrorNoDevice", "CUDA", "cuda", "device"]):
                     print(f"INFO: Using CPU processing (GPU libraries not available)")
                 else:
-                    print(f"WARNING:️  CuPy error: {e}. Falling back to CPU (NumPy).")
+                    print(f"WARNING: CuPy error: {e}. Falling back to CPU (NumPy).")
                 import numpy
                 return numpy
         else:

@@ -79,6 +79,7 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
 
     # Load data
     nii_img = nib.load(nifti_file)
+    nii_img = nib.as_closest_canonical(nii_img)
     nii_data = nii_img.get_fdata()
     dims = nii_data.shape
 
@@ -294,6 +295,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
 
     # Load data
     nii_img = nib.load(nifti_file)
+    nii_img = nib.as_closest_canonical(nii_img)
     nii_data = nii_img.get_fdata()
     dims = nii_data.shape
 
@@ -492,6 +494,7 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
 
     # Load data
     nii_img = nib.load(nifti_file)
+    nii_img = nib.as_closest_canonical(nii_img)
     nii_data = nii_img.get_fdata()
     dims = nii_data.shape
 

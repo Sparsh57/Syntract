@@ -71,17 +71,19 @@ def batch_process_trk_files(nifti_path, trk_dir, **processing_kwargs):
     print(f"Using NIfTI file: {nifti_path}")
     print("="*60)
     
-    # Check if patch extraction is enabled
-    enable_patch_extraction = processing_kwargs.get('enable_patch_extraction', False)
+    # Check if patch processing is disabled (patch-first is now default)
+    disable_patch_processing = processing_kwargs.get('disable_patch_processing', False)
     total_patches = processing_kwargs.get('total_patches', 100)
     
-    if enable_patch_extraction:
-        print(f"Patch extraction enabled - distributing {total_patches} patches across {len(files)} TRK files")
+    if not disable_patch_processing:
+        print(f"Patch-first processing enabled (default) - distributing {total_patches} patches across {len(files)} TRK files")
         patches_per_file = max(1, total_patches // len(files))
         remaining_patches = total_patches - (patches_per_file * len(files))
         print(f" Base patches per file: {patches_per_file}")
         if remaining_patches > 0:
             print(f"Extra patches distributed to first {remaining_patches} files")
+    else:
+        print("Patch-first processing disabled - using traditional full-volume synthesis")
     
     for i, trk_filename in enumerate(files, 1):
         trk_path = os.path.join(trk_dir, trk_filename)
@@ -103,7 +105,7 @@ def batch_process_trk_files(nifti_path, trk_dir, **processing_kwargs):
         
         # Handle patch extraction distribution
         current_kwargs = processing_kwargs.copy()
-        if enable_patch_extraction:
+        if not disable_patch_processing:
             # Calculate patches for this specific file
             extra_patch = 1 if (i - 1) < remaining_patches else 0
             patches_for_file = patches_per_file + extra_patch
@@ -312,15 +314,14 @@ def get_processing_configurations():
         'contrast_method': 'none',  # Minimal contrast adjustment
     })
     
-    # Patch extraction configuration - distributes patches across multiple TRK files
-    patch_extraction_config = base_config.copy()
-    patch_extraction_config.update({
-        'enable_patch_extraction': True,
+    # Patch processing configuration - uses patch-first optimization (default)
+    patch_processing_config = base_config.copy()
+    patch_processing_config.update({
+        'disable_patch_processing': False,  # Keep patch-first enabled (default)
         'total_patches': 100,  # Total patches to distribute across all TRK files
         'patch_size': [128, 128, 128],  # 3D patch size
         'min_streamlines_per_patch': 30,
         'patch_prefix': 'patch',
-        'max_patch_trials': 100,
         'random_state': 42,  # For reproducible results
         'n_examples': 5,  # Visualization examples per patch
         'viz_prefix': 'patch_viz_',
@@ -328,29 +329,27 @@ def get_processing_configurations():
         'n_examples': 2,  # Reduce primary visualizations
     })
     
-    # High-throughput patch extraction (more patches, smaller size)
+    # High-throughput patch processing (more patches, smaller size) 
     high_throughput_patches_config = base_config.copy()
     high_throughput_patches_config.update({
-        'enable_patch_extraction': True,
+        'disable_patch_processing': False,  # Patch-first enabled
         'total_patches': 200,  # More patches
         'patch_size': [64, 64, 64],  # Smaller patches for faster processing
         'min_streamlines_per_patch': 15,  # Lower threshold
         'patch_prefix': 'small_patch',
-        'max_patch_trials': 50,
         'random_state': None,  # Random each time
         'n_examples': 1,  # Minimal primary visualizations
         'viz_prefix': 'ht_patch_viz_',
     })
     
-    # Quality patch extraction (fewer patches, larger size, high quality)
+    # Quality patch processing (fewer patches, larger size, high quality)
     quality_patches_config = base_config.copy()
     quality_patches_config.update({
-        'enable_patch_extraction': True,
+        'disable_patch_processing': False,  # Patch-first enabled
         'total_patches': 50,  # Fewer but higher quality patches
         'patch_size': [256, 256, 256],  # Large patches
         'min_streamlines_per_patch': 50,  # Higher threshold for better quality
         'patch_prefix': 'quality_patch',
-        'max_patch_trials': 200,  # More trials to find good patches
         'random_state': 123,
         'n_examples': 3,
         'viz_prefix': 'quality_patch_viz_',
@@ -369,7 +368,7 @@ def get_processing_configurations():
         'thin_dimension': thin_dimension_config,
         'debug_subdivisions': debug_subdivisions_config,
         'crisp_subdivisions': crisp_subdivisions_config,
-        'patch_extraction': patch_extraction_config,
+        'patch_processing': patch_processing_config,
         'high_throughput_patches': high_throughput_patches_config,
         'quality_patches': quality_patches_config
     }
@@ -409,10 +408,10 @@ def main():
     # 'thin_dimension' - same parameters + 8 subdivisions optimized for thin dimensions
     # 'debug_subdivisions' - minimal subdivision config for debugging subdivision issues
     # 'crisp_subdivisions' - high-detail subdivisions with edge preservation and sharpening [RECOMMENDED]
-    # 'patch_extraction' - extract 100 patches distributed across all TRK files [NEW]
-    # 'high_throughput_patches' - extract 200 smaller patches for high throughput [NEW]
-    # 'quality_patches' - extract 50 high-quality large patches [NEW]
-    config_choice = 'patch_extraction'  # Try the new patch extraction!
+    # 'patch_processing' - extract 100 patches using patch-first optimization (DEFAULT)
+    # 'high_throughput_patches' - extract 200 smaller patches for high throughput
+    # 'quality_patches' - extract 50 high-quality large patches
+    config_choice = 'patch_processing'  # Use the new patch-first optimization by default!
     
     processing_params = configs[config_choice]
     
@@ -422,8 +421,8 @@ def main():
     print(f"Configuration: {config_choice}")
     
     # Handle different configuration types
-    if processing_params.get('enable_patch_extraction', False):
-        print("PATCH EXTRACTION MODE ENABLED")
+    if not processing_params.get('disable_patch_processing', False):
+        print("PATCH-FIRST PROCESSING MODE ENABLED (DEFAULT)")
         print(f"   - Total patches to distribute: {processing_params.get('total_patches', 100)}")
         print(f"   - Patch size: {processing_params.get('patch_size', [128, 128, 128])}")
         print(f"   - Min streamlines per patch: {processing_params.get('min_streamlines_per_patch', 30)}")
@@ -455,7 +454,7 @@ def main():
     print(f"\nOutput folder structure:")
     print(f"syntract_submission/")
     print(f"├── processed_files/          # All processed .nii.gz and .trk files")
-    if processing_params.get('enable_patch_extraction', False):
+    if not processing_params.get('disable_patch_processing', False):
         print(f"├── patches/                  # Extracted patches organized by TRK file")
         print(f"│   ├── [trk_file_1]/         # Patches from first TRK file")
         print(f"│   ├── [trk_file_2]/         # Patches from second TRK file")

@@ -293,3 +293,101 @@ def resample_nifti(old_img, new_affine, new_shape, chunk_size=(64, 64, 64), n_jo
         new_data = new_data.get()
     
     return new_data, mmap_file
+
+
+def resample_nifti_patch(patch_img, target_affine, target_shape, use_gpu=False):
+    """
+    Resample a small NIfTI patch to target resolution.
+    
+    This is an optimized version of resample_nifti specifically for small patches
+    that doesn't require chunking or memory mapping.
+    
+    Parameters
+    ----------
+    patch_img : nibabel.Nifti1Image
+        Input patch image
+    target_affine : np.ndarray
+        Target affine transformation matrix
+    target_shape : tuple
+        Target shape (x, y, z)
+    use_gpu : bool
+        Whether to use GPU acceleration
+        
+    Returns
+    -------
+    np.ndarray
+        Resampled patch data
+    """
+    try:
+        # Import GPU utilities if requested
+        if use_gpu:
+            try:
+                from .gpu_utils import try_gpu_import
+                gpu_result = try_gpu_import()
+                xp = gpu_result['xp']
+                use_gpu = gpu_result['cupy_available']
+            except ImportError:
+                import numpy as xp
+                use_gpu = False
+        else:
+            import numpy as xp
+    except ImportError:
+        import numpy as xp
+        use_gpu = False
+    
+    # Get input data and affine
+    data_in = patch_img.get_fdata().astype(np.float32)
+    old_affine_inv = np.linalg.inv(patch_img.affine)
+    
+    # Initialize output array
+    if use_gpu:
+        new_data = xp.zeros(target_shape, dtype=xp.float32)
+    else:
+        new_data = np.zeros(target_shape, dtype=np.float32)
+    
+    # Perform resampling - vectorized for better performance
+    x_coords, y_coords, z_coords = np.mgrid[0:target_shape[0], 0:target_shape[1], 0:target_shape[2]]
+    coords_flat = np.vstack([x_coords.ravel(), y_coords.ravel(), z_coords.ravel(), np.ones(x_coords.size)])
+    
+    # Transform to world coordinates then to source voxel coordinates
+    world_coords = target_affine @ coords_flat
+    old_vox_coords = old_affine_inv @ world_coords
+    
+    # Extract integer coordinates
+    i_coords = old_vox_coords[0, :].astype(int)
+    j_coords = old_vox_coords[1, :].astype(int) 
+    k_coords = old_vox_coords[2, :].astype(int)
+    
+    # Create validity mask
+    valid_mask = ((i_coords >= 0) & (i_coords < data_in.shape[0]) &
+                  (j_coords >= 0) & (j_coords < data_in.shape[1]) &
+                  (k_coords >= 0) & (k_coords < data_in.shape[2]))
+    
+    # Sample valid points
+    if use_gpu:
+        # Transfer data to GPU if using GPU
+        data_in_gpu = xp.array(data_in)
+        valid_indices = xp.array(np.where(valid_mask)[0])
+        i_valid = xp.array(i_coords[valid_mask])
+        j_valid = xp.array(j_coords[valid_mask])
+        k_valid = xp.array(k_coords[valid_mask])
+        
+        # Sample using advanced indexing
+        sampled_values = data_in_gpu[i_valid, j_valid, k_valid]
+        
+        # Place values in output array
+        output_flat = xp.zeros(x_coords.size, dtype=xp.float32)
+        output_flat[valid_indices] = sampled_values
+        new_data = output_flat.reshape(target_shape)
+    else:
+        # CPU version
+        output_flat = np.zeros(x_coords.size, dtype=np.float32)
+        valid_indices = np.where(valid_mask)[0]
+        output_flat[valid_indices] = data_in[i_coords[valid_mask], j_coords[valid_mask], k_coords[valid_mask]]
+        new_data = output_flat.reshape(target_shape)
+    
+    # Convert back to numpy if on GPU
+    if use_gpu and hasattr(new_data, 'get'):
+        new_data = new_data.get()
+    
+    return new_data

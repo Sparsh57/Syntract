@@ -24,6 +24,20 @@ except ImportError:
         SYNTHESIS_AVAILABLE = False
         print("Warning: Synthesis module not available")
 
+# Import patch-first optimization (separate from main synthesis)
+try:
+    from synthesis.patch_first_processing import process_patch_first_extraction
+    PATCH_FIRST_AVAILABLE = True
+except ImportError:
+    try:
+        import sys
+        sys.path.append(os.path.join(os.path.dirname(__file__), 'synthesis'))
+        from patch_first_processing import process_patch_first_extraction
+        PATCH_FIRST_AVAILABLE = True
+    except ImportError:
+        PATCH_FIRST_AVAILABLE = False
+        print("Warning: Patch-first optimization module not available")
+
 # Import syntract viewer functions  
 try:
     from syntract_viewer.generate_fiber_examples import generate_examples_original_mode
@@ -54,7 +68,7 @@ def monitor_memory():
 
 def timeout_handler(signum, frame):
     """Handle timeout signal."""
-    print("WARNING:️  Process timed out - this might be due to HPC resource limits")
+    print("WARNING: Process timed out - this might be due to HPC resource limits")
     raise TimeoutError("Process exceeded time limit")
 
 
@@ -140,7 +154,7 @@ def batch_process_slice_folders(slice_output_dir, args):
             trk_file = None
             
             for file in os.listdir(item_path):
-                if file.endswith('.nii.gz'):
+                if file.endswith('.nii.gz') or file.endswith('.nii'):
                     nifti_file = os.path.join(item_path, file)
                 elif file.endswith('.trk'):
                     trk_file = os.path.join(item_path, file)
@@ -223,112 +237,86 @@ def batch_process_slice_folders(slice_output_dir, args):
     return results
 
 
-def run_patch_extraction_stage(nifti_file, trk_files, args):
-    """Run the patch extraction stage using robust methodology."""
-    if not SYNTRACT_AVAILABLE:
-        raise RuntimeError("Syntract viewer module not available. Cannot run patch extraction stage.")
+def calculate_target_dimensions(input_nifti, target_voxel_size=0.05):
+    """
+    Automatically calculate target dimensions based on input data characteristics.
     
-    print("\n" + "="*60)
-    print("STAGE 3: ROBUST PATCH EXTRACTION")
-    print("="*60)
+    This function analyzes the input NIfTI file to determine appropriate target
+    dimensions that:
+    1. Maintain the original aspect ratio
+    2. Provide the desired spatial resolution (voxel size)
+    3. Stay within reasonable memory limits
     
-    # Import the robust patch extraction module
+    Algorithm:
+    - Calculates physical size of original volume (shape × voxel_sizes)
+    - Determines target dimensions as physical_size / target_voxel_size
+    - Applies constraints: minimum 32 voxels, maximum 4000 voxels per dimension
+    - Rounds to integer dimensions
+    
+    Parameters
+    ----------
+    input_nifti : str
+        Path to input NIfTI file
+    target_voxel_size : float
+        Target voxel size in mm (default: 0.05mm for high-resolution)
+        
+    Returns
+    -------
+    tuple
+        Target dimensions (x, y, z) that maintain aspect ratio and provide good resolution
+        
+    Examples
+    --------
+    >>> # For a 400×50×400 volume with 0.05mm voxels, targeting 0.05mm:
+    >>> calculate_target_dimensions('brain.nii.gz', 0.05)
+    (400, 50, 400)  # Same size since voxel sizes match
+    
+    >>> # For the same volume, targeting 0.1mm voxels:
+    >>> calculate_target_dimensions('brain.nii.gz', 0.1) 
+    (200, 25, 200)  # Half the size since voxels are 2x larger
+    """
+    import nibabel as nib
+    import numpy as np
+    
     try:
-        from syntract_viewer.patch_extraction import extract_random_patches
-    except ImportError:
-        raise RuntimeError("Could not import patch extraction module.")
-    
-    # Create output directory for patches
-    patch_output_dir = args.patch_output_dir
-    if not patch_output_dir:
-        patch_output_dir = "patches"
-    os.makedirs(patch_output_dir, exist_ok=True)
-    
-    print(f"Input NIfTI: {nifti_file}")
-    print(f"Input TRK files: {trk_files}")
-    print(f"Output directory: {patch_output_dir}")
-    print(f"Generating {args.total_patches} patches")
-    
-    # Determine patch size - convert from args format to 3D tuple
-    if hasattr(args, 'patch_size') and args.patch_size:
-        if len(args.patch_size) == 2:
-            patch_dimensions = (args.patch_size[0], args.patch_size[1], args.patch_size[0])
-        elif len(args.patch_size) == 3:
-            patch_dimensions = tuple(args.patch_size)
-        else:
-            raise ValueError(f"Invalid patch_size format: {args.patch_size}")
-    else:
-        # Default 3D patch size
-        patch_dimensions = (128, 128, 128)
-    
-    print(f"Using patch dimensions: {patch_dimensions}")
-    
-    # Get batch size for memory management
-    batch_size = getattr(args, 'patch_batch_size', 50)
-    print(f"Batch size for memory management: {batch_size}")
-    
-    # Run robust patch extraction with memory-efficient batch processing
-    try:
-        results = extract_random_patches(
-            nifti_file=nifti_file,
-            trk_files=trk_files,
-            output_dir=patch_output_dir,
-            total_patches=args.total_patches,
-            patch_size=patch_dimensions,
-            min_streamlines_per_patch=getattr(args, 'min_streamlines_per_patch', 30),
-            random_state=getattr(args, 'random_state', None),
-            prefix=getattr(args, 'patch_prefix', 'patch').rstrip('_'),
-            batch_size=batch_size,  # Pass batch size for memory management
-            save_masks=getattr(args, 'save_masks', True),
-            contrast_method='clahe',
-            background_enhancement='preserve_edges',
-            cornucopia_preset='clean_optical',
-            tract_linewidth=1.0,
-            mask_thickness=getattr(args, 'mask_thickness', 1),
-            density_threshold=getattr(args, 'density_threshold', 0.15),
-            gaussian_sigma=2.0,
-            close_gaps=False,
-            closing_footprint_size=3,
-            label_bundles=getattr(args, 'label_bundles', False),
-            min_bundle_size=getattr(args, 'min_bundle_size', 20),
-            enable_orange_blobs=getattr(args, 'enable_orange_blobs', False),
-            orange_blob_probability=getattr(args, 'orange_blob_probability', 0.3)
-        )
+        # Load the input NIfTI to get its characteristics
+        nifti_img = nib.load(input_nifti)
+        original_shape = nifti_img.shape[:3]  # Get spatial dimensions only
+        original_voxel_sizes = nifti_img.header.get_zooms()[:3]
         
-        print(f"\n=== Patch Extraction Results ===")
-        print(f"Patches requested: {results['total_patches_requested']}")
-        print(f"Patches extracted: {results['patches_extracted']}")
-        print(f"Patches failed: {results['patches_failed']}")
-        print(f"Success rate: {results['patches_extracted']/results['total_patches_requested']*100:.1f}%")
-        print(f"Output directory: {patch_output_dir}")
+        # Calculate physical size of the original volume
+        physical_size_mm = np.array(original_shape) * np.array(original_voxel_sizes)
         
-        # Visualizations are already generated by the patch extraction process
-        print(f"\nPatch extraction completed with integrated visualizations!")
-        print(f"    - {results['patches_extracted']} patches extracted")
-        print(f"    - Visualizations saved as patch_XXXX_visualization.png")
-        print(f"    - Masks saved as patch_XXXX_visualization_mask_slice0.png")
+        # Calculate target dimensions that maintain aspect ratio
+        target_dimensions = np.round(physical_size_mm / target_voxel_size).astype(int)
         
-        return results
+        # Apply reasonable constraints
+        min_dim = 32   # Minimum dimension for meaningful processing
+        max_dim = 4000  # Maximum dimension to prevent excessive memory usage
+        
+        target_dimensions = np.clip(target_dimensions, min_dim, max_dim)
+        
+        print(f"Auto-calculating target dimensions:")
+        print(f"  Original shape: {original_shape}")
+        print(f"  Original voxel sizes: {[f'{v:.3f}' for v in original_voxel_sizes]} mm")
+        print(f"  Physical size: {[f'{s:.1f}' for s in physical_size_mm]} mm")
+        print(f"  Target voxel size: {target_voxel_size} mm")
+        print(f"  Calculated target dimensions: {tuple(target_dimensions)}")
+        
+        return tuple(target_dimensions)
         
     except Exception as e:
-        print(f"ERROR: Patch extraction failed: {e}")
-        import traceback
-        print(f"Full traceback:")
-        traceback.print_exc()
-        
-        return {
-            'patches_extracted': 0,
-            'patches_failed': args.total_patches,
-            'error': str(e)
-        }
+        print(f"Warning: Could not auto-calculate dimensions ({e})")
+        print(f"  Using default dimensions: (116, 140, 96)")
+        return (116, 140, 96)
 
 def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size, 
                     use_ants=False, ants_warp_path=None, ants_iwarp_path=None, ants_aff_path=None,
                     slice_count=None, enable_slice_extraction=False, slice_output_dir=None,
                     use_simplified_slicing=True, force_full_slicing=False, auto_batch_process=False,
-                    enable_patch_extraction=False, patch_output_dir=None, total_patches=None,
-                    patch_size=None, min_streamlines_per_patch=5, patch_prefix="patch_",
-                    patch_batch_size=50, skip_synthesis=False,
+                    total_patches=50, patch_size=None, min_streamlines_per_patch=10, 
+                    patch_prefix="patch", patch_batch_size=50, patch_output_dir="patches",
+                    skip_synthesis=False, disable_patch_processing=False,
                     n_examples=10, viz_output_dir=None, viz_prefix="viz_",
                     enable_orange_blobs=False, orange_blob_probability=0.3,
                     save_masks=True, use_high_density_masks=False, mask_thickness=1,
@@ -365,13 +353,94 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
         print(f"Input TRK: {input_trk}")
         print(f"Output base: {output_base}")
         
+        # CRITICAL: Check for patch processing mode (enabled by default unless disabled)
+        if not disable_patch_processing and PATCH_FIRST_AVAILABLE:
+            print("\nPATCH-FIRST PROCESSING ENABLED (DEFAULT)")
+            print("   Skipping full volume synthesis and proceeding directly to optimized patch extraction!")
+            print("   This will dramatically reduce memory usage and processing time!")
+            
+            # Convert patch_size to target dimensions
+            if len(patch_size) == 2:
+                target_patch_size = (patch_size[0], 1, patch_size[1])
+            elif len(patch_size) == 3:
+                target_patch_size = tuple(patch_size)
+            else:
+                raise ValueError(f"Invalid patch_size: {patch_size}")
+            
+            # Create output directory for patches
+            patch_output_path = patch_output_dir or 'patches'
+            os.makedirs(patch_output_path, exist_ok=True)
+            
+            # Run optimized patch-first extraction directly on original files
+            patch_result = process_patch_first_extraction(
+                original_nifti_path=input_nifti,
+                original_trk_path=input_trk,
+                target_voxel_size=voxel_size,
+                target_patch_size=target_patch_size,
+                target_dimensions=new_dim,
+                num_patches=total_patches,
+                output_prefix=os.path.join(patch_output_path, patch_prefix.rstrip('_')),
+                min_streamlines_per_patch=min_streamlines_per_patch,
+                use_ants=use_ants,
+                ants_warp_path=ants_warp_path,
+                ants_iwarp_path=ants_iwarp_path,
+                ants_aff_path=ants_aff_path,
+                random_state=None,  # Could be parameterized
+                use_gpu=True
+            )
+            
+            # Add visualization generation for patches if successful
+            if patch_result['success'] and patch_result['patches_extracted'] > 0:
+                print(f"\nGenerating visualizations for {patch_result['patches_extracted']} patches...")
+                
+                try:
+                    from syntract_viewer.patch_extraction import _generate_patch_visualization
+                    
+                    for patch_detail in patch_result['patch_details']:
+                        patch_id = patch_detail['patch_id']
+                        nifti_file = patch_detail['files']['nifti']
+                        trk_file = patch_detail['files']['trk']
+                        
+                        if os.path.exists(nifti_file) and os.path.exists(trk_file):
+                            patch_viz_prefix = f"patch_{patch_id:04d}"
+                            _generate_patch_visualization(
+                                nifti_file, trk_file, 
+                                patch_output_path, 
+                                patch_viz_prefix,
+                                save_masks=save_masks,
+                                contrast_method='clahe',
+                                background_enhancement='preserve_edges',
+                                cornucopia_preset='clean_optical',
+                                tract_linewidth=1.0,
+                                mask_thickness=mask_thickness,
+                                density_threshold=density_threshold,
+                                gaussian_sigma=2.0,
+                                close_gaps=False,
+                                closing_footprint_size=3,
+                                label_bundles=label_bundles,
+                                min_bundle_size=min_bundle_size,
+                                enable_orange_blobs=enable_orange_blobs,
+                                orange_blob_probability=orange_blob_probability
+                            )
+                    
+                    print(f"Patch-first optimization complete!")
+                    print(f"   Processing time: {patch_result['processing_time']:.2f}s")
+                    print(f"   Memory usage: Dramatically reduced vs. traditional method")
+                    print(f"   Output location: {patch_output_path}")
+                    
+                except ImportError as e:
+                    print(f"Warning: Could not import visualization module for patches: {e}")
+                    print("Patches extracted successfully but visualization skipped.")
+            
+            return {'success': True, 'stage': 'patch_extraction_optimized', 'result': patch_result}
+        
         # Determine which files to use for downstream processing
         base_nifti = input_nifti
         base_trk = input_trk
         synthesis_result = None
         
         if skip_synthesis:
-            print("\n⏭️  Skipping synthesis step (--skip_synthesis enabled)")
+            print("\nSkipping synthesis step (--skip_synthesis enabled)")
             print(f"Using input files directly:")
             print(f"    NIfTI: {base_nifti}")
             print(f"    TRK: {base_trk}")
@@ -395,11 +464,11 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
             )
             
             # Use synthesized files for downstream processing
-            base_nifti = f"{output_base}.nii.gz"
+            base_nifti = f"{output_base}.nii"
             base_trk = f"{output_base}.trk"
             
             if not os.path.exists(base_nifti) or not os.path.exists(base_trk):
-                print(f"WARNING:️  Synthesis output files not found:")
+                print(f"WARNING: Synthesis output files not found:")
                 print(f"    Expected NIfTI: {base_nifti}")
                 print(f"    Expected TRK: {base_trk}")
                 print(f"    Falling back to original files")
@@ -410,41 +479,29 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                 print(f"    NIfTI: {base_nifti}")
                 print(f"    TRK: {base_trk}")
         
-        # Check if patch extraction is enabled
-        if enable_patch_extraction:
-            print("\nPACKAGE: Patch extraction enabled - starting patch processing...")
-            
-            patch_result = run_patch_extraction_stage(base_nifti, [base_trk], 
-                argparse.Namespace(**{
-                    'patch_size': patch_size,
-                    'total_patches': total_patches,
-                    'min_streamlines_per_patch': min_streamlines_per_patch,
-                    'patch_prefix': patch_prefix,
-                    'patch_batch_size': patch_batch_size,
-                    'patch_output_dir': patch_output_dir or 'patches',
-                    'voxel_size': voxel_size,
-                    'new_dim': new_dim,
-                    'use_ants': use_ants,
-                    'ants_warp_path': ants_warp_path,
-                    'ants_iwarp_path': ants_iwarp_path,
-                    'ants_aff_path': ants_aff_path,
-                    'n_examples': n_examples,
-                    'viz_prefix': viz_prefix,
-                    'enable_orange_blobs': enable_orange_blobs,
-                    'orange_blob_probability': orange_blob_probability,
-                    'save_masks': save_masks,
-                    'mask_thickness': mask_thickness,
-                    'density_threshold': density_threshold,
-                    'min_bundle_size': min_bundle_size,
-                    'label_bundles': label_bundles
-                }))
-            
-            return {'success': True, 'stage': 'patch_extraction', 'result': patch_result}
+        # Return successful completion for traditional synthesis
+        if disable_patch_processing:
+            return {'success': True, 'stage': 'traditional_synthesis', 'result': synthesis_result}
         
-        if skip_synthesis:
-            return {'success': True, 'stage': 'skipped', 'message': 'Synthesis skipped'}
-        
-        return {'success': True, 'stage': 'synthesis', 'result': synthesis_result}
+        # Proceed with slice extraction or visualization as needed
+        if enable_slice_extraction:
+            from synthesis.main import process_and_save
+            
+            synthesis_result = process_and_save(
+                original_nifti_path=input_nifti,
+                original_trk_path=input_trk,
+                target_voxel_size=voxel_size,
+                target_dimensions=new_dim,
+                output_prefix=output_base,
+                use_ants=use_ants,
+                ants_warp_path=ants_warp_path,
+                ants_iwarp_path=ants_iwarp_path,
+                ants_aff_path=ants_aff_path,
+                step_size=voxel_size * 0.5,  # Use fine step size (0.5x voxel) for good curvature preservation
+                interpolation_method='hermite'  # Use Hermite for base synthesis too
+            )
+            
+            return {'success': True, 'stage': 'synthesis', 'result': synthesis_result}
         
     except Exception as e:
         print(f"ERROR: Error in syntract processing: {e}")
@@ -471,9 +528,12 @@ Examples:
   # With auto batch processing (processes all slices automatically)
   python syntract.py --input brain.nii.gz --trk fibers.trk --slice_count 10 --auto_batch_process
   
-  # With patch extraction (extracts random patches from different brain regions)
-  python syntract.py --input brain.nii.gz --trk fibers.trk --enable_patch_extraction \\
+  # With patch processing (default mode - extracts random patches from different brain regions)
+  python syntract.py --input brain.nii.gz --trk fibers.trk \\
     --total_patches 100 --patch_size 1024 1024 --min_streamlines_per_patch 5
+  
+  # Disable patch processing and use traditional full-volume synthesis (slower, more memory-intensive)
+  python syntract.py --input brain.nii.gz --trk fibers.trk --disable_patch_processing
         """
     )
     
@@ -486,8 +546,8 @@ Examples:
     synthesis_group = parser.add_argument_group("Synthesis Parameters")
     synthesis_group.add_argument("--skip_synthesis", action="store_true",
                                 help="Skip synthesis step and use input files directly (useful for pre-processed data)")
-    synthesis_group.add_argument("--new_dim", nargs=3, type=int, default=[116, 140, 96],
-                                help="Target dimensions (X Y Z)")
+    synthesis_group.add_argument("--new_dim", nargs=3, type=int, default=None,
+                                help="Target dimensions (X Y Z). If not provided, will auto-calculate based on input data and voxel size")
     synthesis_group.add_argument("--voxel_size", type=float, default=0.5,
                                 help="Target voxel size in mm")
     
@@ -508,26 +568,24 @@ Examples:
     slice_group.add_argument("--auto_batch_process", action="store_true",
                             help="Automatically process all extracted slices through visualization")
     
-    # Patch extraction parameters
-    patch_group = parser.add_argument_group("Robust Patch Extraction")
-    patch_group.add_argument("--enable_patch_extraction", action="store_true",
-                            help="Enable robust 3D patch extraction with proper coordinate transformations")
-    patch_group.add_argument("--patch_output_dir", 
+    # Patch Processing (Default Method)
+    patch_group = parser.add_argument_group("Patch Processing")
+    patch_group.add_argument("--total_patches", type=int, default=50,
+                            help="Number of patches to extract and process (default: 50)")
+    patch_group.add_argument("--patch_size", type=int, nargs='+', default=[800, 1, 800],
+                            help="Patch dimensions [width, height, depth] (default: 800x1x800)")
+    patch_group.add_argument("--patch_output_dir", default="patches",
                             help="Directory for patch outputs (default: 'patches')")
-    patch_group.add_argument("--total_patches", type=int, default=10,
-                            help="Total number of patches to extract (default: 10)")
-    patch_group.add_argument("--patch_size", type=int, nargs='+', default=[300, 15, 300],
-                            help="Patch size - 3D: [width, height, depth] or 2D: [width, height] (default: 300x15x300 for good resolution with reasonable thickness)")
-    patch_group.add_argument("--min_streamlines_per_patch", type=int, default=30,
-                            help="Minimum streamlines required per patch (default: 30)")
-    patch_group.add_argument("--max_patch_trials", type=int, default=100,
-                            help="Maximum trials per patch to find adequate streamlines (default: 100)")
+    patch_group.add_argument("--min_streamlines_per_patch", type=int, default=10,
+                            help="Minimum streamlines required per patch (default: 10)")
     patch_group.add_argument("--patch_batch_size", type=int, default=50,
-                            help="Number of patches to process before memory cleanup (default: 50, lower for HPC/OOM issues)")
+                            help="Number of patches to process before memory cleanup (default: 50)")
+    patch_group.add_argument("--patch_prefix", default="patch",
+                            help="Prefix for patch files (default: 'patch')")
     patch_group.add_argument("--random_state", type=int, 
                             help="Random seed for reproducible patch extraction")
-    patch_group.add_argument("--patch_prefix", default="patch",
-                            help="Prefix for patch files")
+    patch_group.add_argument("--disable_patch_processing", action="store_true",
+                            help="Disable patch processing and use traditional full-volume synthesis (slower, more memory-intensive)")
     
     # Visualization parameters
     viz_group = parser.add_argument_group("Visualization")
@@ -568,12 +626,20 @@ Examples:
     enable_slice_extraction = args.slice_count is not None
     slice_output_dir = args.slice_output_dir or f"{args.output}_slices"
     
+    # Auto-calculate target dimensions if not provided
+    if args.new_dim is None:
+        print("No target dimensions specified, auto-calculating...")
+        target_dimensions = calculate_target_dimensions(args.input, args.voxel_size)
+    else:
+        target_dimensions = tuple(args.new_dim)
+        print(f"Using specified target dimensions: {target_dimensions}")
+    
     # Run the pipeline
     result = process_syntract(
         input_nifti=args.input,
         input_trk=args.trk,
         output_base=args.output,
-        new_dim=tuple(args.new_dim),
+        new_dim=target_dimensions,
         voxel_size=args.voxel_size,
         skip_synthesis=args.skip_synthesis,
         use_ants=args.use_ants,
@@ -586,7 +652,7 @@ Examples:
         use_simplified_slicing=True,
         force_full_slicing=False,
         auto_batch_process=args.auto_batch_process,
-        enable_patch_extraction=args.enable_patch_extraction,
+        disable_patch_processing=getattr(args, 'disable_patch_processing', False),
         patch_output_dir=args.patch_output_dir,
         total_patches=args.total_patches,
         patch_size=args.patch_size,

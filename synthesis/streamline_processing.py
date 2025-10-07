@@ -8,8 +8,8 @@ try:
 except ImportError:
     from densify import densify_streamline_subvoxel, densify_streamlines_parallel
 
-def clip_streamline_to_fov(stream, new_shape, use_gpu=True, epsilon=1e-6):
-    """Clip a streamline to the field of view."""
+def clip_streamline_to_fov(stream, new_shape, use_gpu=True, epsilon=0.0):
+    """Clip a streamline to the field of view with accurate bounds checking."""
     import numpy as np
     
     # Ensure stream is a numpy array first
@@ -63,8 +63,8 @@ def clip_streamline_to_fov(stream, new_shape, use_gpu=True, epsilon=1e-6):
     if len(stream_device) == 0:
         return []
         
-    # GPU-accelerated inside/outside computation
-    inside = xp.all((stream_device >= -epsilon) & (stream_device < new_shape_device + epsilon), axis=1)
+    # Accurate bounds checking - no epsilon margins for precise clipping
+    inside = xp.all((stream_device >= 0) & (stream_device < new_shape_device), axis=1)
     
     if not xp.any(inside):
         return []
