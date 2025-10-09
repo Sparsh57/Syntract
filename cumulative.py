@@ -113,10 +113,16 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
     
     # Set default patch size if not provided (optimized for thin dimensions)
     if patch_size is None:
-        if new_dim[1] < 50:  # Thin Y dimension
-            patch_size = [48, min(16, new_dim[1]), 48]
-        else:
-            patch_size = [64, 64, 64]
+        
+        patch_size = [64, 64, 64]
+        print(f"  Auto-patch size (standard): {patch_size}")
+    else:
+        # Validate user-provided patch size
+        if isinstance(patch_size, list) and len(patch_size) == 3:
+            if patch_size[1] == 1 and new_dim[1] > 1:
+                print(f"  Warning: Ultra-thin patch Y dimension ({patch_size[1]}) may miss fiber details.")
+                print(f"  Consider increasing to at least {min(8, new_dim[1])} for better fiber capture.")
+        print(f"  Using patch size: {patch_size}")
     
     print(f"Processing {len(trk_files)} TRK files")
     print(f"NIfTI: {nifti_file}")
@@ -131,9 +137,18 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
     results = {'successful': [], 'failed': [], 'total_time': 0}
     start_time = time.time()
     
-    # Calculate patches per file
+    # Calculate patches per file with better distribution
     patches_per_file = max(1, patches // len(trk_files))
     remaining_patches = patches - (patches_per_file * len(trk_files))
+    
+    # Calculate examples per file more intelligently
+    total_expected_patches = sum([
+        patches_per_file + (1 if j < remaining_patches else 0) 
+        for j in range(len(trk_files))
+    ])
+    examples_per_patch = max(1, n_examples // total_expected_patches) if total_expected_patches > 0 else 1
+    
+    print(f"Distribution: {examples_per_patch} examples per patch")
     
     for i, trk_path in enumerate(trk_files, 1):
         file_start = time.time()
@@ -147,6 +162,30 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
         print(f"[{i}/{len(trk_files)}] {trk_name} ({file_patches} patches)...", end=' ')
         
         try:
+            # Quick streamline count check for memory optimization
+            try:
+                import nibabel as nib
+                from dipy.io.streamline import load_tractogram
+                
+                # Quick streamline count check
+                tractogram = load_tractogram(trk_path, reference='same', bbox_valid_check=False)
+                streamline_count = len(tractogram.streamlines)
+                
+                # Adjust processing strategy for large files
+                if streamline_count > 100000:
+                    print(f"({streamline_count:,} streamlines - large file) ", end='')
+                    # For very large files, increase patch count to distribute load
+                    if file_patches == 1 and patches < len(trk_files) * 2:
+                        file_patches = min(3, patches)  # Use up to 3 patches for large files
+                        print(f"[auto-increased to {file_patches} patches] ", end='')
+                elif streamline_count < 10:
+                    print(f"({streamline_count} streamlines - sparse file) ", end='')
+                else:
+                    print(f"({streamline_count:,} streamlines) ", end='')
+                    
+            except Exception as e:
+                print(f"[streamline check failed: {e}] ", end='')
+            
             # Set up configuration with all syntract options
             config = {
                 # Core processing
@@ -164,7 +203,7 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
                 
                 # Visualization
                 'viz_output_dir': os.path.join(output_dir, "visualizations", base_name),
-                'n_examples': n_examples,
+                'n_examples': examples_per_patch,
                 'viz_prefix': viz_prefix,
                 'enable_orange_blobs': enable_orange_blobs,
                 'orange_blob_probability': orange_blob_probability,
@@ -200,11 +239,25 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
             file_time = time.time() - file_start
             
             if result.get('success', False):
-                print(f"SUCCESS ({file_time:.1f}s)")
+                # Check if any patches were actually extracted
+                patches_extracted = 0
+                if result.get('stage') == 'patch_extraction_optimized':
+                    patch_result = result.get('result', {})
+                    patches_extracted = patch_result.get('patches_extracted', 0)
+                else:
+                    # For other stages, assume some data was processed if successful
+                    patches_extracted = file_patches
+                
+                if patches_extracted == 0:
+                    print(f"SUCCESS ({file_time:.1f}s) - No patches extracted (ANTs transformation issue)")
+                else:
+                    print(f"SUCCESS ({file_time:.1f}s)")
+                
                 results['successful'].append({
                     'file': trk_name,
                     'time': file_time,
-                    'patches': file_patches
+                    'patches': file_patches,
+                    'patches_extracted': patches_extracted
                 })
             else:
                 error_msg = result.get('error', 'Unknown error')
@@ -233,9 +286,11 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
     print(f"Total time: {results['total_time']:.1f}s")
     
     if results['successful']:
-        total_patches_extracted = sum(r['patches'] for r in results['successful'])
+        total_patches_extracted = sum(r.get('patches_extracted', r['patches']) for r in results['successful'])
         avg_time = sum(r['time'] for r in results['successful']) / len(results['successful'])
+        files_with_data = sum(1 for r in results['successful'] if r.get('patches_extracted', r['patches']) > 0)
         print(f"Total patches: {total_patches_extracted}")
+        print(f"Files with extracted data: {files_with_data}/{len(results['successful'])}")
         print(f"Avg time/file: {avg_time:.1f}s")
     
     print(f"Results: {output_dir}/")
@@ -258,9 +313,13 @@ Examples:
   # Basic usage
   python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/
   
-  # With custom patches and visualization
+  # With better patch distribution for 200 visualizations  
   python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \\
-    --total-patches 50 --n-examples 5 --enable-orange-blobs
+    --total-patches 50 --n-examples 200 --enable-orange-blobs
+  
+  # For thin slice data (Y dimension ~1) - recommended settings
+  python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \\
+    --total-patches 30 --patch-size 256 8 256 --n-examples 200 --voxel-size 0.05
   
   # With ANTs transformation
   python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \\
