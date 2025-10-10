@@ -57,6 +57,10 @@ def generate_examples_original_mode(args, background_enhancement_available):
     if args.use_high_density_masks:
         print(f"Using high-density masks ({args.max_fiber_pct}%) for all fiber density variations")
     
+    # Get output image size from args or use default
+    output_image_size = getattr(args, 'output_image_size', (1024, 1024))
+    print(f"Output image size: {output_image_size}")
+    
     # Always use enhanced processing with automatic background enhancement
     generate_enhanced_varied_examples(
         nifti_file=args.nifti,
@@ -90,7 +94,8 @@ def generate_examples_original_mode(args, background_enhancement_available):
         use_background_enhancement=background_enhancement_available,
         enable_orange_blobs=args.enable_orange_blobs,
         orange_blob_probability=args.orange_blob_probability,
-        randomize=args.randomize
+        randomize=args.randomize,
+        output_image_size=output_image_size
     )
 
 

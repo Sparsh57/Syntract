@@ -60,8 +60,7 @@ python syntract.py --input brain.nii.gz --trk fibers.trk \
 
 ### Batch Processing
 ```bash
-# Process multiple TRK files with shared NIfTI
-python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/
+python cumulative.py  # Edit paths in script
 ```
 
 ## Parameters
@@ -127,43 +126,23 @@ python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/
 
 ## Batch Processing (cumulative.py)
 
-Process multiple TRK files with a shared NIfTI file efficiently. The script provides both CLI and Python function interfaces with all syntract options available.
+Process multiple TRK files with a shared NIfTI file. Supports various configurations:
 
-### Command Line Usage
-```bash
-# Basic batch processing
-python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/
+### Available Configurations
+- `standard`: Basic processing with traditional synthesis
+- `ultra_crisp`: Maximum detail with edge preservation
+- `patch_processing`: **Patch-first processing with 100 patches (DEFAULT)**
+- `high_throughput_patches`: 200 smaller patches for fast processing
+- `quality_patches`: 50 high-quality large patches
 
-# With custom options
-python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \
-  --total-patches 50 --n-examples 5 --voxel-size 0.05
+### Key Batch Parameters
+| Parameter | Description |
+|-----------|-------------|
+| `nifti_path` | Common NIfTI file for all TRK files |
+| `trk_dir` | Directory containing TRK files |
+| `config_choice` | Processing configuration to use (default: 'patch_processing') |
 
-# With ANTs transformation
-python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \
-  --use-ants --ants-warp warp.nii.gz --ants-iwarp iwarp.nii.gz --ants-aff affine.mat
-```
-
-### Python Function Usage
-```python
-from cumulative import process_batch
-
-results = process_batch(
-    nifti_file='brain.nii.gz',
-    trk_directory='./trk_files/',
-    patches=50,
-    use_ants=True,
-    ants_warp='warp.nii.gz',
-    ants_iwarp='iwarp.nii.gz', 
-    ants_aff='affine.mat'
-)
-```
-
-### Key Features
-- Auto-calculates target dimensions and patch sizes
-- Distributes patches evenly across TRK files
-- Supports all syntract CLI options
-- Provides detailed progress tracking and performance metrics
-- Saves processing summary in JSON format
+Change the `config_choice` variable in `cumulative.py` to switch between configurations.
 
 ## Output Structure
 
@@ -209,13 +188,15 @@ result = process_syntract(
 
 ### Batch Processing
 ```python
-from cumulative import process_batch
+from cumulative import batch_process_trk_files
 
-results = process_batch(
-    nifti_file="shared_brain.nii.gz",
-    trk_directory="trk_files_directory",
-    patches=100,
-    voxel_size=0.05
+results = batch_process_trk_files(
+    nifti_path="shared_brain.nii.gz",
+    trk_dir="trk_files_directory",
+    new_dim=[800, 20, 800],
+    voxel_size=0.05,
+    enable_patch_extraction=True,
+    total_patches=100
 )
 ```
 

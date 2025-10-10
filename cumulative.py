@@ -29,13 +29,13 @@ from syntract import process_syntract
 
 
 def process_batch(nifti_file, trk_directory, output_dir="results", patches=30, 
-                  patch_size=None, min_streamlines_per_patch=10, patch_prefix="patch",
+                  patch_size=None, min_streamlines_per_patch=20, patch_prefix="patch",
                   use_ants=False, ants_warp=None, ants_iwarp=None, ants_aff=None,
-                  voxel_size=0.5, new_dim=None, skip_synthesis=False,
-                  n_examples=3, viz_prefix="synthetic_", enable_orange_blobs=False,
-                  orange_blob_probability=0.3, save_masks=True, use_high_density_masks=False,
+                  voxel_size=0.05, new_dim=None, skip_synthesis=False,
+                  n_examples=10, viz_prefix="synthetic_", enable_orange_blobs=False,
+                  orange_blob_probability=0.3, save_masks=True, use_high_density_masks=True,
                   mask_thickness=1, density_threshold=0.15, min_bundle_size=20,
-                  label_bundles=False, disable_patch_processing=False):
+                  label_bundles=False, disable_patch_processing=False, cleanup_intermediate=True):
     """
     Process multiple TRK files with a common NIfTI file.
     
@@ -114,8 +114,8 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
     # Set default patch size if not provided (optimized for thin dimensions)
     if patch_size is None:
         
-        patch_size = [64, 64, 64]
-        print(f"  Auto-patch size (standard): {patch_size}")
+        patch_size = [600, 1, 600]
+        print(f"  Auto-patch size (high-resolution thin): {patch_size}")
     else:
         # Validate user-provided patch size
         if isinstance(patch_size, list) and len(patch_size) == 3:
@@ -123,6 +123,24 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
                 print(f"  Warning: Ultra-thin patch Y dimension ({patch_size[1]}) may miss fiber details.")
                 print(f"  Consider increasing to at least {min(8, new_dim[1])} for better fiber capture.")
         print(f"  Using patch size: {patch_size}")
+    
+    # Determine output image size based on patch processing mode
+    if disable_patch_processing:
+        # Default to 1024x1024 when patch processing is disabled
+        output_image_size = (1024, 1024)
+        print(f"  Output image size (patch processing disabled): {output_image_size}")
+    else:
+        # Use patch size to determine output image size when patch processing is enabled
+        if isinstance(patch_size, list) and len(patch_size) >= 2:
+            # For 3D patch_size like [600, 1, 600], use the first and last dimensions for 2D output
+            if len(patch_size) == 3:
+                output_image_size = (patch_size[0], patch_size[2])
+            else:
+                output_image_size = (patch_size[0], patch_size[1])
+        else:
+            # Fallback if patch_size format is unexpected
+            output_image_size = (1024, 1024)
+        print(f"  Output image size (from patch size): {output_image_size}")
     
     print(f"Processing {len(trk_files)} TRK files")
     print(f"NIfTI: {nifti_file}")
@@ -202,11 +220,11 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
                 'min_streamlines_per_patch': min_streamlines_per_patch,
                 
                 # Visualization
-                'viz_output_dir': os.path.join(output_dir, "visualizations", base_name),
                 'n_examples': examples_per_patch,
                 'viz_prefix': viz_prefix,
                 'enable_orange_blobs': enable_orange_blobs,
                 'orange_blob_probability': orange_blob_probability,
+                'output_image_size': output_image_size,  # Pass the calculated output image size
                 
                 # Masks and bundles
                 'save_masks': save_masks,
@@ -214,7 +232,10 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
                 'mask_thickness': mask_thickness,
                 'density_threshold': density_threshold,
                 'min_bundle_size': min_bundle_size,
-                'label_bundles': label_bundles
+                'label_bundles': label_bundles,
+                
+                # Cleanup
+                'cleanup_intermediate': cleanup_intermediate
             }
             
             # Add ANTs if specified
@@ -318,8 +339,13 @@ Examples:
     --total-patches 50 --n-examples 200 --enable-orange-blobs
   
   # For thin slice data (Y dimension ~1) - recommended settings
+  # Output images will be 256x256 pixels (from patch size)
   python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \\
     --total-patches 30 --patch-size 256 8 256 --n-examples 200 --voxel-size 0.05
+  
+  # With larger output images (800x800)
+  python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \\
+    --patch-size 800 1 800 --n-examples 200
   
   # With ANTs transformation
   python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \\
@@ -342,8 +368,8 @@ Examples:
                                 help="Skip synthesis step and use input files directly")
     synthesis_group.add_argument("--new-dim", nargs=3, type=int, default=None,
                                 help="Target dimensions (X Y Z). Auto-calculated if not provided")
-    synthesis_group.add_argument("--voxel-size", type=float, default=0.5,
-                                help="Target voxel size in mm (default: 0.5)")
+    synthesis_group.add_argument("--voxel-size", type=float, default=0.05,
+                                help="Target voxel size in mm (default: 0.05)")
     
     # ANTs transformation
     ants_group = parser.add_argument_group("ANTs Transformation")
@@ -357,18 +383,18 @@ Examples:
     patch_group.add_argument("--total-patches", type=int, default=30,
                             help="Total patches to extract across all files (default: 30)")
     patch_group.add_argument("--patch-size", type=int, nargs='+', default=None,
-                            help="Patch dimensions [width, height, depth]. Auto-calculated if not provided")
-    patch_group.add_argument("--min-streamlines-per-patch", type=int, default=10,
-                            help="Minimum streamlines required per patch (default: 10)")
+                            help="Patch dimensions [width, height, depth]. Also determines output image size when patch processing is enabled. Auto-calculated if not provided")
+    patch_group.add_argument("--min-streamlines-per-patch", type=int, default=20,
+                            help="Minimum streamlines required per patch (default: 20)")
     patch_group.add_argument("--patch-prefix", default="patch",
                             help="Prefix for patch files (default: 'patch')")
     patch_group.add_argument("--disable-patch-processing", action="store_true",
-                            help="Disable patch processing and use traditional full-volume synthesis")
+                            help="Disable patch processing and use traditional full-volume synthesis. Output images default to 1024x1024")
     
     # Visualization parameters
     viz_group = parser.add_argument_group("Visualization")
-    viz_group.add_argument("--n-examples", type=int, default=3,
-                          help="Number of visualization examples to generate (default: 3)")
+    viz_group.add_argument("--n-examples", type=int, default=10,
+                          help="Number of visualization examples to generate (default: 10)")
     viz_group.add_argument("--viz-prefix", type=str, default="synthetic_", 
                           help="Prefix for visualization files (default: 'synthetic_')")
     viz_group.add_argument("--enable-orange-blobs", action="store_true",
@@ -381,7 +407,9 @@ Examples:
     mask_group.add_argument("--save-masks", action="store_true", default=True,
                            help="Save binary masks alongside visualizations (default: True)")
     mask_group.add_argument("--use-high-density-masks", action="store_true",
-                           help="Use high-density mask generation (default: False)")
+                           help="Use high-density mask generation (default: True)")
+    mask_group.add_argument("--no-high-density-masks", action="store_true",
+                           help="Disable high-density mask generation")
     mask_group.add_argument("--mask-thickness", type=int, default=1,
                            help="Thickness of generated masks (default: 1)")
     mask_group.add_argument("--density-threshold", type=float, default=0.15,
@@ -391,7 +419,24 @@ Examples:
     mask_group.add_argument("--label-bundles", action="store_true",
                            help="Label individual fiber bundles (default: False)")
     
+    # Cleanup parameters
+    cleanup_group = parser.add_argument_group("Cleanup")
+    cleanup_group.add_argument("--cleanup-intermediate", action="store_true", default=True,
+                              help="Remove intermediate NIfTI and TRK files after processing to save disk space (default: True)")
+    cleanup_group.add_argument("--no-cleanup-intermediate", action="store_true",
+                              help="Keep intermediate NIfTI and TRK files after processing")
+    
     args = parser.parse_args()
+    
+    # Handle high density masks default (True unless explicitly disabled)
+    use_high_density_masks = not args.no_high_density_masks if hasattr(args, 'no_high_density_masks') else True
+    if hasattr(args, 'use_high_density_masks') and args.use_high_density_masks:
+        use_high_density_masks = True
+    
+    # Handle cleanup parameter (default True unless explicitly disabled)
+    cleanup_intermediate = not getattr(args, 'no_cleanup_intermediate', False)
+    if hasattr(args, 'cleanup_intermediate') and not args.cleanup_intermediate:
+        cleanup_intermediate = False
     
     try:
         results = process_batch(
@@ -414,12 +459,13 @@ Examples:
             enable_orange_blobs=args.enable_orange_blobs,
             orange_blob_probability=args.orange_blob_probability,
             save_masks=args.save_masks,
-            use_high_density_masks=args.use_high_density_masks,
+            use_high_density_masks=use_high_density_masks,
             mask_thickness=args.mask_thickness,
             density_threshold=args.density_threshold,
             min_bundle_size=args.min_bundle_size,
             label_bundles=args.label_bundles,
-            disable_patch_processing=args.disable_patch_processing
+            disable_patch_processing=args.disable_patch_processing,
+            cleanup_intermediate=cleanup_intermediate
         )
         
         if results['failed']:

@@ -86,7 +86,7 @@ def _generate_patch_visualization(nifti_path, trk_path, output_dir, prefix, save
                                  tract_linewidth, mask_thickness, density_threshold,
                                  gaussian_sigma, close_gaps, closing_footprint_size,
                                  label_bundles, min_bundle_size, enable_orange_blobs,
-                                 orange_blob_probability=0.3):
+                                 orange_blob_probability=0.3, output_image_size=(1024, 1024)):
     """Generate visualization for a single patch."""
     
     # Randomize cornucopia preset for variation unless explicitly set to clean_optical
@@ -103,7 +103,7 @@ def _generate_patch_visualization(nifti_path, trk_path, output_dir, prefix, save
     
     # Use coronal view for patches
     try:
-        # First, create the standard visualization
+        # Create the standard visualization with high-density mask support
         output_path = os.path.join(output_dir, f"{prefix}_visualization.png")
         result = visualize_nifti_with_trk_coronal(
             nifti_file=nifti_path,
@@ -124,91 +124,19 @@ def _generate_patch_visualization(nifti_path, trk_path, output_dir, prefix, save
             contrast_method=contrast_method,  # Use the passed contrast method parameter
             background_enhancement=background_enhancement,
             cornucopia_augmentation=actual_preset,
-            truly_random=True  # Enable truly random parameters
+            truly_random=True,  # Enable truly random parameters
+            output_image_size=output_image_size,
+            # High-density mask parameters
+            use_high_density_masks=True,
+            max_fiber_percentage=80.0,
+            min_fiber_percentage=10.0
         )
-        # Now add orange injection sites if enabled
-        if enable_orange_blobs:
-            from PIL import Image
-            import matplotlib.pyplot as plt
-            
-            print(f"ADDING ORANGE INJECTION SITE to patch visualization")
-            
-            if random.random() < orange_blob_probability:
-                # Load the visualization image
-                img = Image.open(output_path)
-                img_array = np.array(img)
-                
-                # Generate random orange injection site parameters
-                img_height, img_width = img_array.shape[:2]
-                center_x = random.randint(img_width // 4, 3 * img_width // 4)
-                center_y = random.randint(img_height // 4, 3 * img_height // 4)
-                radius = random.randint(30, 80)
-                
-                print(f"Adding dense orange injection site at ({center_x}, {center_y}), radius: {radius}")
-                
-                # Create circular mask for injection site
-                y_coords, x_coords = np.ogrid[:img_height, :img_width]
-                mask = (x_coords - center_x)**2 + (y_coords - center_y)**2 <= radius**2
-                
-                # Apply orange color with varying intensity
-                orange_color = np.array([255, 165, 0])  # Orange RGB
-                if len(img_array.shape) == 3:
-                    for i in range(3):
-                        # Create gradient effect - stronger in center
-                        distance_from_center = np.sqrt((x_coords - center_x)**2 + (y_coords - center_y)**2)
-                        intensity = np.exp(-distance_from_center / (radius / 3))
-                        img_array[mask, i] = np.clip(
-                            img_array[mask, i] * (1 - intensity[mask] * 0.8) + 
-                            orange_color[i] * intensity[mask] * 0.8, 0, 255
-                        )
-                
-                # Add some random orange streamlines around the injection site
-                num_orange_streamlines = random.randint(200, 500)
-                for _ in range(num_orange_streamlines):
-                    # Random streamline originating from injection site
-                    start_x = center_x + random.randint(-radius//2, radius//2)
-                    start_y = center_y + random.randint(-radius//2, radius//2)
-                    
-                    # Random direction and length
-                    angle = random.uniform(0, 2 * np.pi)
-                    length = random.randint(20, 60)
-                    
-                    end_x = int(start_x + length * np.cos(angle))
-                    end_y = int(start_y + length * np.sin(angle))
-                    
-                    # Ensure endpoints are within image bounds
-                    end_x = max(0, min(img_width - 1, end_x))
-                    end_y = max(0, min(img_height - 1, end_y))
-                    
-                    # Draw line (simple implementation)
-                    # Use Bresenham's line algorithm or simple interpolation
-                    x_points = np.linspace(start_x, end_x, abs(end_x - start_x) + abs(end_y - start_y) + 1).astype(int)
-                    y_points = np.linspace(start_y, end_y, abs(end_x - start_x) + abs(end_y - start_y) + 1).astype(int)
-                    
-                    # Filter points within bounds
-                    valid_mask = (x_points >= 0) & (x_points < img_width) & (y_points >= 0) & (y_points < img_height)
-                    x_points = x_points[valid_mask]
-                    y_points = y_points[valid_mask]
-                    
-                    # Apply orange color to line pixels
-                    if len(x_points) > 0 and len(img_array.shape) == 3:
-                        for i in range(3):
-                            img_array[y_points, x_points, i] = np.clip(
-                                img_array[y_points, x_points, i] * 0.3 + orange_color[i] * 0.7, 0, 255
-                            )
-                
-                print(f"Added {num_orange_streamlines} orange streamlines to patch visualization")
-                
-                # Save the modified image
-                modified_img = Image.fromarray(img_array.astype(np.uint8))
-                modified_img.save(output_path)
-                
-                print(f"Orange injection site successfully added!")
-            else:
-                print(f"Orange injection site skipped due to probability ({orange_blob_probability})")
+        
+        return True  # Success
         
     except Exception as e:
-        print(f"    Warning: Visualization failed for {prefix}: {e}")
+        print(f"Error generating patch visualization: {e}")
+        return False
 
 
 def main():

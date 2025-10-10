@@ -34,9 +34,10 @@ def generate_varied_examples(nifti_file, trk_file, output_dir, n_examples=5, pre
                              min_fiber_percentage=10.0, max_fiber_percentage=100.0,
                              density_threshold=0.15, gaussian_sigma=2.0, random_state=None,
                              close_gaps=False, closing_footprint_size=5, label_bundles=False,
-                             min_bundle_size=20, use_high_density_masks=False,
+                             min_bundle_size=20, use_high_density_masks=True,
                              contrast_method='clahe', contrast_params=None, 
-                             enable_orange_blobs=False, orange_blob_probability=0.3):
+                             enable_orange_blobs=False, orange_blob_probability=0.3,
+                             output_image_size=(1024, 1024)):
     """
     Generate multiple varied examples with different contrast settings.
     """
@@ -159,14 +160,15 @@ def generate_varied_examples(nifti_file, trk_file, output_dir, n_examples=5, pre
                 label_bundles=label_bundles,
                 min_bundle_size=min_bundle_size,
                 contrast_method=contrast_method,
-                contrast_params=contrast_params
+                contrast_params=contrast_params,
+                output_image_size=output_image_size
             )
             
             # Apply high-density masks if requested
             if use_high_density_masks and save_masks and fiber_pct < max_fiber_percentage:
                 _apply_high_density_masks_axial(
                     output_file, high_density_masks, high_density_labeled_masks,
-                    specific_slice, label_bundles, nifti_file
+                    specific_slice, label_bundles, nifti_file, output_image_size
                 )
             
         elif slice_mode == "coronal":
@@ -189,14 +191,15 @@ def generate_varied_examples(nifti_file, trk_file, output_dir, n_examples=5, pre
                 label_bundles=label_bundles,
                 min_bundle_size=min_bundle_size,
                 contrast_method=contrast_method,
-                contrast_params=contrast_params
+                contrast_params=contrast_params,
+                output_image_size=output_image_size
             )
             
             # Apply high-density masks if requested
             if use_high_density_masks and save_masks and fiber_pct < max_fiber_percentage:
                 _apply_high_density_masks_coronal(
                     output_file, high_density_masks, high_density_labeled_masks,
-                    specific_slice, label_bundles, nifti_file
+                    specific_slice, label_bundles, nifti_file, output_image_size
                 )
             
         else:  # "all"
@@ -290,6 +293,7 @@ def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir,
                                     randomize=False,
                                     random_state=None, 
                                     enable_orange_blobs=False, orange_blob_probability=0.3,
+                                    output_image_size=(1024, 1024),
                                     **kwargs):
     """
     Generate varied examples with enhanced augmentations using Cornucopia and background enhancement.
@@ -645,6 +649,7 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
             background_effect=current_background_effect if randomize else 'balanced',
             enable_orange_blobs=enable_orange_blobs, orange_blob_probability=orange_blob_probability,
             close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
+            output_image_size=output_image_size,
             **filtered_kwargs
         )
     
@@ -654,7 +659,8 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
 def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_mode, slice_idx, dims,
                                  output_dir, prefix, example_idx, save_masks, cornucopia_config, slice_data,
                                  tract_linewidth, example_random_state, 
-                                 background_effect='balanced', enable_orange_blobs=False, orange_blob_probability=0.3, **kwargs):
+                                 background_effect='balanced', enable_orange_blobs=False, orange_blob_probability=0.3, 
+                                 output_image_size=(1024, 1024), **kwargs):
     """Create enhanced visualization with streamlines."""
     # Generate intensity parameters
     intensity_params = {
@@ -853,8 +859,8 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
         from .utils import save_image_1024
     except ImportError:
         from utils import save_image_1024
-    save_image_1024(output_file, fig, is_mask=False)
-    print(f"Generated example {example_idx+1}: {output_file} (1024x1024)")
+    save_image_1024(output_file, fig, is_mask=False, target_size=output_image_size)
+    print(f"Generated example {example_idx+1}: {output_file} ({output_image_size[0]}x{output_image_size[1]})")
     
     # Apply orange blobs if enabled
     enable_orange_blobs = kwargs.get('enable_orange_blobs', False)
@@ -868,8 +874,8 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
         mask_dir = os.path.dirname(output_file)
         mask_basename = os.path.splitext(os.path.basename(output_file))[0]
         mask_filename = f"{mask_dir}/{mask_basename}_mask_slice{slice_idx}.png"
-        save_image_1024(mask_filename, mask, is_mask=True)
-        print(f"Saved mask for slice {slice_idx} to {mask_filename} (1024x1024)")
+        save_image_1024(mask_filename, mask, is_mask=True, target_size=output_image_size)
+        print(f"Saved mask for slice {slice_idx} to {mask_filename} ({output_image_size[0]}x{output_image_size[1]})")
         
         # Save labeled bundles if requested
         label_bundles = kwargs.get('label_bundles', False)
@@ -1012,7 +1018,7 @@ def _generate_high_density_masks(nifti_file, trk_file, output_dir, prefix, slice
 
 
 def _apply_high_density_masks_axial(output_file, high_density_masks, high_density_labeled_masks,
-                                   specific_slice, label_bundles, nifti_file):
+                                   specific_slice, label_bundles, nifti_file, output_image_size=(1024, 1024)):
     """Apply high-density masks for axial view."""
     nii_img = nib.load(nifti_file)
     dims = nii_img.shape
@@ -1025,8 +1031,8 @@ def _apply_high_density_masks_axial(output_file, high_density_masks, high_densit
         mask_filename = f"{mask_dir}/{mask_basename}_mask_slice{slice_idx}.png"
         
         from .utils import save_image_1024
-        save_image_1024(mask_filename, high_density_masks[slice_idx], is_mask=True)
-        print(f"Applied high-density mask for axial slice {slice_idx}: {mask_filename} (1024x1024)")
+        save_image_1024(mask_filename, high_density_masks[slice_idx], is_mask=True, target_size=output_image_size)
+        print(f"Applied high-density mask for axial slice {slice_idx}: {mask_filename} ({output_image_size[0]}x{output_image_size[1]})")
         
         if label_bundles and slice_idx in high_density_labeled_masks:
             from .utils import visualize_labeled_bundles
@@ -1036,7 +1042,7 @@ def _apply_high_density_masks_axial(output_file, high_density_masks, high_densit
 
 
 def _apply_high_density_masks_coronal(output_file, high_density_masks, high_density_labeled_masks,
-                                     specific_slice, label_bundles, nifti_file):
+                                     specific_slice, label_bundles, nifti_file, output_image_size=(1024, 1024)):
     """Apply high-density masks for coronal view."""
     nii_img = nib.load(nifti_file)
     dims = nii_img.shape
@@ -1049,8 +1055,8 @@ def _apply_high_density_masks_coronal(output_file, high_density_masks, high_dens
         mask_filename = f"{mask_dir}/{mask_basename}_mask_slice{slice_idx}.png"
         
         from .utils import save_image_1024
-        save_image_1024(mask_filename, high_density_masks[slice_idx], is_mask=True)
-        print(f"Applied high-density mask for coronal slice {slice_idx}: {mask_filename} (1024x1024)")
+        save_image_1024(mask_filename, high_density_masks[slice_idx], is_mask=True, target_size=output_image_size)
+        print(f"Applied high-density mask for coronal slice {slice_idx}: {mask_filename} ({output_image_size[0]}x{output_image_size[1]})")
         
         if label_bundles and slice_idx in high_density_labeled_masks:
             from .utils import visualize_labeled_bundles

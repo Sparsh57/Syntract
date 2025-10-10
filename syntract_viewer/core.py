@@ -264,7 +264,9 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                              close_gaps=False, closing_footprint_size=5, label_bundles=False,
                              min_bundle_size=20, contrast_method='clahe', contrast_params=None,
                              background_enhancement=None, cornucopia_augmentation=None,
-                             truly_random=False):
+                             truly_random=False, output_image_size=(1024, 1024),
+                             use_high_density_masks=False, max_fiber_percentage=100.0,
+                             min_fiber_percentage=10.0):
     """
     Visualize multiple coronal slices of a nifti file with tractography overlaid.
 
@@ -382,15 +384,25 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
         axes[i].imshow(np.rot90(dark_field_slice), cmap=dark_field_cmap, aspect='equal', interpolation='bilinear')
         axes[i].set_facecolor('black')
 
-        # Create mask if requested
-        if save_masks and has_streamlines:
+        # Create mask if requested - but skip regular masks if high-density masks are enabled
+        if save_masks and has_streamlines and not use_high_density_masks:
+            # Adaptive parameters based on output image size
+            output_size = max(output_image_size) if output_image_size else 256
+            size_scale = output_size / 256.0  # Scale factor relative to base 256x256
+            
+            # Adaptive parameters for better mask quality at different sizes
+            adaptive_thickness = max(1, int(mask_thickness * size_scale))
+            adaptive_density_threshold = max(0.02, density_threshold * (1.0 / max(1.0, size_scale * 1.5)))  # More aggressive threshold reduction for larger images
+            adaptive_gaussian_sigma = gaussian_sigma * size_scale
+            adaptive_min_bundle_size = max(3, int(min_bundle_size * (size_scale * 0.3)))  # Much smaller bundles allowed for larger images
+            
             if label_bundles:
                 mask, labeled_mask = create_fiber_mask(
                     streamlines_voxel, slice_idx, orientation='coronal',
-                    dims=dims, thickness=mask_thickness, dilate=True,
-                    density_threshold=density_threshold, gaussian_sigma=gaussian_sigma,
+                    dims=dims, thickness=adaptive_thickness, dilate=True,
+                    density_threshold=adaptive_density_threshold, gaussian_sigma=adaptive_gaussian_sigma,
                     close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
-                    label_bundles=True, min_bundle_size=min_bundle_size
+                    label_bundles=True, min_bundle_size=adaptive_min_bundle_size
                 )
                 mask = np.rot90(mask)
                 labeled_mask = np.rot90(labeled_mask)
@@ -399,10 +411,10 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
             else:
                 mask = create_fiber_mask(
                     streamlines_voxel, slice_idx, orientation='coronal',
-                    dims=dims, thickness=mask_thickness, dilate=True,
-                    density_threshold=density_threshold, gaussian_sigma=gaussian_sigma,
+                    dims=dims, thickness=adaptive_thickness, dilate=True,
+                    density_threshold=adaptive_density_threshold, gaussian_sigma=adaptive_gaussian_sigma,
                     close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
-                    min_bundle_size=min_bundle_size
+                    min_bundle_size=adaptive_min_bundle_size
                 )
                 mask = np.rot90(mask)
                 fiber_masks.append(mask)
@@ -447,12 +459,22 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
     if output_file:
         # Import resize utility
         from .utils import save_image_1024
-        save_image_1024(output_file, fig, is_mask=False)
-        print(f"Figure saved to {output_file} (1024x1024)")
+        save_image_1024(output_file, fig, is_mask=False, target_size=output_image_size)
+        print(f"Figure saved to {output_file} ({output_image_size[0]}x{output_image_size[1]})")
 
         # Save masks if requested
-        if save_masks and fiber_masks:
-            _save_masks(output_file, fiber_masks, labeled_masks, slice_positions, label_bundles)
+        if save_masks:
+            if use_high_density_masks:
+                # Only generate and save high-density masks (skip regular masks)
+                _generate_and_apply_high_density_mask_coronal(
+                    nifti_file, trk_file, output_file, slice_idx, 
+                    max_fiber_percentage, tract_linewidth, mask_thickness,
+                    density_threshold, gaussian_sigma, close_gaps, closing_footprint_size,
+                    label_bundles, min_bundle_size, output_image_size
+                )
+            elif fiber_masks:
+                # Save regular masks only when high-density masks are not enabled
+                _save_masks(output_file, fiber_masks, labeled_masks, slice_positions, label_bundles, output_image_size)
         
         plt.close(fig)
         
@@ -674,7 +696,7 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
         return fig, axes, fiber_masks if save_masks else None
 
 
-def _save_masks(output_file, fiber_masks, labeled_masks, slice_positions, label_bundles):
+def _save_masks(output_file, fiber_masks, labeled_masks, slice_positions, label_bundles, output_image_size=(1024, 1024)):
     """Save masks to files."""
     mask_dir = os.path.dirname(output_file)
     if not mask_dir:
@@ -686,8 +708,8 @@ def _save_masks(output_file, fiber_masks, labeled_masks, slice_positions, label_
         mask_filename = f"{mask_dir}/{mask_basename}_mask_slice{slice_id}.png"
         # Import resize utility
         from .utils import save_image_1024
-        save_image_1024(mask_filename, mask, is_mask=True)
-        print(f"Saved mask for slice {slice_id} to {mask_filename} (1024x1024)")
+        save_image_1024(mask_filename, mask, is_mask=True, target_size=output_image_size)
+        print(f"Saved mask for slice {slice_id} to {mask_filename} ({output_image_size[0]}x{output_image_size[1]})")
         
         if label_bundles and labeled_masks:
             from .utils import visualize_labeled_bundles
@@ -695,3 +717,92 @@ def _save_masks(output_file, fiber_masks, labeled_masks, slice_positions, label_
             labeled_filename = f"{mask_dir}/{mask_basename}_labeled_bundles_slice{slice_id}.png"
             visualize_labeled_bundles(labeled_mask, labeled_filename)
             print(f"Saved labeled bundles for slice {slice_id} to {labeled_filename}") 
+
+
+def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_file, slice_idx, 
+                                                  max_fiber_percentage, tract_linewidth, mask_thickness,
+                                                  density_threshold, gaussian_sigma, close_gaps, 
+                                                  closing_footprint_size, label_bundles, min_bundle_size, 
+                                                  output_image_size):
+    """Generate and apply high-density mask for coronal view."""
+    import nibabel as nib
+    import numpy as np
+    from dipy.io.streamline import load_tractogram
+    
+    # Load data
+    nii_img = nib.load(nifti_file)
+    dims = nii_img.shape
+    affine_inv = np.linalg.inv(nii_img.affine)
+    
+    # Load tractogram with bbox_valid_check disabled to handle coordinate issues
+    tractogram = load_tractogram(trk_file, nii_img, bbox_valid_check=False)
+    streamlines = tractogram.streamlines
+    
+    # Convert streamlines to voxel coordinates
+    streamlines_voxel = []
+    for sl in streamlines:
+        if len(sl) > 0:
+            # Apply inverse affine to convert from world to voxel coordinates
+            sl_voxel = np.dot(sl, affine_inv[:3, :3].T) + affine_inv[:3, 3]
+            streamlines_voxel.append(sl_voxel)
+    
+    # Use high fiber percentage for dense mask
+    n_select = max(1, int(len(streamlines_voxel) * max_fiber_percentage / 100.0))
+    selected_streamlines = streamlines_voxel[:n_select]
+    
+    # Adaptive parameters based on output image size
+    output_size = max(output_image_size) if output_image_size else 256
+    size_scale = output_size / 256.0  # Scale factor relative to base 256x256
+    
+    # HIGH-DENSITY specific parameters - conservative but well-connected with thick bundles
+    adaptive_thickness = max(10, int(mask_thickness * size_scale * 6))  # Much thicker lines for prominent bundles
+    # Conservative density threshold - selective but not overly aggressive
+    high_density_threshold = max(0.1, 0.2 * (1.0 / max(1.0, size_scale * 0.5)))  # Conservative threshold for dense areas
+    adaptive_gaussian_sigma = gaussian_sigma * size_scale * 1.3  # Moderate smoothing for connectivity
+    # Conservative minimum bundle size - keeps more meaningful bundles
+    high_density_min_bundle_size = max(25, int(45 * size_scale))  # Conservative bundle size filtering
+    
+    print(f"High-density mask parameters for {output_size}px: thickness={adaptive_thickness}, density_threshold={high_density_threshold:.3f}, gaussian_sigma={adaptive_gaussian_sigma:.1f}, min_bundle_size={high_density_min_bundle_size}")
+    
+    # Generate high-density mask with moderate connectivity parameters
+    from .masking import create_fiber_mask
+    high_density_mask = create_fiber_mask(
+        selected_streamlines, slice_idx, orientation='coronal', dims=dims,
+        thickness=adaptive_thickness, dilate=True, density_threshold=high_density_threshold,
+        gaussian_sigma=adaptive_gaussian_sigma, close_gaps=True,  # Enable gap closing for connectivity
+        closing_footprint_size=max(3, int(closing_footprint_size * size_scale * 1.2)),  # Moderate footprint for bundle joining
+        label_bundles=False, min_bundle_size=high_density_min_bundle_size
+    )
+    
+    # Additional processing to limit to at most 4 largest bundles
+    if np.any(high_density_mask):
+        from skimage import measure
+        labeled_mask = measure.label(high_density_mask, connectivity=2)
+        regions = measure.regionprops(labeled_mask)
+        
+        if len(regions) > 4:
+            # Sort regions by area (largest first) and keep only top 4
+            regions_sorted = sorted(regions, key=lambda r: r.area, reverse=True)
+            top_4_regions = regions_sorted[:4]
+            
+            # Create new mask with only top 4 largest bundles
+            filtered_mask = np.zeros_like(high_density_mask)
+            for region in top_4_regions:
+                filtered_mask[labeled_mask == region.label] = 1
+            high_density_mask = filtered_mask
+            
+            print(f"Limited high-density mask to top 4 bundles (from {len(regions)} total)")
+        else:
+            print(f"High-density mask contains {len(regions)} bundles (≤4, keeping all)")
+    
+    # Apply the same rotation as the regular masks
+    high_density_mask = np.rot90(high_density_mask)
+    
+    # Save high-density mask
+    mask_dir = os.path.dirname(output_file)
+    mask_basename = os.path.splitext(os.path.basename(output_file))[0]
+    mask_filename = f"{mask_dir}/{mask_basename}_high_density_mask_slice{slice_idx}.png"
+    
+    from .utils import save_image_1024
+    save_image_1024(mask_filename, high_density_mask, is_mask=True, target_size=output_image_size)
+    print(f"Applied high-density mask for coronal slice {slice_idx}: {mask_filename} ({output_image_size[0]}x{output_image_size[1]})")

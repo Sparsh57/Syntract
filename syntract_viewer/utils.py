@@ -147,6 +147,22 @@ def visualize_labeled_bundles(labeled_mask, output_file=None, colormap='viridis'
         return fig, ax
 
 
+def resize_image_to_size(image_data, target_size=(1024, 1024), is_mask=False):
+    """
+    Resize image data to specified target size using PIL for high-quality resampling.
+    
+    Args:
+        image_data: numpy array of image data (2D for grayscale, 3D for RGB)
+        target_size: tuple of (width, height) for target size, default (1024, 1024)
+        is_mask: boolean indicating if this is a binary mask (affects value scaling)
+    
+    Returns:
+        numpy array of resized image
+    """
+    # This is just a wrapper around the existing function but with a more generic name
+    return resize_image_to_1024(image_data, target_size, is_mask)
+
+
 def resize_image_to_1024(image_data, target_size=(1024, 1024), is_mask=False):
     """
     Resize image data to 1024x1024 pixels using PIL for high-quality resampling.
@@ -216,15 +232,15 @@ def resize_image_to_1024(image_data, target_size=(1024, 1024), is_mask=False):
     return resized_array
 
 
-def save_image_1024(output_path, fig_or_data, is_mask=False, target_size=(1024, 1024)):
+def save_image_with_size(output_path, fig_or_data, is_mask=False, target_size=(1024, 1024)):
     """
-    Save image or mask to 1024x1024 pixels.
+    Save image or mask to specified size.
     
     Args:
         output_path: Path to save the image
         fig_or_data: Either a matplotlib figure or numpy array
         is_mask: Boolean indicating if this is a mask (affects processing)
-        target_size: Target size tuple, default (1024, 1024)
+        target_size: Target size tuple, e.g., (1024, 1024) or (600, 600)
     """
     if isinstance(fig_or_data, plt.Figure):
         # Handle matplotlib figure
@@ -242,7 +258,7 @@ def save_image_1024(output_path, fig_or_data, is_mask=False, target_size=(1024, 
         
     elif isinstance(fig_or_data, np.ndarray):
         # Handle numpy array (mask or image)
-        resized_data = resize_image_to_1024(fig_or_data, target_size, is_mask=is_mask)
+        resized_data = resize_image_to_size(fig_or_data, target_size, is_mask=is_mask)
         
         if is_mask:
             # For masks, convert to RGB (white mask on black background)
@@ -264,4 +280,19 @@ def save_image_1024(output_path, fig_or_data, is_mask=False, target_size=(1024, 
         
         pil_image.save(output_path)
     else:
-        raise ValueError("fig_or_data must be either a matplotlib Figure or numpy array") 
+        raise ValueError("fig_or_data must be either a matplotlib Figure or numpy array")
+
+
+def save_image_1024(output_path, fig_or_data, is_mask=False, target_size=(1024, 1024)):
+    """
+    Save image or mask to 1024x1024 pixels (or custom target size).
+    
+    This function is kept for backward compatibility but now supports custom sizes.
+    
+    Args:
+        output_path: Path to save the image
+        fig_or_data: Either a matplotlib figure or numpy array
+        is_mask: Boolean indicating if this is a mask (affects processing)
+        target_size: Target size tuple, default (1024, 1024)
+    """
+    return save_image_with_size(output_path, fig_or_data, is_mask, target_size) 

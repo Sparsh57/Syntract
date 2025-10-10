@@ -72,7 +72,7 @@ def timeout_handler(signum, frame):
     raise TimeoutError("Process exceeded time limit")
 
 
-def run_visualization_stage(nifti_file, trk_file, args):
+def run_visualization_stage(nifti_file, trk_file, args, output_image_size=(1024, 1024)):
     """Run the visualization generation stage."""
     if not SYNTRACT_AVAILABLE:
         raise RuntimeError("Syntract viewer module not available. Cannot run visualization stage.")
@@ -80,6 +80,7 @@ def run_visualization_stage(nifti_file, trk_file, args):
     print("\n" + "="*60)
     print("STAGE 2: VISUALIZATION GENERATION")
     print("="*60)
+    print(f"Output image size: {output_image_size}")
     
     # Create output directory for visualizations
     viz_output_dir = args.viz_output_dir
@@ -118,6 +119,7 @@ def run_visualization_stage(nifti_file, trk_file, args):
     viz_args.closing_footprint_size = 3
     viz_args.randomize = False
     viz_args.random_state = 42
+    viz_args.output_image_size = output_image_size  # Pass the output image size
     
     # Run visualization
     generate_examples_original_mode(viz_args, True)  # background_enhancement_available=True
@@ -301,9 +303,9 @@ def calculate_target_dimensions(input_nifti, target_voxel_size=0.05):
         print(f"  Original voxel sizes: {[f'{v:.3f}' for v in original_voxel_sizes]} mm")
         print(f"  Physical size: {[f'{s:.1f}' for s in physical_size_mm]} mm")
         print(f"  Target voxel size: {target_voxel_size} mm")
-        print(f"  Calculated target dimensions: {tuple(target_dimensions)}")
+        print(f"  Calculated target dimensions: {tuple(target_dimensions.tolist())}")
         
-        return tuple(target_dimensions)
+        return tuple(target_dimensions.tolist())
         
     except Exception as e:
         print(f"Warning: Could not auto-calculate dimensions ({e})")
@@ -314,13 +316,14 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                     use_ants=False, ants_warp_path=None, ants_iwarp_path=None, ants_aff_path=None,
                     slice_count=None, enable_slice_extraction=False, slice_output_dir=None,
                     use_simplified_slicing=True, force_full_slicing=False, auto_batch_process=False,
-                    total_patches=50, patch_size=None, min_streamlines_per_patch=10, 
-                    patch_prefix="patch", patch_batch_size=50, patch_output_dir="patches",
+                    total_patches=50, patch_size=[600, 1, 600], min_streamlines_per_patch=20,
+                    patch_prefix="patch", patch_output_dir="patches", patch_batch_size=50,
                     skip_synthesis=False, disable_patch_processing=False,
-                    n_examples=10, viz_output_dir=None, viz_prefix="viz_",
+                    n_examples=10, viz_prefix="synthetic_",
                     enable_orange_blobs=False, orange_blob_probability=0.3,
-                    save_masks=True, use_high_density_masks=False, mask_thickness=1,
-                    density_threshold=0.15, min_bundle_size=20, label_bundles=False):
+                    save_masks=True, use_high_density_masks=True, mask_thickness=10,
+                    density_threshold=0.45, min_bundle_size=100, label_bundles=False,
+                    output_image_size=None, cleanup_intermediate=True):
     """Main processing function"""
     import signal
     import sys
@@ -352,6 +355,27 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
         print(f"Input NIfTI: {input_nifti}")
         print(f"Input TRK: {input_trk}")
         print(f"Output base: {output_base}")
+        
+        # Determine output image size based on patch processing mode and user preference
+        if output_image_size is None:
+            if disable_patch_processing:
+                # Default to 1024x1024 when patch processing is disabled
+                output_image_size = (1024, 1024)
+                print(f"Output image size (patch processing disabled): {output_image_size}")
+            else:
+                # Use patch size to determine output image size when patch processing is enabled
+                if isinstance(patch_size, list) and len(patch_size) >= 2:
+                    # For 3D patch_size like [600, 1, 600], use the first and last dimensions for 2D output
+                    if len(patch_size) == 3:
+                        output_image_size = (patch_size[0], patch_size[2])
+                    else:
+                        output_image_size = (patch_size[0], patch_size[1])
+                else:
+                    # Fallback if patch_size format is unexpected
+                    output_image_size = (1024, 1024)
+                print(f"Output image size (from patch size): {output_image_size}")
+        else:
+            print(f"Output image size (user specified): {output_image_size}")
         
         # CRITICAL: Check for patch processing mode (enabled by default unless disabled)
         if not disable_patch_processing and PATCH_FIRST_AVAILABLE:
@@ -420,7 +444,8 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                                 label_bundles=label_bundles,
                                 min_bundle_size=min_bundle_size,
                                 enable_orange_blobs=enable_orange_blobs,
-                                orange_blob_probability=orange_blob_probability
+                                orange_blob_probability=orange_blob_probability,
+                                output_image_size=output_image_size
                             )
                     
                     print(f"Patch-first optimization complete!")
@@ -432,12 +457,37 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                     print(f"Warning: Could not import visualization module for patches: {e}")
                     print("Patches extracted successfully but visualization skipped.")
             
+            # Cleanup patch files if requested
+            if cleanup_intermediate and patch_result['success'] and patch_result['patches_extracted'] > 0:
+                print(f"\nCleaning up {patch_result['patches_extracted']} intermediate patch files...")
+                patch_files_to_cleanup = []
+                
+                # Find all patch files created
+                for i in range(1, patch_result['patches_extracted'] + 1):
+                    patch_nifti = os.path.join(patch_output_path, f"{patch_prefix.rstrip('_')}_{i:04d}.nii.gz")
+                    patch_trk = os.path.join(patch_output_path, f"{patch_prefix.rstrip('_')}_{i:04d}.trk")
+                    patch_files_to_cleanup.extend([patch_nifti, patch_trk])
+                
+                # Clean up the files
+                cleaned_count = 0
+                for file_path in patch_files_to_cleanup:
+                    try:
+                        if os.path.exists(file_path):
+                            os.remove(file_path)
+                            cleaned_count += 1
+                            print(f"  Removed: {os.path.basename(file_path)}")
+                    except Exception as e:
+                        print(f"  Warning: Could not remove {file_path}: {e}")
+                
+                print(f"Successfully cleaned up {cleaned_count} patch files")
+            
             return {'success': True, 'stage': 'patch_extraction_optimized', 'result': patch_result}
         
         # Determine which files to use for downstream processing
         base_nifti = input_nifti
         base_trk = input_trk
         synthesis_result = None
+        intermediate_files = []  # Track files created for potential cleanup
         
         if skip_synthesis:
             print("\nSkipping synthesis step (--skip_synthesis enabled)")
@@ -467,6 +517,9 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
             base_nifti = f"{output_base}.nii"
             base_trk = f"{output_base}.trk"
             
+            # Track intermediate files for cleanup
+            intermediate_files.extend([base_nifti, base_trk])
+            
             if not os.path.exists(base_nifti) or not os.path.exists(base_trk):
                 print(f"WARNING: Synthesis output files not found:")
                 print(f"    Expected NIfTI: {base_nifti}")
@@ -474,10 +527,25 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                 print(f"    Falling back to original files")
                 base_nifti = input_nifti
                 base_trk = input_trk
+                # Don't track original files for cleanup
+                intermediate_files = []
             else:
                 print(f"Using synthesized files:")
                 print(f"    NIfTI: {base_nifti}")
                 print(f"    TRK: {base_trk}")
+        
+        # Cleanup intermediate files if requested
+        if cleanup_intermediate and intermediate_files:
+            print(f"\nCleaning up {len(intermediate_files)} intermediate files...")
+            for file_path in intermediate_files:
+                try:
+                    if os.path.exists(file_path):
+                        os.remove(file_path)
+                        print(f"  Removed: {file_path}")
+                    else:
+                        print(f"  Skipped (not found): {file_path}")
+                except Exception as e:
+                    print(f"  Warning: Could not remove {file_path}: {e}")
         
         # Return successful completion for traditional synthesis
         if disable_patch_processing:
@@ -529,10 +597,16 @@ Examples:
   python syntract.py --input brain.nii.gz --trk fibers.trk --slice_count 10 --auto_batch_process
   
   # With patch processing (default mode - extracts random patches from different brain regions)
+  # Output images will be 1024x1024 pixels (from patch size dimensions)
   python syntract.py --input brain.nii.gz --trk fibers.trk \\
-    --total_patches 100 --patch_size 1024 1024 --min_streamlines_per_patch 5
+    --total_patches 100 --patch_size 1024 1 1024 --min_streamlines_per_patch 5
+  
+  # With smaller output images (512x512)
+  python syntract.py --input brain.nii.gz --trk fibers.trk \\
+    --patch_size 512 1 512
   
   # Disable patch processing and use traditional full-volume synthesis (slower, more memory-intensive)
+  # Output images will be 1024x1024 pixels by default
   python syntract.py --input brain.nii.gz --trk fibers.trk --disable_patch_processing
         """
     )
@@ -548,7 +622,7 @@ Examples:
                                 help="Skip synthesis step and use input files directly (useful for pre-processed data)")
     synthesis_group.add_argument("--new_dim", nargs=3, type=int, default=None,
                                 help="Target dimensions (X Y Z). If not provided, will auto-calculate based on input data and voxel size")
-    synthesis_group.add_argument("--voxel_size", type=float, default=0.5,
+    synthesis_group.add_argument("--voxel_size", type=float, default=0.05,
                                 help="Target voxel size in mm")
     
     # ANTs parameters
@@ -572,12 +646,12 @@ Examples:
     patch_group = parser.add_argument_group("Patch Processing")
     patch_group.add_argument("--total_patches", type=int, default=50,
                             help="Number of patches to extract and process (default: 50)")
-    patch_group.add_argument("--patch_size", type=int, nargs='+', default=[800, 1, 800],
-                            help="Patch dimensions [width, height, depth] (default: 800x1x800)")
+    patch_group.add_argument("--patch_size", type=int, nargs='+', default=[600, 1, 600],
+                            help="Patch dimensions [width, height, depth] for processing. Also determines output image size when patch processing is enabled (default: 600x1x600 -> 600x600 output images)")
     patch_group.add_argument("--patch_output_dir", default="patches",
                             help="Directory for patch outputs (default: 'patches')")
-    patch_group.add_argument("--min_streamlines_per_patch", type=int, default=10,
-                            help="Minimum streamlines required per patch (default: 10)")
+    patch_group.add_argument("--min_streamlines_per_patch", type=int, default=20,
+                            help="Minimum streamlines required per patch (default: 20)")
     patch_group.add_argument("--patch_batch_size", type=int, default=50,
                             help="Number of patches to process before memory cleanup (default: 50)")
     patch_group.add_argument("--patch_prefix", default="patch",
@@ -585,11 +659,15 @@ Examples:
     patch_group.add_argument("--random_state", type=int, 
                             help="Random seed for reproducible patch extraction")
     patch_group.add_argument("--disable_patch_processing", action="store_true",
-                            help="Disable patch processing and use traditional full-volume synthesis (slower, more memory-intensive)")
+                            help="Disable patch processing and use traditional full-volume synthesis (slower, more memory-intensive). Output images default to 1024x1024")
+    patch_group.add_argument("--cleanup_intermediate", action="store_true", default=True,
+                            help="Remove intermediate NIfTI and TRK files after processing to save disk space (default: True)")
+    patch_group.add_argument("--no_cleanup_intermediate", action="store_true",
+                            help="Keep intermediate NIfTI and TRK files after processing")
     
     # Visualization parameters
     viz_group = parser.add_argument_group("Visualization")
-    viz_group.add_argument("--n_examples", type=int, default=3,
+    viz_group.add_argument("--n_examples", type=int, default=10,
                           help="Number of visualization examples to generate")
     viz_group.add_argument("--viz_prefix", type=str, default="synthetic_", 
                           help="Prefix for visualization files")
@@ -602,8 +680,10 @@ Examples:
     mask_group = parser.add_argument_group("Mask & Bundle Detection")
     mask_group.add_argument("--save_masks", action="store_true", default=True,
                            help="Save binary masks alongside visualizations (default: True)")
-    mask_group.add_argument("--use_high_density_masks", action="store_true",
-                           help="Use high-density mask generation (default: False)")
+    mask_group.add_argument("--use_high_density_masks", action="store_true", 
+                           help="Use high-density mask generation (default: True)")
+    mask_group.add_argument("--no_high_density_masks", action="store_true",
+                           help="Disable high-density mask generation")
     mask_group.add_argument("--mask_thickness", type=int, default=1,
                            help="Thickness of generated masks (default: 1)")
     mask_group.add_argument("--density_threshold", type=float, default=0.15,
@@ -633,6 +713,16 @@ Examples:
     else:
         target_dimensions = tuple(args.new_dim)
         print(f"Using specified target dimensions: {target_dimensions}")
+    
+    # Handle high density masks default (True unless explicitly disabled)
+    use_high_density_masks = not args.no_high_density_masks if hasattr(args, 'no_high_density_masks') else True
+    if hasattr(args, 'use_high_density_masks') and args.use_high_density_masks:
+        use_high_density_masks = True
+    
+    # Handle cleanup parameter (default True unless explicitly disabled)
+    cleanup_intermediate = not getattr(args, 'no_cleanup_intermediate', False)
+    if hasattr(args, 'cleanup_intermediate') and not args.cleanup_intermediate:
+        cleanup_intermediate = False
     
     # Run the pipeline
     result = process_syntract(
@@ -664,11 +754,13 @@ Examples:
         enable_orange_blobs=args.enable_orange_blobs,
         orange_blob_probability=args.orange_blob_probability,
         save_masks=args.save_masks,
-        use_high_density_masks=args.use_high_density_masks,
+        use_high_density_masks=use_high_density_masks,
         mask_thickness=args.mask_thickness,
         density_threshold=args.density_threshold,
         min_bundle_size=args.min_bundle_size,
-        label_bundles=args.label_bundles
+        label_bundles=args.label_bundles,
+        output_image_size=None,  # Let process_syntract determine it automatically
+        cleanup_intermediate=cleanup_intermediate
     )
     
     if not result['success']:
