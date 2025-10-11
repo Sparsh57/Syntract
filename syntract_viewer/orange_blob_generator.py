@@ -121,6 +121,9 @@ def add_orange_streamlines_to_visualization(fig, ax, orange_streamlines, color='
                    solid_capstyle='round', solid_joinstyle='round')
     
     return len(orange_streamlines)
+
+
+def generate_orange_blob_mask(width, height, num_blobs=None):
     """
     Generate a mask for orange blob placement with adaptive sizing.
     
