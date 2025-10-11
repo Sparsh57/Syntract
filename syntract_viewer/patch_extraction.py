@@ -132,6 +132,20 @@ def _generate_patch_visualization(nifti_path, trk_path, output_dir, prefix, save
             min_fiber_percentage=10.0
         )
         
+        # Apply orange blobs post-processing if enabled
+        if enable_orange_blobs and os.path.exists(output_path):
+            try:
+                from .generation import apply_orange_blobs_to_saved_image
+                apply_orange_blobs_to_saved_image(output_path, random_state=None)
+                print(f"Applied custom orange blob to {prefix}")
+            except ImportError:
+                try:
+                    from generation import apply_orange_blobs_to_saved_image
+                    apply_orange_blobs_to_saved_image(output_path, random_state=None)
+                    print(f"Applied custom orange blob to {prefix}")
+                except ImportError as e:
+                    print(f"Warning: Could not apply orange blobs: {e}")
+        
         return True  # Success
         
     except Exception as e:

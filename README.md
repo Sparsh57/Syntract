@@ -182,6 +182,19 @@ results = process_batch(
     cleanup_intermediate=True      # Saves disk space
 )
 ```
+### Batch ANTs Registration Function
+```python
+from batch_ants_trk_registration import batch_ants_registration
+
+results = batch_ants_registration(
+    input_folder="trk_files/",
+    output_folder="registered_trk/", 
+    ants_warp_path="warp.nii.gz",
+    ants_iwarp_path="iwarp.nii.gz",
+    ants_aff_path="affine.mat",
+    reference_mri_path="brain.nii.gz"
+)
+```
 
 #### In-Memory Processing API
 ```python

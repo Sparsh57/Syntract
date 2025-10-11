@@ -240,7 +240,7 @@ def generate_varied_examples(nifti_file, trk_file, output_dir, n_examples=5, pre
 
 def apply_orange_blobs_to_saved_image(image_path, random_state=None):
     """
-    Apply orange blobs to an already saved image file.
+    Apply orange blobs to an already saved image file using custom dense injection site implementation.
     
     Parameters:
     -----------
@@ -252,25 +252,115 @@ def apply_orange_blobs_to_saved_image(image_path, random_state=None):
     try:
         from PIL import Image
         import numpy as np
+        import matplotlib.pyplot as plt
+        import random
+        import os
         
-        # Load the saved image
-        image = Image.open(image_path)
-        image_array = np.array(image)
+        # Set random seed if provided
+        if random_state is not None:
+            random.seed(random_state)
+            np.random.seed(random_state)
         
-        # Apply orange artifacts
-        orange_image, artifact_mask = apply_orange_artifacts(
-            image_array, 
-            enable=True,
-            num_sites=random.randint(1, 2) if random_state is None else None,
-            random_state=random_state
-        )
+        # Default orange blob probability
+        orange_blob_probability = 0.3
         
-        # Save the modified image
-        if orange_image.dtype != np.uint8:
-            orange_image = (orange_image * 255).astype(np.uint8)
-        
-        orange_pil = Image.fromarray(orange_image)
-        orange_pil.save(image_path)
+        if random.random() < orange_blob_probability:
+            # Load the saved visualization
+            if os.path.exists(image_path):
+                # Load image using PIL
+                img = Image.open(image_path)
+                img_array = np.array(img)
+                
+                # Create a new matplotlib figure
+                fig, ax = plt.subplots(figsize=(10.24, 10.24), dpi=100)
+                ax.imshow(img_array)
+                ax.set_xlim(0, img_array.shape[1])
+                ax.set_ylim(img_array.shape[0], 0)  # Flip Y axis to match image coordinates
+                ax.axis('off')
+                
+                # Get image dimensions  
+                height, width = img_array.shape[0], img_array.shape[1]
+                
+                # Create dense orange injection site at random location
+                margin = int(min(width, height) * 0.1)  # Keep some margin from edges
+                center_x = np.random.randint(margin, width - margin)
+                center_y = np.random.randint(margin, height - margin)
+                injection_radius = min(width, height) * 0.05  # Slightly larger injection area
+                
+                print(f"Adding orange injection site at ({center_x:.0f}, {center_y:.0f}), radius: {injection_radius:.0f}")
+                
+                # Add more orange streamlines for better visibility
+                num_orange_streamlines = 400  # More streamlines for better visibility
+                for i in range(num_orange_streamlines):
+                    # Random start point within injection area
+                    angle = np.random.uniform(0, 2*np.pi)
+                    radius = np.random.uniform(0, injection_radius)
+                    start_x = center_x + radius * np.cos(angle)
+                    start_y = center_y + radius * np.sin(angle)
+                    
+                    # Generate curved orange streamline - much shorter for small area
+                    streamline_length = np.random.randint(20, 30)  # Slightly longer streamlines
+                    x_coords = [start_x]
+                    y_coords = [start_y]
+                    
+                    # Direction radiating outward with some randomness
+                    direction_x = np.cos(angle) + np.random.normal(0, 0.3)
+                    direction_y = np.sin(angle) + np.random.normal(0, 0.3)
+                    
+                    current_x, current_y = start_x, start_y
+                    
+                    # Add curvature parameters
+                    curve_amount = np.random.uniform(0.1, 0.4)  # How much to curve
+                    curve_frequency = np.random.uniform(0.05, 0.15)  # How often to change direction
+                    
+                    for step in range(streamline_length):
+                        # Add progressive curvature and noise for natural fiber appearance
+                        step_size = np.random.uniform(0.5, 1.0)  # Much smaller steps
+                        
+                        # Add smooth curvature
+                        curve_offset_x = curve_amount * np.sin(step * curve_frequency) * np.random.uniform(0.5, 1.5)
+                        curve_offset_y = curve_amount * np.cos(step * curve_frequency) * np.random.uniform(0.5, 1.5)
+                        
+                        # Add random noise for natural variation
+                        noise_x = np.random.normal(0, 0.3)
+                        noise_y = np.random.normal(0, 0.3)
+                        
+                        # Update direction with curvature and noise
+                        direction_x += (curve_offset_x + noise_x) * 0.1
+                        direction_y += (curve_offset_y + noise_y) * 0.1
+                        
+                        # Normalize to prevent runaway
+                        direction_length = np.sqrt(direction_x**2 + direction_y**2)
+                        if direction_length > 0:
+                            direction_x /= direction_length
+                            direction_y /= direction_length
+                        
+                        current_x += direction_x * step_size
+                        current_y += direction_y * step_size
+                        
+                        if (current_x < 0 or current_x >= width or 
+                            current_y < 0 or current_y >= height):
+                            break
+                            
+                        x_coords.append(current_x)
+                        y_coords.append(current_y)
+                    
+                    # Plot orange streamline with natural appearance
+                    if len(x_coords) > 5:
+                        # Use more natural orange colors with lower brightness
+                        orange_colors = ['#CC5500', '#BB4400', '#DD6600', '#AA3300', '#EE7700']
+                        color = np.random.choice(orange_colors)
+                        ax.plot(x_coords, y_coords, color=color, linewidth=1.5, 
+                               alpha=0.6, solid_capstyle='round', zorder=25)
+                
+                # Add subtle orange center markers
+                ax.scatter([center_x], [center_y], c='#CC5500', s=80, alpha=0.7, zorder=30, marker='o')  # Subtle orange center
+                ax.scatter([center_x], [center_y], c='#AA3300', s=25, alpha=0.8, zorder=31, marker='o')   # Darker orange center
+                
+                # Save the modified image
+                plt.subplots_adjust(left=0, right=1, top=1, bottom=0)
+                plt.savefig(image_path, dpi=100, bbox_inches='tight', pad_inches=0)
+                plt.close()
         
     except Exception as e:
         print(f"Warning: Failed to apply orange blobs to {image_path}: {e}")
@@ -447,7 +537,8 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
                                              cornucopia_config=None, background_config=None,
                                              close_gaps=False, closing_footprint_size=5,
                                              randomize=False, random_state=None, 
-                                             enable_orange_blobs=False, orange_blob_probability=0.3, **kwargs):
+                                             enable_orange_blobs=False, orange_blob_probability=0.3, 
+                                             output_image_size=(1024, 1024), **kwargs):
     """Generate examples with comprehensive processing including background enhancement and Cornucopia."""
     if random_state is not None:
         random.seed(random_state)
