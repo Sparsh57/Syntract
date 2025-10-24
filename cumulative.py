@@ -40,12 +40,20 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
                   voxel_size=0.05, new_dim=None, skip_synthesis=False,
                   n_examples=10, viz_prefix="synthetic_", enable_orange_blobs=False,
                   orange_blob_probability=0.3, save_masks=True, use_high_density_masks=True,
-                  mask_thickness=1, density_threshold=0.15, min_bundle_size=20,
+                  mask_thickness=1, density_threshold=0.6, min_bundle_size=2000,
                   label_bundles=False, disable_patch_processing=False, cleanup_intermediate=True):
     """
     Process multiple TRK files with a common NIfTI file.
     
     This is the main function for batch processing - simple and efficient.
+    
+    Mask Parameters (Unified Defaults)
+    ----------------------------------
+    All mask parameters use consistent defaults across the entire codebase:
+    - mask_thickness: 1 (auto-scaled by output image size)
+    - density_threshold: 0.6 (extremely aggressive filtering, only largest bundles)
+    - min_bundle_size: 2000 (only keeps very large, prominent fiber bundles)
+    - use_high_density_masks: True (creates prominent, well-connected bundles)
     
     Parameters:
     -----------
@@ -857,13 +865,14 @@ def process_patches_inmemory(
                     max_fiber_percentage=max_fiber_pct,
                     tract_linewidth=1.0,
                     mask_thickness=1,
-                    density_threshold=0.15,
+                    density_threshold=0.6,
                     gaussian_sigma=2.0,
                     close_gaps=False,
                     closing_footprint_size=5,
                     label_bundles=False,
-                    min_bundle_size=20,
-                    output_image_size=output_image_size
+                    min_bundle_size=2000,
+                    output_image_size=output_image_size,
+                    static_streamline_threshold=0.1  # Require at least 0.1 streamline per pixel for high-density masks
                 )
                 
                 # Load the generated mask
@@ -1000,22 +1009,22 @@ Examples:
     viz_group.add_argument("--orange-blob-probability", type=float, default=0.3,
                           help="Probability of applying orange blobs (0.0-1.0, default: 0.3)")
     
-    # Mask and Bundle parameters
+    # Mask and Bundle parameters (unified defaults)
     mask_group = parser.add_argument_group("Mask & Bundle Detection")
     mask_group.add_argument("--save-masks", action="store_true", default=True,
                            help="Save binary masks alongside visualizations (default: True)")
     mask_group.add_argument("--use-high-density-masks", action="store_true",
-                           help="Use high-density mask generation (default: True)")
+                           help="Use high-density mask generation with prominent bundles (default: True)")
     mask_group.add_argument("--no-high-density-masks", action="store_true",
-                           help="Disable high-density mask generation")
+                           help="Disable high-density mask generation and use regular masks")
     mask_group.add_argument("--mask-thickness", type=int, default=1,
-                           help="Thickness of generated masks (default: 1)")
-    mask_group.add_argument("--density-threshold", type=float, default=0.15,
-                           help="Fiber density threshold for masking (default: 0.15)")
-    mask_group.add_argument("--min-bundle-size", type=int, default=20,
-                           help="Minimum size for bundle detection (default: 20)")
+                           help="Base thickness for mask lines (default: 1, auto-scaled by output size)")
+    mask_group.add_argument("--density-threshold", type=float, default=0.6,
+                           help="Fiber density threshold for masking (default: 0.6, extremely aggressive filtering)")
+    mask_group.add_argument("--min-bundle-size", type=int, default=2000,
+                           help="Minimum size for bundle detection (default: 2000, only keeps very large prominent bundles)")
     mask_group.add_argument("--label-bundles", action="store_true",
-                           help="Label individual fiber bundles (default: False)")
+                           help="Label individual fiber bundles with distinct colors (default: False)")
     
     # Cleanup parameters
     cleanup_group = parser.add_argument_group("Cleanup")

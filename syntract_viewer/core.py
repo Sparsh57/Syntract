@@ -174,10 +174,14 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
                     dims=dims, thickness=mask_thickness, dilate=True,
                     density_threshold=density_threshold, gaussian_sigma=gaussian_sigma,
                     close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
-                    label_bundles=True, min_bundle_size=min_bundle_size
+                    label_bundles=True, min_bundle_size=min_bundle_size,
+                    static_streamline_threshold=0.1  # Require at least 0.1 streamline per pixel (any streamline)
                 )
                 mask = np.rot90(mask)
                 labeled_mask = np.rot90(labeled_mask)
+                # Apply vertical flip to match the image orientation (bottom to top)
+                mask = np.flipud(mask)
+                labeled_mask = np.flipud(labeled_mask)
                 fiber_masks.append(mask)
                 labeled_masks.append(labeled_mask)
             else:
@@ -186,9 +190,12 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
                     dims=dims, thickness=mask_thickness, dilate=True,
                     density_threshold=density_threshold, gaussian_sigma=gaussian_sigma,
                     close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
-                    min_bundle_size=min_bundle_size
+                    min_bundle_size=min_bundle_size,
+                    static_streamline_threshold=0.1  # Require at least 0.1 streamline per pixel (any streamline)
                 )
                 mask = np.rot90(mask)
+                # Apply vertical flip to match the image orientation (bottom to top)
+                mask = np.flipud(mask)
                 fiber_masks.append(mask)
 
         # Add streamlines
@@ -384,7 +391,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
         axes[i].imshow(np.rot90(dark_field_slice), cmap=dark_field_cmap, aspect='equal', interpolation='bilinear')
         axes[i].set_facecolor('black')
 
-        # Create mask if requested - but skip regular masks if high-density masks are enabled
+        # Create mask if requested - skip regular masks if high-density masks are enabled
         if save_masks and has_streamlines and not use_high_density_masks:
             # Adaptive parameters based on output image size
             output_size = max(output_image_size) if output_image_size else 256
@@ -394,7 +401,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
             adaptive_thickness = max(1, int(mask_thickness * size_scale))
             adaptive_density_threshold = max(0.02, density_threshold * (1.0 / max(1.0, size_scale * 1.5)))  # More aggressive threshold reduction for larger images
             adaptive_gaussian_sigma = gaussian_sigma * size_scale
-            adaptive_min_bundle_size = max(3, int(min_bundle_size * (size_scale * 0.3)))  # Much smaller bundles allowed for larger images
+            adaptive_min_bundle_size = max(1, int(min_bundle_size * (size_scale * 0.001)))  # Tiny bundles allowed for larger images
             
             if label_bundles:
                 mask, labeled_mask = create_fiber_mask(
@@ -402,7 +409,8 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                     dims=dims, thickness=adaptive_thickness, dilate=True,
                     density_threshold=adaptive_density_threshold, gaussian_sigma=adaptive_gaussian_sigma,
                     close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
-                    label_bundles=True, min_bundle_size=adaptive_min_bundle_size
+                    label_bundles=True, min_bundle_size=adaptive_min_bundle_size,
+                    static_streamline_threshold=0.1  # Require at least 0.1 streamline per pixel (any streamline)
                 )
                 mask = np.rot90(mask)
                 labeled_mask = np.rot90(labeled_mask)
@@ -414,7 +422,8 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                     dims=dims, thickness=adaptive_thickness, dilate=True,
                     density_threshold=adaptive_density_threshold, gaussian_sigma=adaptive_gaussian_sigma,
                     close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
-                    min_bundle_size=adaptive_min_bundle_size
+                    min_bundle_size=adaptive_min_bundle_size,
+                    static_streamline_threshold=0.1  # Require at least 0.1 streamline per pixel (any streamline)
                 )
                 mask = np.rot90(mask)
                 fiber_masks.append(mask)
@@ -603,7 +612,8 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
                 dims=dims, thickness=mask_thickness, dilate=True,
                 density_threshold=density_threshold, gaussian_sigma=gaussian_sigma,
                 close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
-                min_bundle_size=min_bundle_size
+                min_bundle_size=min_bundle_size,
+                static_streamline_threshold=15  # Require at least 15 streamlines per pixel
             )
             mask = np.rot90(mask)
             fiber_masks[view] = mask
@@ -723,7 +733,7 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
                                                   max_fiber_percentage, tract_linewidth, mask_thickness,
                                                   density_threshold, gaussian_sigma, close_gaps, 
                                                   closing_footprint_size, label_bundles, min_bundle_size, 
-                                                  output_image_size):
+                                                  output_image_size, static_streamline_threshold=25):
     """Generate and apply high-density mask for coronal view."""
     import nibabel as nib
     import numpy as np
@@ -754,24 +764,25 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
     output_size = max(output_image_size) if output_image_size else 256
     size_scale = output_size / 256.0  # Scale factor relative to base 256x256
     
-    # HIGH-DENSITY specific parameters - conservative but well-connected with thick bundles
+    # HIGH-DENSITY specific parameters - extremely aggressive filtering for only largest bundles
     adaptive_thickness = max(10, int(mask_thickness * size_scale * 6))  # Much thicker lines for prominent bundles
-    # Conservative density threshold - selective but not overly aggressive
-    high_density_threshold = max(0.1, 0.2 * (1.0 / max(1.0, size_scale * 0.5)))  # Conservative threshold for dense areas
+    # Extremely aggressive density threshold - only largest, most prominent bundles
+    high_density_threshold = max(0.5, 0.8 * (1.0 / max(1.0, size_scale * 0.3)))  # Very aggressive threshold for dense areas
     adaptive_gaussian_sigma = gaussian_sigma * size_scale * 1.3  # Moderate smoothing for connectivity
-    # Conservative minimum bundle size - keeps more meaningful bundles
-    high_density_min_bundle_size = max(25, int(45 * size_scale))  # Conservative bundle size filtering
+    # Extremely permissive minimum bundle size - keeps tiny bundles
+    high_density_min_bundle_size = max(1, int(5 * size_scale))  # Extremely permissive bundle size filtering
     
     print(f"High-density mask parameters for {output_size}px: thickness={adaptive_thickness}, density_threshold={high_density_threshold:.3f}, gaussian_sigma={adaptive_gaussian_sigma:.1f}, min_bundle_size={high_density_min_bundle_size}")
     
-    # Generate high-density mask with moderate connectivity parameters
+    # Generate high-density mask with static absolute threshold
     from .masking import create_fiber_mask
     high_density_mask = create_fiber_mask(
         selected_streamlines, slice_idx, orientation='coronal', dims=dims,
         thickness=adaptive_thickness, dilate=True, density_threshold=high_density_threshold,
         gaussian_sigma=adaptive_gaussian_sigma, close_gaps=True,  # Enable gap closing for connectivity
         closing_footprint_size=max(3, int(closing_footprint_size * size_scale * 1.2)),  # Moderate footprint for bundle joining
-        label_bundles=False, min_bundle_size=high_density_min_bundle_size
+        label_bundles=False, min_bundle_size=high_density_min_bundle_size,
+        static_streamline_threshold=0.1  # Require at least 0.1 streamline per pixel for high-density masks
     )
     
     # Additional processing to limit to at most 4 largest bundles
@@ -797,6 +808,8 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
     
     # Apply the same rotation as the regular masks
     high_density_mask = np.rot90(high_density_mask)
+    # Apply vertical flip to match the image orientation (bottom to top)
+    high_density_mask = np.flipud(high_density_mask)
     
     # Save high-density mask
     mask_dir = os.path.dirname(output_file)

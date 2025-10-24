@@ -9,9 +9,9 @@ from scipy.signal import find_peaks
 
 
 def create_fiber_mask(streamlines_voxel, slice_idx, orientation='axial', dims=(256, 256, 256), 
-                     thickness=1, dilate=True, density_threshold=0.15, gaussian_sigma=2.0,
+                     thickness=1, dilate=True, density_threshold=0.6, gaussian_sigma=2.0,
                      close_gaps=False, closing_footprint_size=5, label_bundles=False,
-                     min_bundle_size=20):
+                     min_bundle_size=1, static_streamline_threshold=0.1):
     """
     Create a binary mask of fiber bundle outlines in a specific slice.
     """
@@ -48,16 +48,24 @@ def create_fiber_mask(streamlines_voxel, slice_idx, orientation='axial', dims=(2
             if distance_to_slice[i] <= distance_threshold:
                 if orientation == 'axial':
                     x, y = int(coords[i, 0]), int(coords[i, 1])
-                    if 0 <= x < dims[0] and 0 <= y < dims[1]:
-                        mask_points.append((x, y))
+                    # ALWAYS use the same coordinate transformation as streamline plotting
+                    # This ensures masks and streamlines are in the same coordinate system
+                    y_plot = dims[1] - y - 1
+                    if 0 <= x < dims[0] and 0 <= y_plot < dims[1]:
+                        mask_points.append((x, y_plot))
                 elif orientation == 'coronal':
                     x, z = int(coords[i, 0]), int(coords[i, 2])
-                    if 0 <= x < dims[0] and 0 <= z < dims[2]:
-                        mask_points.append((x, z))
+                    # Use the same coordinate transformation as streamline plotting
+                    z_plot = dims[2] - z - 1
+                    if 0 <= x < dims[0] and 0 <= z_plot < dims[2]:
+                        mask_points.append((x, z_plot))
                 elif orientation == 'sagittal':
                     y, z = int(coords[i, 1]), int(coords[i, 2])
-                    if 0 <= y < dims[1] and 0 <= z < dims[2]:
-                        mask_points.append((y, z))
+                    # ALWAYS use the same coordinate transformation as streamline plotting
+                    # This ensures masks and streamlines are in the same coordinate system
+                    z_plot = dims[2] - z - 1
+                    if 0 <= y < dims[1] and 0 <= z_plot < dims[2]:
+                        mask_points.append((y, z_plot))
         
         # Increment density map
         for j in range(len(mask_points) - 1):
@@ -80,18 +88,31 @@ def create_fiber_mask(streamlines_voxel, slice_idx, orientation='axial', dims=(2
     
     # Apply Gaussian smoothing
     density_map = filters.gaussian(density_map, sigma=gaussian_sigma)
-    density_map = density_map / np.max(density_map)
     
-    # Threshold the density map
-    mask = (density_map > density_threshold).astype(np.uint8)
+    # STATIC ABSOLUTE THRESHOLD: Use fixed streamline count instead of relative density
+    # This provides consistent, predictable bundle detection across all datasets
+    # 
+    # Approach:
+    # - Set a fixed minimum number of streamlines that must pass through a pixel
+    # - No normalization needed - absolute threshold based on actual streamline count
+    # - Consistent results regardless of dataset characteristics
+    # - Easy to understand and tune
+    
+    # Static threshold: require at least N streamlines per pixel to consider it a bundle
+    # This is an absolute count, not a relative percentage
+    # Higher values = more aggressive filtering (fewer bundles detected)
+    
+    # Apply absolute threshold directly to density map (no normalization)
+    mask = (density_map >= static_streamline_threshold).astype(np.uint8)
     
     # Apply morphological operations
     if dilate and np.any(mask):
         mask = morphology.binary_closing(mask, morphology.disk(thickness))
         mask = morphology.binary_dilation(mask, morphology.disk(thickness))
         
+        # Remove only single-pixel noise (minimal filtering)
         if np.sum(mask) > 0:
-            mask = morphology.remove_small_objects(mask.astype(bool), min_size=10).astype(np.uint8)
+            mask = morphology.remove_small_objects(mask.astype(bool), min_size=1).astype(np.uint8)
     
     # Apply smooth gap closing
     if close_gaps and np.any(mask):
