@@ -421,7 +421,7 @@ def process_patches_inmemory(
     trk_file: str,
     num_patches: int = 50,
     patch_size: list = None,
-    min_streamlines_per_patch: int = 20,
+    min_streamlines_per_patch: int = 0,
     voxel_size: float = 0.05,
     new_dim: tuple = None,
     use_ants: bool = False,
@@ -612,24 +612,31 @@ def process_patches_inmemory(
         else:
             rng = np.random.RandomState()
         
-        # For directory mode, extract patches per TRK file with distribution
+        # For directory mode, extract patches iteratively until we have exactly num_patches WITH streamlines
         if is_trk_directory:
-            # Distribute patches across TRK files
-            patches_per_file = max(1, num_patches // len(trk_files))
-            remaining_patches = num_patches - (patches_per_file * len(trk_files))
-            
             all_patch_details = []
             total_extracted = 0
+            file_idx = 0
+            patch_counter = 0
+            max_attempts = num_patches * 20  # Allow up to 20x attempts to find valid patches
+            attempts = 0
             
-            for file_idx, trk_path in enumerate(trk_files):
-                # Calculate patches for this file
-                file_patches = patches_per_file + (1 if file_idx < remaining_patches else 0)
+            print(f"\nExtracting {num_patches} patches with streamlines from {len(trk_files)} TRK files...")
+            print("Will iteratively generate patches until we have exactly the target count of patches WITH streamlines")
+            
+            # Keep generating patches until we have exactly num_patches WITH streamlines
+            while total_extracted < num_patches and attempts < max_attempts:
+                trk_path = trk_files[file_idx % len(trk_files)]
+                current_file_idx = file_idx % len(trk_files)
                 
-                if file_patches == 0:
-                    continue
+                # Calculate how many patches we still need
+                patches_needed = num_patches - total_extracted
                 
-                print(f"\nProcessing TRK file {file_idx + 1}/{len(trk_files)}: {os.path.basename(trk_path)}")
-                print(f"  Extracting {file_patches} patches...")
+                # Try to extract a small batch of patches from current TRK file
+                batch_size = min(patches_needed, 10)  # Process in small batches
+                
+                print(f"\nProcessing TRK file {current_file_idx + 1}/{len(trk_files)}: {os.path.basename(trk_path)}")
+                print(f"  Need {patches_needed} more patches, trying to extract {batch_size} patches from this file...")
                 
                 try:
                     patch_result = process_patch_first_extraction(
@@ -638,27 +645,56 @@ def process_patches_inmemory(
                         target_voxel_size=voxel_size,
                         target_patch_size=target_patch_size,
                         target_dimensions=new_dim,
-                        num_patches=file_patches,
-                        output_prefix=os.path.join(temp_dir, f"patch_{file_idx:03d}"),
+                        num_patches=batch_size,
+                        output_prefix=os.path.join(temp_dir, f"patch_{patch_counter:03d}"),
                         min_streamlines_per_patch=min_streamlines_per_patch,
                         use_ants=use_ants,
                         ants_warp_path=ants_warp,
                         ants_iwarp_path=ants_iwarp,
                         ants_aff_path=ants_aff,
-                        random_state=random_state + file_idx if random_state else None,
+                        random_state=random_state + attempts if random_state else None,
                         use_gpu=True,
                     )
                     
                     if patch_result['success'] and patch_result['patches_extracted'] > 0:
-                        all_patch_details.extend(patch_result['patch_details'])
-                        total_extracted += patch_result['patches_extracted']
-                        print(f"  Successfully extracted {patch_result['patches_extracted']} patches")
+                        # Only count patches that actually have streamlines
+                        valid_patches = 0
+                        for patch_detail in patch_result['patch_details']:
+                            # Check if this patch has streamlines by looking at the TRK file
+                            trk_file_path = patch_detail['files']['trk']
+                            try:
+                                from dipy.io.streamline import load_tractogram
+                                tractogram = load_tractogram(trk_file_path, reference='same', bbox_valid_check=False)
+                                if len(tractogram.streamlines) > 0:
+                                    # Update patch_id to be globally unique
+                                    patch_detail['patch_id'] = f"{patch_counter:03d}_{patch_detail['patch_id']}"
+                                    all_patch_details.append(patch_detail)
+                                    valid_patches += 1
+                            except:
+                                # If we can't load the TRK file, skip this patch
+                                continue
+                        
+                        total_extracted += valid_patches
+                        patch_counter += 1
+                        print(f"  Successfully extracted {valid_patches} patches with streamlines (total: {total_extracted}/{num_patches})")
+                        
+                        # If we've reached our target, break out of the loop
+                        if total_extracted >= num_patches:
+                            print(f"  Target reached! Stopping extraction.")
+                            break
                     else:
                         print(f"  WARNING: No patches extracted from this TRK file")
                         
                 except Exception as e:
                     print(f"  ERROR: Failed to process TRK file: {e}")
-                    continue
+                
+                file_idx += 1
+                attempts += 1
+                
+                # If we've cycled through all files and still don't have enough, continue with random selection
+                if file_idx >= len(trk_files):
+                    file_idx = 0  # Reset to start cycling through files again
+                    print(f"  Cycled through all files, continuing with random selection...")
             
             # Create a combined result
             patch_result = {
@@ -666,6 +702,12 @@ def process_patches_inmemory(
                 'patches_extracted': total_extracted,
                 'patch_details': all_patch_details
             }
+            
+            if total_extracted < num_patches:
+                print(f"\nWARNING: Only extracted {total_extracted} patches out of {num_patches} requested")
+                print("This may be due to very sparse fiber data in the TRK files")
+            else:
+                print(f"\nSUCCESS: Extracted exactly {total_extracted} patches as requested!")
             
         else:
             # Single TRK file mode (original behavior)

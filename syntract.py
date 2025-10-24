@@ -31,7 +31,7 @@ try:
 except ImportError:
     try:
         import sys
-        sys.path.append(os.path.join(os.path.dirname(__file__), 'synthesis'))
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'synthesis'))
         from patch_first_processing import process_patch_first_extraction
         PATCH_FIRST_AVAILABLE = True
     except ImportError:
@@ -316,7 +316,7 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                     use_ants=False, ants_warp_path=None, ants_iwarp_path=None, ants_aff_path=None,
                     slice_count=None, enable_slice_extraction=False, slice_output_dir=None,
                     use_simplified_slicing=True, force_full_slicing=False, auto_batch_process=False,
-                    total_patches=50, patch_size=[600, 1, 600], min_streamlines_per_patch=20,
+                    total_patches=50, patch_size=[600, 1, 600], min_streamlines_per_patch=0,
                     patch_prefix="patch", patch_output_dir="patches", patch_batch_size=50,
                     skip_synthesis=False, disable_patch_processing=False,
                     n_examples=10, viz_prefix="synthetic_",
