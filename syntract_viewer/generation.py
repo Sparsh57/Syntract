@@ -1108,73 +1108,98 @@ def _generate_high_density_masks(nifti_file, trk_file, output_dir, prefix, slice
         high_density_masks[slice_idx] = np.rot90(mask)
 
 
-def _apply_high_density_masks_axial(output_file, high_density_masks, high_density_labeled_masks,
-                                   specific_slice, label_bundles, nifti_file, output_image_size=(1024, 1024)):
-    """Apply high-density masks for axial view."""
-    nii_img = nib.load(nifti_file)
-    dims = nii_img.shape
+def _apply_high_density_masks_unified(output_file, high_density_masks, high_density_labeled_masks,
+                                     label_bundles, view_mode='slice', specific_slice=None, 
+                                     nifti_file=None, output_image_size=(1024, 1024)):
+    """
+    Unified function to apply and save high-density masks.
     
-    slice_idx = specific_slice if specific_slice is not None else dims[2] // 2
+    This consolidates the redundant _apply_high_density_masks_axial,
+    _apply_high_density_masks_coronal, and _apply_high_density_masks_multiview functions.
     
-    if slice_idx in high_density_masks:
-        mask_dir = os.path.dirname(output_file)
-        mask_basename = os.path.splitext(os.path.basename(output_file))[0]
-        mask_filename = f"{mask_dir}/{mask_basename}_mask_slice{slice_idx}.png"
-        
-        from .utils import save_image_1024
-        save_image_1024(mask_filename, high_density_masks[slice_idx], is_mask=True, target_size=output_image_size)
-        print(f"Applied high-density mask for axial slice {slice_idx}: {mask_filename} ({output_image_size[0]}x{output_image_size[1]})")
-        
-        if label_bundles and slice_idx in high_density_labeled_masks:
-            from .utils import visualize_labeled_bundles
-            labeled_filename = f"{mask_dir}/{mask_basename}_labeled_bundles_slice{slice_idx}.png"
-            visualize_labeled_bundles(high_density_labeled_masks[slice_idx], labeled_filename)
-            print(f"Applied high-density labeled bundles for axial slice {slice_idx}: {labeled_filename}")
-
-
-def _apply_high_density_masks_coronal(output_file, high_density_masks, high_density_labeled_masks,
-                                     specific_slice, label_bundles, nifti_file, output_image_size=(1024, 1024)):
-    """Apply high-density masks for coronal view."""
-    nii_img = nib.load(nifti_file)
-    dims = nii_img.shape
-    
-    slice_idx = specific_slice if specific_slice is not None else dims[1] // 2
-    
-    if slice_idx in high_density_masks:
-        mask_dir = os.path.dirname(output_file)
-        mask_basename = os.path.splitext(os.path.basename(output_file))[0]
-        mask_filename = f"{mask_dir}/{mask_basename}_mask_slice{slice_idx}.png"
-        
-        from .utils import save_image_1024
-        save_image_1024(mask_filename, high_density_masks[slice_idx], is_mask=True, target_size=output_image_size)
-        print(f"Applied high-density mask for coronal slice {slice_idx}: {mask_filename} ({output_image_size[0]}x{output_image_size[1]})")
-        
-        if label_bundles and slice_idx in high_density_labeled_masks:
-            from .utils import visualize_labeled_bundles
-            labeled_filename = f"{mask_dir}/{mask_basename}_labeled_bundles_slice{slice_idx}.png"
-            visualize_labeled_bundles(high_density_labeled_masks[slice_idx], labeled_filename)
-            print(f"Applied high-density labeled bundles for coronal slice {slice_idx}: {labeled_filename}")
-
-
-def _apply_high_density_masks_multiview(output_file, high_density_masks, high_density_labeled_masks, label_bundles):
-    """Apply high-density masks for multiple views."""
+    Parameters
+    ----------
+    output_file : str
+        Output file path
+    high_density_masks : dict
+        Dictionary of masks (either {slice_idx: mask} or {view: mask})
+    high_density_labeled_masks : dict
+        Dictionary of labeled masks (optional)
+    label_bundles : bool
+        Whether to save labeled bundle visualizations
+    view_mode : str
+        'slice' for single-slice modes or 'multiview' for multiple orientations
+    specific_slice : int, optional
+        Specific slice index (for 'slice' mode)
+    nifti_file : str, optional
+        NIfTI file path (for 'slice' mode to determine default slice)
+    output_image_size : tuple
+        Output image size
+    """
     mask_dir = os.path.dirname(output_file)
     if not mask_dir:
         mask_dir = "../synthesis"
     mask_basename = os.path.splitext(os.path.basename(output_file))[0]
     
-    for view, mask in high_density_masks.items():
-        if mask is not None:
-            mask_filename = f"{mask_dir}/{mask_basename}_mask_{view}.png"
+    if view_mode == 'multiview':
+        # Multi-view mode: iterate over view dictionary
+        for view, mask in high_density_masks.items():
+            if mask is not None:
+                mask_filename = f"{mask_dir}/{mask_basename}_mask_{view}.png"
+                from .utils import save_image_1024
+                save_image_1024(mask_filename, mask, is_mask=True, target_size=output_image_size)
+                print(f"Applied high-density mask for {view} view: {mask_filename} ({output_image_size[0]}x{output_image_size[1]})")
+                
+                if label_bundles and view in high_density_labeled_masks:
+                    from .utils import visualize_labeled_bundles
+                    labeled_filename = f"{mask_dir}/{mask_basename}_labeled_bundles_{view}.png"
+                    visualize_labeled_bundles(high_density_labeled_masks[view], labeled_filename)
+                    print(f"Applied high-density labeled bundles for {view} view: {labeled_filename}")
+    else:
+        # Single-slice mode: use specific slice or default from nifti
+        slice_idx = specific_slice
+        if slice_idx is None and nifti_file:
+            nii_img = nib.load(nifti_file)
+            dims = nii_img.shape
+            # Determine default slice based on which dimension is middle
+            # This is a heuristic - assumes coronal if dim[1] is smallest
+            if dims[1] < dims[2]:
+                slice_idx = dims[1] // 2  # Coronal
+            else:
+                slice_idx = dims[2] // 2  # Axial
+        
+        if slice_idx in high_density_masks:
+            mask_filename = f"{mask_dir}/{mask_basename}_mask_slice{slice_idx}.png"
             from .utils import save_image_1024
-            save_image_1024(mask_filename, mask, is_mask=True)
-            print(f"Applied high-density mask for {view} view: {mask_filename} (1024x1024)")
+            save_image_1024(mask_filename, high_density_masks[slice_idx], is_mask=True, target_size=output_image_size)
+            print(f"Applied high-density mask for slice {slice_idx}: {mask_filename} ({output_image_size[0]}x{output_image_size[1]})")
             
-            if label_bundles and view in high_density_labeled_masks:
+            if label_bundles and slice_idx in high_density_labeled_masks:
                 from .utils import visualize_labeled_bundles
-                labeled_filename = f"{mask_dir}/{mask_basename}_labeled_bundles_{view}.png"
-                visualize_labeled_bundles(high_density_labeled_masks[view], labeled_filename)
-                print(f"Applied high-density labeled bundles for {view} view: {labeled_filename}")
+                labeled_filename = f"{mask_dir}/{mask_basename}_labeled_bundles_slice{slice_idx}.png"
+                visualize_labeled_bundles(high_density_labeled_masks[slice_idx], labeled_filename)
+                print(f"Applied high-density labeled bundles for slice {slice_idx}: {labeled_filename}")
+
+
+# Backwards compatibility aliases (deprecated)
+def _apply_high_density_masks_axial(output_file, high_density_masks, high_density_labeled_masks,
+                                   specific_slice, label_bundles, nifti_file, output_image_size=(1024, 1024)):
+    """Deprecated: Use _apply_high_density_masks_unified instead."""
+    return _apply_high_density_masks_unified(output_file, high_density_masks, high_density_labeled_masks,
+                                            label_bundles, 'slice', specific_slice, nifti_file, output_image_size)
+
+
+def _apply_high_density_masks_coronal(output_file, high_density_masks, high_density_labeled_masks,
+                                     specific_slice, label_bundles, nifti_file, output_image_size=(1024, 1024)):
+    """Deprecated: Use _apply_high_density_masks_unified instead."""
+    return _apply_high_density_masks_unified(output_file, high_density_masks, high_density_labeled_masks,
+                                            label_bundles, 'slice', specific_slice, nifti_file, output_image_size)
+
+
+def _apply_high_density_masks_multiview(output_file, high_density_masks, high_density_labeled_masks, label_bundles):
+    """Deprecated: Use _apply_high_density_masks_unified instead."""
+    return _apply_high_density_masks_unified(output_file, high_density_masks, high_density_labeled_masks,
+                                            label_bundles, 'multiview')
 
 
 def generate_enhanced_varied_examples_with_preserved_background(nifti_file, trk_file, output_dir, 

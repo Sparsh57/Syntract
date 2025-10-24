@@ -321,8 +321,8 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                     skip_synthesis=False, disable_patch_processing=False,
                     n_examples=10, viz_prefix="synthetic_",
                     enable_orange_blobs=False, orange_blob_probability=0.3,
-                    save_masks=True, use_high_density_masks=True, mask_thickness=10,
-                    density_threshold=0.45, min_bundle_size=100, label_bundles=False,
+                    save_masks=True, use_high_density_masks=True, mask_thickness=1,
+                    density_threshold=0.6, min_bundle_size=2000, label_bundles=False,
                     output_image_size=None, cleanup_intermediate=True):
     """Main processing function"""
     import signal
@@ -676,22 +676,22 @@ Examples:
     viz_group.add_argument("--orange_blob_probability", type=float, default=0.3,
                           help="Probability of applying orange blobs to each visualization (0.0-1.0, default: 0.3)")
     
-    # Mask and Bundle parameters
+    # Mask and Bundle parameters (unified defaults)
     mask_group = parser.add_argument_group("Mask & Bundle Detection")
     mask_group.add_argument("--save_masks", action="store_true", default=True,
                            help="Save binary masks alongside visualizations (default: True)")
     mask_group.add_argument("--use_high_density_masks", action="store_true", 
-                           help="Use high-density mask generation (default: True)")
+                           help="Use high-density mask generation with prominent bundles (default: True)")
     mask_group.add_argument("--no_high_density_masks", action="store_true",
-                           help="Disable high-density mask generation")
+                           help="Disable high-density mask generation and use regular masks")
     mask_group.add_argument("--mask_thickness", type=int, default=1,
-                           help="Thickness of generated masks (default: 1)")
-    mask_group.add_argument("--density_threshold", type=float, default=0.15,
-                           help="Fiber density threshold for masking (default: 0.15)")
-    mask_group.add_argument("--min_bundle_size", type=int, default=20,
-                           help="Minimum size for bundle detection (default: 20)")
+                           help="Base thickness for mask lines (default: 1, auto-scaled by output size)")
+    mask_group.add_argument("--density_threshold", type=float, default=0.6,
+                           help="Fiber density threshold for masking (default: 0.6, extremely aggressive filtering)")
+    mask_group.add_argument("--min_bundle_size", type=int, default=2000,
+                           help="Minimum size for bundle detection (default: 2000, only keeps very large prominent bundles)")
     mask_group.add_argument("--label_bundles", action="store_true",
-                           help="Label individual fiber bundles (default: False)")
+                           help="Label individual fiber bundles with distinct colors (default: False)")
     
     
     args = parser.parse_args()
