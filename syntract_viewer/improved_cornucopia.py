@@ -64,6 +64,13 @@ class ImprovedCornucopiaAugmenter:
         
         # Fallback implementations
         self.noise_transforms['fallback_speckle'] = self._create_fallback_speckle()
+        self.noise_transforms['gamma_speckle'] = self._create_fallback_speckle()
+        self.noise_transforms['gamma_multiplicative'] = self._create_fallback_multiplicative()
+        self.noise_transforms['optical_speckle'] = self._create_fallback_speckle()
+        self.noise_transforms['noncentral_chi'] = self._create_fallback_noncentral_chi()
+        self.noise_transforms['gaussian_mixture'] = self._create_fallback_gaussian_mixture()
+        self.noise_transforms['aggressive_smoothing'] = self._create_fallback_aggressive_smoothing()
+        self.noise_transforms['random_shapes'] = self._create_fallback_random_shapes()
     
     def _init_intensity_transforms(self):
         """Initialize intensity transforms with multiplicative fields."""
@@ -77,6 +84,8 @@ class ImprovedCornucopiaAugmenter:
         
         # Fallback implementations
         self.intensity_transforms['fallback_multiplicative'] = self._create_fallback_multiplicative()
+        self.intensity_transforms['aggressive_gamma'] = self._create_fallback_aggressive_gamma()
+        self.intensity_transforms['aggressive_bias_field'] = self._create_fallback_aggressive_bias_field()
     
     def _init_spatial_transforms(self):
         """Initialize spatial transforms."""
@@ -103,7 +112,7 @@ class ImprovedCornucopiaAugmenter:
             return self._create_fallback_speckle()
         
         class GammaSpeckleTransform:
-            def __init__(self, intensity_range=(0.85, 1.3), prob=0.8):  # Higher prob, more visible range
+            def __init__(self, intensity_range=(0.5, 2.0), prob=0.9):  # Much more aggressive noise
                 self.intensity_range = intensity_range
                 self.prob = prob
             
@@ -124,7 +133,7 @@ class ImprovedCornucopiaAugmenter:
             return self._create_fallback_multiplicative()
         
         class GammaMultiplicativeTransform:
-            def __init__(self, scale_range=(0.02, 0.06), prob=0.7):  # Balanced range
+            def __init__(self, scale_range=(0.1, 0.3), prob=0.9):  # Much more aggressive noise
                 self.scale_range = scale_range
                 self.prob = prob
             
@@ -142,7 +151,7 @@ class ImprovedCornucopiaAugmenter:
     def _create_custom_gamma_multiplicative(self, scale_range=(0.02, 0.06), prob=0.7):
         """Create gamma multiplicative transform with custom parameters."""
         if not CORNUCOPIA_AVAILABLE:
-            return self._create_fallback_multiplicative()
+            return self._create_fallback_multiplicative_custom(scale_range, prob)
         
         class CustomGammaMultiplicativeTransform:
             def __init__(self, scale_range, prob):
@@ -162,7 +171,7 @@ class ImprovedCornucopiaAugmenter:
     def _create_custom_gamma_speckle(self, intensity_range=(0.9, 1.05), prob=0.8):
         """Create gamma speckle transform with custom parameters."""
         if not CORNUCOPIA_AVAILABLE:
-            return self._create_fallback_speckle()
+            return self._create_fallback_speckle_custom(intensity_range, prob)
         
         class CustomGammaSpeckleTransform:
             def __init__(self, intensity_range, prob):
@@ -185,7 +194,7 @@ class ImprovedCornucopiaAugmenter:
             return self._create_fallback_speckle()
         
         class OpticalSpeckleTransform:
-            def __init__(self, speckle_strength=(0.01, 0.05), prob=0.7):  # Reduced for less grain
+            def __init__(self, speckle_strength=(0.1, 0.3), prob=0.9):  # Much more aggressive noise
                 self.speckle_strength = speckle_strength
                 self.prob = prob
             
@@ -216,7 +225,7 @@ class ImprovedCornucopiaAugmenter:
             return self._create_fallback_multiplicative()
         
         class SmoothMultiplicativeField:
-            def __init__(self, field_strength=(0.02, 0.08), smoothness=(2, 3), prob=0.6):  # Much more conservative
+            def __init__(self, field_strength=(0.2, 0.5), smoothness=(2, 3), prob=0.9):  # Much more aggressive noise
                 self.field_strength = field_strength
                 self.smoothness = smoothness
                 self.prob = prob
@@ -244,7 +253,7 @@ class ImprovedCornucopiaAugmenter:
             return self._create_fallback_multiplicative()
         
         class MultiplicativeField:
-            def __init__(self, strength_range=(0.06, 0.12), prob=0.75):  # Balanced range
+            def __init__(self, strength_range=(0.3, 0.8), prob=0.9):  # Much more aggressive noise
                 self.strength_range = strength_range
                 self.prob = prob
             
@@ -344,13 +353,15 @@ class ImprovedCornucopiaAugmenter:
     def _create_random_spheres_debris(self):
         """Create random spheres debris simulation."""
         class RandomSpheresDebris:
-            def __init__(self, n_spheres=(1, 5), radius_range=(2, 8), intensity_range=(0.1, 0.8), prob=0.3):
+            def __init__(self, n_spheres=(1, 5), radius_range=(2, 8), intensity_range=(0.1, 0.8), prob=0.0):  # DISABLED - prob=0.0
                 self.n_spheres = n_spheres
                 self.radius_range = radius_range
                 self.intensity_range = intensity_range
-                self.prob = prob
+                self.prob = prob  # DISABLED to remove large circles/spheres
             
             def __call__(self, x):
+                # DISABLED: No spheres will be generated
+                return x
                 if random.random() > self.prob:
                     return x
                 
@@ -392,13 +403,15 @@ class ImprovedCornucopiaAugmenter:
     def _create_random_shapes_debris(self):
         """Create random shapes debris simulation."""
         class RandomShapesDebris:
-            def __init__(self, n_shapes=(1, 3), size_range=(4, 10), intensity_range=(0.15, 0.35), prob=0.5):
+            def __init__(self, n_shapes=(1, 3), size_range=(4, 10), intensity_range=(0.15, 0.35), prob=0.0):  # DISABLED - prob=0.0
                 self.n_shapes = n_shapes
                 self.size_range = size_range
                 self.intensity_range = intensity_range
-                self.prob = prob
+                self.prob = prob  # DISABLED to remove large circles/shapes
             
             def __call__(self, x):
+                # DISABLED: No shapes will be generated
+                return x
                 if random.random() > self.prob:
                     return x
                 
@@ -598,7 +611,7 @@ class ImprovedCornucopiaAugmenter:
     def _create_fallback_speckle(self):
         """Create fallback speckle implementation."""
         class FallbackSpeckle:
-            def __init__(self, strength=(0.01, 0.05), prob=0.3):
+            def __init__(self, strength=(0.2, 0.7), prob=0.98):  # EXTREME speckle noise for dark-field microscopy
                 self.strength = strength
                 self.prob = prob
             
@@ -627,10 +640,44 @@ class ImprovedCornucopiaAugmenter:
         
         return FallbackSpeckle()
     
+    def _create_fallback_speckle_custom(self, intensity_range, prob):
+        """Create fallback speckle implementation with custom parameters."""
+        class FallbackSpeckleCustom:
+            def __init__(self, intensity_range, prob):
+                self.intensity_range = intensity_range
+                self.prob = prob
+            
+            def __call__(self, x):
+                if random.random() > self.prob:
+                    return x
+                
+                # Convert to numpy if needed
+                if hasattr(x, 'cpu'):
+                    x_np = x.squeeze().cpu().numpy()
+                    was_tensor = True
+                else:
+                    x_np = x
+                    was_tensor = False
+                
+                h, w = x_np.shape
+                intensity = random.uniform(*self.intensity_range)
+                
+                # Create speckle noise pattern
+                speckle_noise = np.random.gamma(intensity, 1.0/intensity, (h, w))
+                result = x_np * speckle_noise
+                
+                # Convert back to tensor if needed
+                if was_tensor:
+                    return torch.from_numpy(result).unsqueeze(0).unsqueeze(0).to(x.device)
+                else:
+                    return result
+        
+        return FallbackSpeckleCustom(intensity_range, prob)
+    
     def _create_fallback_multiplicative(self):
         """Create fallback multiplicative field implementation."""
         class FallbackMultiplicative:
-            def __init__(self, strength=(0.02, 0.08), prob=0.4):
+            def __init__(self, strength=(0.3, 0.9), prob=0.98):  # EXTREME multiplicative noise for dark-field microscopy
                 self.strength = strength
                 self.prob = prob
             
@@ -671,6 +718,372 @@ class ImprovedCornucopiaAugmenter:
                     return result
         
         return FallbackMultiplicative()
+    
+    def _create_fallback_multiplicative_custom(self, scale_range, prob):
+        """Create fallback multiplicative field implementation with custom parameters."""
+        class FallbackMultiplicativeCustom:
+            def __init__(self, strength_range, prob):
+                self.strength_range = strength_range
+                self.prob = prob
+            
+            def __call__(self, x):
+                if random.random() > self.prob:
+                    return x
+                
+                # Convert to numpy if needed
+                if hasattr(x, 'cpu'):
+                    x_np = x.squeeze().cpu().numpy()
+                    was_tensor = True
+                else:
+                    x_np = x
+                    was_tensor = False
+                
+                h, w = x_np.shape
+                strength = random.uniform(*self.strength_range)
+                
+                # Create smooth polynomial multiplicative field
+                y_coords, x_coords = np.mgrid[0:h, 0:w]
+                # Normalize coordinates to [-1, 1]
+                y_norm = (y_coords - h/2) / (h/2)
+                x_norm = (x_coords - w/2) / (w/2)
+                
+                # Create smooth polynomial field
+                field = 1.0 + strength * (x_norm + y_norm + x_norm**2 - y_norm**2)
+                
+                # Apply Gaussian smoothing if SCIPY_AVAILABLE
+                if SCIPY_AVAILABLE:
+                    field = ndimage.gaussian_filter(field, sigma=min(h, w) / 20)
+                
+                result = x_np * field
+                
+                # Convert back to tensor if needed
+                if was_tensor:
+                    return torch.from_numpy(result).unsqueeze(0).unsqueeze(0).to(x.device)
+                else:
+                    return result
+        
+        return FallbackMultiplicativeCustom(scale_range, prob)
+    
+    def _create_fallback_noncentral_chi(self):
+        """Create fallback noncentral chi noise implementation."""
+        class FallbackNoncentralChi:
+            def __init__(self, df_range=(1, 6), nc_range=(1.0, 4.0), prob=0.98):  # EXTREME noncentral chi
+                self.df_range = df_range  # degrees of freedom
+                self.nc_range = nc_range  # noncentrality parameter
+                self.prob = prob
+            
+            def __call__(self, x):
+                if random.random() > self.prob:
+                    return x
+                
+                # Convert to numpy if needed
+                if hasattr(x, 'cpu'):
+                    x_np = x.squeeze().cpu().numpy()
+                    was_tensor = True
+                else:
+                    x_np = x
+                    was_tensor = False
+                
+                h, w = x_np.shape
+                df = random.uniform(*self.df_range)
+                nc = random.uniform(*self.nc_range)
+                
+                # Generate noncentral chi noise
+                chi_noise = np.random.noncentral_chisquare(df, nc, (h, w))
+                # Normalize to reasonable range
+                chi_noise = chi_noise / np.max(chi_noise) * 0.5
+                
+                # Apply as multiplicative noise
+                result = x_np * (1.0 + chi_noise)
+                
+                # Convert back to tensor if needed
+                if was_tensor:
+                    return torch.from_numpy(result).unsqueeze(0).unsqueeze(0).to(x.device)
+                else:
+                    return result
+        
+        return FallbackNoncentralChi()
+    
+    def _create_fallback_gaussian_mixture(self):
+        """Create fallback Gaussian mixture noise implementation."""
+        class FallbackGaussianMixture:
+            def __init__(self, sigma_range=(0.3, 1.0), prob=0.98):  # EXTREME Gaussian mixture
+                self.sigma_range = sigma_range
+                self.prob = prob
+            
+            def __call__(self, x):
+                if random.random() > self.prob:
+                    return x
+                
+                # Convert to numpy if needed
+                if hasattr(x, 'cpu'):
+                    x_np = x.squeeze().cpu().numpy()
+                    was_tensor = True
+                else:
+                    x_np = x
+                    was_tensor = False
+                
+                h, w = x_np.shape
+                sigma = random.uniform(*self.sigma_range)
+                
+                # Generate Gaussian mixture noise (multiple Gaussian components)
+                noise1 = np.random.normal(0, sigma, (h, w))
+                noise2 = np.random.normal(0, sigma * 0.5, (h, w))
+                noise3 = np.random.normal(0, sigma * 1.5, (h, w))
+                
+                # Mix the components
+                mixture_noise = 0.4 * noise1 + 0.3 * noise2 + 0.3 * noise3
+                
+                # Apply as additive noise
+                result = x_np + mixture_noise
+                
+                # Convert back to tensor if needed
+                if was_tensor:
+                    return torch.from_numpy(result).unsqueeze(0).unsqueeze(0).to(x.device)
+                else:
+                    return result
+        
+        return FallbackGaussianMixture()
+    
+    def _create_fallback_aggressive_smoothing(self):
+        """Create fallback aggressive smoothing implementation."""
+        class FallbackAggressiveSmoothing:
+            def __init__(self, sigma_range=(2.0, 8.0), prob=0.8):
+                self.sigma_range = sigma_range
+                self.prob = prob
+            
+            def __call__(self, x):
+                if random.random() > self.prob:
+                    return x
+                
+                # Convert to numpy if needed
+                if hasattr(x, 'cpu'):
+                    x_np = x.squeeze().cpu().numpy()
+                    was_tensor = True
+                else:
+                    x_np = x
+                    was_tensor = False
+                
+                sigma = random.uniform(*self.sigma_range)
+                
+                # Apply aggressive Gaussian smoothing
+                if SCIPY_AVAILABLE:
+                    result = ndimage.gaussian_filter(x_np, sigma=sigma)
+                else:
+                    # Fallback to basic smoothing
+                    result = x_np
+                
+                # Convert back to tensor if needed
+                if was_tensor:
+                    return torch.from_numpy(result).unsqueeze(0).unsqueeze(0).to(x.device)
+                else:
+                    return result
+        
+        return FallbackAggressiveSmoothing()
+    
+    def _create_fallback_random_shapes(self):
+        """Create fallback random shapes implementation."""
+        class FallbackRandomShapes:
+            def __init__(self, n_shapes_range=(3, 12), size_range=(0.05, 0.3), intensity_range=(0.3, 1.5), prob=0.0):  # DISABLED - prob=0.0
+                self.n_shapes_range = n_shapes_range
+                self.size_range = size_range
+                self.intensity_range = intensity_range  # Increased intensity range
+                self.prob = prob  # DISABLED to remove large circles/shapes
+            
+            def __call__(self, x):
+                # DISABLED: No shapes will be generated
+                return x
+                if random.random() > self.prob:
+                    return x
+                
+                # Convert to numpy if needed
+                if hasattr(x, 'cpu'):
+                    x_np = x.squeeze().cpu().numpy()
+                    was_tensor = True
+                else:
+                    x_np = x
+                    was_tensor = False
+                
+                h, w = x_np.shape
+                result = x_np.copy()
+                
+                # Generate random shapes
+                n_shapes = random.randint(*self.n_shapes_range)
+                
+                for _ in range(n_shapes):
+                    # Random shape parameters
+                    shape_type = random.choice(['circle', 'ellipse', 'rectangle', 'polygon'])
+                    size = random.uniform(*self.size_range)
+                    intensity = random.uniform(*self.intensity_range)
+                    
+                    # Random position
+                    center_x = random.uniform(0.1, 0.9) * w
+                    center_y = random.uniform(0.1, 0.9) * h
+                    
+                    if shape_type == 'circle':
+                        radius = size * min(w, h) / 2
+                        self._draw_circle(result, int(center_x), int(center_y), int(radius), intensity)
+                    elif shape_type == 'ellipse':
+                        a = size * w / 2
+                        b = size * h / 2
+                        self._draw_ellipse(result, int(center_x), int(center_y), int(a), int(b), intensity)
+                    elif shape_type == 'rectangle':
+                        width = size * w
+                        height = size * h
+                        self._draw_rectangle(result, int(center_x - width/2), int(center_y - height/2), 
+                                           int(width), int(height), intensity)
+                    elif shape_type == 'polygon':
+                        n_vertices = random.randint(3, 8)
+                        vertices = self._generate_polygon_vertices(center_x, center_y, size * min(w, h) / 2, n_vertices)
+                        self._draw_polygon(result, vertices, intensity)
+                
+                # Convert back to tensor if needed
+                if was_tensor:
+                    return torch.from_numpy(result).unsqueeze(0).unsqueeze(0).to(x.device)
+                else:
+                    return result
+            
+            def _draw_circle(self, image, cx, cy, radius, intensity):
+                """Draw a circle on the image."""
+                y, x = np.ogrid[:image.shape[0], :image.shape[1]]
+                mask = (x - cx)**2 + (y - cy)**2 <= radius**2
+                image[mask] = np.maximum(image[mask], intensity)
+            
+            def _draw_ellipse(self, image, cx, cy, a, b, intensity):
+                """Draw an ellipse on the image."""
+                y, x = np.ogrid[:image.shape[0], :image.shape[1]]
+                mask = ((x - cx)**2 / a**2 + (y - cy)**2 / b**2) <= 1
+                image[mask] = np.maximum(image[mask], intensity)
+            
+            def _draw_rectangle(self, image, x, y, width, height, intensity):
+                """Draw a rectangle on the image."""
+                x1, y1 = max(0, x), max(0, y)
+                x2, y2 = min(image.shape[1], x + width), min(image.shape[0], y + height)
+                image[y1:y2, x1:x2] = np.maximum(image[y1:y2, x1:x2], intensity)
+            
+            def _generate_polygon_vertices(self, cx, cy, radius, n_vertices):
+                """Generate vertices for a random polygon."""
+                angles = np.linspace(0, 2*np.pi, n_vertices, endpoint=False)
+                # Add some randomness to the radius for each vertex
+                radii = radius * (0.7 + 0.6 * np.random.random(n_vertices))
+                vertices = []
+                for angle, r in zip(angles, radii):
+                    x = cx + r * np.cos(angle)
+                    y = cy + r * np.sin(angle)
+                    vertices.append((int(x), int(y)))
+                return vertices
+            
+            def _draw_polygon(self, image, vertices, intensity):
+                """Draw a polygon on the image using a simple fill algorithm."""
+                if len(vertices) < 3:
+                    return
+                
+                # Create a mask for the polygon
+                mask = np.zeros(image.shape, dtype=bool)
+                
+                # Use a simple scanline algorithm
+                for y in range(image.shape[0]):
+                    intersections = []
+                    for i in range(len(vertices)):
+                        p1 = vertices[i]
+                        p2 = vertices[(i + 1) % len(vertices)]
+                        
+                        if p1[1] != p2[1]:  # Not horizontal
+                            if min(p1[1], p2[1]) <= y < max(p1[1], p2[1]):
+                                x = p1[0] + (p2[0] - p1[0]) * (y - p1[1]) / (p2[1] - p1[1])
+                                intersections.append(x)
+                    
+                    intersections.sort()
+                    for i in range(0, len(intersections), 2):
+                        if i + 1 < len(intersections):
+                            x1, x2 = int(intersections[i]), int(intersections[i + 1])
+                            mask[y, x1:x2] = True
+                
+                image[mask] = np.maximum(image[mask], intensity)
+        
+        return FallbackRandomShapes()
+    
+    def _create_fallback_aggressive_gamma(self):
+        """Create fallback aggressive gamma transform implementation."""
+        class FallbackAggressiveGamma:
+            def __init__(self, gamma_range=(0.1, 5.0), prob=0.98):  # EXTREME gamma variations
+                self.gamma_range = gamma_range
+                self.prob = prob
+            
+            def __call__(self, x):
+                if random.random() > self.prob:
+                    return x
+                
+                # Convert to numpy if needed
+                if hasattr(x, 'cpu'):
+                    x_np = x.squeeze().cpu().numpy()
+                    was_tensor = True
+                else:
+                    x_np = x
+                    was_tensor = False
+                
+                gamma = random.uniform(*self.gamma_range)
+                
+                # Apply aggressive gamma correction
+                result = np.power(x_np, gamma)
+                
+                # Convert back to tensor if needed
+                if was_tensor:
+                    return torch.from_numpy(result).unsqueeze(0).unsqueeze(0).to(x.device)
+                else:
+                    return result
+        
+        return FallbackAggressiveGamma()
+    
+    def _create_fallback_aggressive_bias_field(self):
+        """Create fallback aggressive bias field implementation."""
+        class FallbackAggressiveBiasField:
+            def __init__(self, strength_range=(0.5, 1.5), prob=0.98):  # EXTREME bias field variations
+                self.strength_range = strength_range
+                self.prob = prob
+            
+            def __call__(self, x):
+                if random.random() > self.prob:
+                    return x
+                
+                # Convert to numpy if needed
+                if hasattr(x, 'cpu'):
+                    x_np = x.squeeze().cpu().numpy()
+                    was_tensor = True
+                else:
+                    x_np = x
+                    was_tensor = False
+                
+                h, w = x_np.shape
+                strength = random.uniform(*self.strength_range)
+                
+                # Create aggressive bias field using polynomial basis
+                y_coords, x_coords = np.mgrid[0:h, 0:w]
+                # Normalize coordinates to [-1, 1]
+                y_norm = (y_coords - h/2) / (h/2)
+                x_norm = (x_coords - w/2) / (w/2)
+                
+                # Create complex polynomial bias field
+                bias_field = 1.0 + strength * (
+                    x_norm + y_norm + 
+                    x_norm**2 + y_norm**2 + 
+                    x_norm*y_norm + 
+                    x_norm**3 + y_norm**3
+                )
+                
+                # Apply Gaussian smoothing if available
+                if SCIPY_AVAILABLE:
+                    bias_field = ndimage.gaussian_filter(bias_field, sigma=min(h, w) / 15)
+                
+                result = x_np * bias_field
+                
+                # Convert back to tensor if needed
+                if was_tensor:
+                    return torch.from_numpy(result).unsqueeze(0).unsqueeze(0).to(x.device)
+                else:
+                    return result
+        
+        return FallbackAggressiveBiasField()
     
     def _create_fallback_elastic(self):
         """Create fallback elastic deformation implementation."""
@@ -823,9 +1236,10 @@ class ImprovedCornucopiaAugmenter:
             else:
                 result = tensor_img
             
-            # Denormalize
+            # Denormalize - allow noise to extend beyond original range
             result = result * (original_max - original_min) + original_min
-            return np.clip(result, original_min, original_max).astype(image.dtype)
+            # Don't clip to original range - allow noise effects to be visible
+            return np.clip(result, 0, None).astype(image.dtype)
             
         except Exception as e:
             print(f"Optical augmentation failed: {e}, returning original")
@@ -843,18 +1257,18 @@ def create_optical_presets():
     """
     return {
         'gamma_speckle': {
-            'noise': {'type': 'gamma_speckle', 'intensity_range': (0.9995, 1.0005), 'prob': 0.3},  # Like subtle_debris level
-            'intensity': {'type': 'smooth_multiplicative'}
+            'noise': {'type': 'gamma_speckle', 'intensity_range': (0.1, 7.0), 'prob': 0.98},  # MAXIMUM gamma speckle
+            'intensity': {'type': 'aggressive_gamma', 'gamma_range': (0.1, 6.0), 'prob': 0.95}
         },
         
         'optical_with_debris': {
-            'noise': {'type': 'gamma_multiplicative', 'scale_range': (0.0003, 0.0003), 'prob': 0.3},  # Same as subtle_debris
-            'intensity': {'type': 'smooth_multiplicative'}
+            'noise': {'type': 'gaussian_mixture', 'sigma_range': (0.4, 1.8), 'prob': 0.98},  # MAXIMUM Gaussian mixture
+            'intensity': {'type': 'aggressive_bias_field', 'strength_range': (0.5, 1.5), 'prob': 0.95}
         },
         
         'heavy_speckle': {
-            'noise': {'type': 'gamma_multiplicative', 'scale_range': (0.0008, 0.0008), 'prob': 0.25},  # Just slightly more than subtle_debris
-            'intensity': {'type': 'smooth_multiplicative'}  # Change to smooth like others
+            'noise': {'type': 'noncentral_chi', 'df_range': (0.5, 5), 'nc_range': (1.0, 5.0), 'prob': 0.98},  # MAXIMUM noncentral chi
+            'intensity': {'type': 'aggressive_gamma', 'gamma_range': (0.05, 7.0), 'prob': 0.95}
         },
         
         'clean_optical': {
@@ -862,8 +1276,56 @@ def create_optical_presets():
         },
         
         'subtle_debris': {
-            'noise': {'type': 'gamma_multiplicative', 'scale_range': (0.0005, 0.0005), 'prob': 0.2},  # Keep this as is - it works!
-            'intensity': {'type': 'smooth_multiplicative'}
+            'noise': {'type': 'aggressive_smoothing', 'sigma_range': (5.0, 18.0), 'prob': 0.9},  # More aggressive smoothing
+            'intensity': {'type': 'aggressive_bias_field', 'strength_range': (0.4, 1.0), 'prob': 0.9}
+        },
+        
+        # New aggressive noise presets
+        'extreme_noise': {
+            'noise': {'type': 'gaussian_mixture', 'sigma_range': (0.6, 2.2), 'prob': 0.98},  # MAXIMUM Gaussian mixture
+            'intensity': {'type': 'aggressive_gamma', 'gamma_range': (0.05, 8.0), 'prob': 0.98}
+        },
+        
+        'ultra_heavy_speckle': {
+            'noise': {'type': 'noncentral_chi', 'df_range': (0.3, 4), 'nc_range': (1.5, 6.0), 'prob': 0.98},  # MAXIMUM noncentral chi
+            'intensity': {'type': 'aggressive_bias_field', 'strength_range': (0.6, 1.8), 'prob': 0.98}
+        },
+        
+        # New aggressive presets based on the slide methods - MAXIMUM EXTREME
+        'gaussian_mixture_aggressive': {
+            'noise': {'type': 'gaussian_mixture', 'sigma_range': (0.5, 2.5), 'prob': 0.98},  # MAXIMUM Gaussian mixture
+            'intensity': {'type': 'aggressive_gamma', 'gamma_range': (0.05, 10.0), 'prob': 0.98}
+        },
+        
+        'noncentral_chi_aggressive': {
+            'noise': {'type': 'noncentral_chi', 'df_range': (0.3, 3), 'nc_range': (2.0, 8.0), 'prob': 0.98},  # MAXIMUM noncentral chi
+            'intensity': {'type': 'aggressive_bias_field', 'strength_range': (0.7, 2.0), 'prob': 0.98}
+        },
+        
+        'aggressive_smoothing': {
+            'noise': {'type': 'aggressive_smoothing', 'sigma_range': (8.0, 25.0), 'prob': 0.95},  # MAXIMUM smoothing
+            'intensity': {'type': 'aggressive_gamma', 'gamma_range': (0.03, 12.0), 'prob': 0.95}
+        },
+        
+        'comprehensive_aggressive': {
+            'noise': {'type': 'noncentral_chi', 'df_range': (0.5, 4), 'nc_range': (2.0, 7.0), 'prob': 0.98},  # MAXIMUM comprehensive
+            'intensity': {'type': 'aggressive_bias_field', 'strength_range': (0.8, 2.2), 'prob': 0.98}
+        },
+        
+        # DISABLED - shapes presets (replaced with pure noise presets)
+        'random_shapes_background': {
+            'noise': {'type': 'gaussian_mixture', 'sigma_range': (0.5, 2.0), 'prob': 0.98},  # Pure noise instead of shapes
+            'intensity': {'type': 'aggressive_gamma', 'gamma_range': (0.1, 4.0), 'prob': 0.95}
+        },
+        
+        'shapes_with_noise': {
+            'noise': {'type': 'noncentral_chi', 'df_range': (0.5, 4), 'nc_range': (1.5, 6.0), 'prob': 0.98},  # Pure noise instead of shapes
+            'intensity': {'type': 'aggressive_bias_field', 'strength_range': (0.5, 1.8), 'prob': 0.95}
+        },
+        
+        'aggressive_shapes': {
+            'noise': {'type': 'gaussian_mixture', 'sigma_range': (0.6, 2.5), 'prob': 0.98},  # EXTREME pure noise instead of shapes
+            'intensity': {'type': 'aggressive_gamma', 'gamma_range': (0.05, 6.0), 'prob': 0.95}
         },
         
         # Compatibility presets with old cornucopia_augmentation module

@@ -203,8 +203,19 @@ def batch_process_slice_folders(slice_output_dir, args):
             slice_args.viz_output_dir = slice_viz_dir
             slice_args.prefix = f"{slice_info['folder']}_"
             
-            # Run visualization for this slice
-            run_visualization_stage(slice_info['nifti'], slice_info['trk'], slice_args)
+            # Determine output image size from patch size or args
+            slice_output_image_size = (1024, 1024)  # Default
+            if hasattr(args, 'output_image_size') and args.output_image_size is not None:
+                slice_output_image_size = args.output_image_size
+            elif hasattr(args, 'patch_size') and args.patch_size:
+                # Derive from patch size
+                if isinstance(args.patch_size, list) and len(args.patch_size) == 3:
+                    slice_output_image_size = (args.patch_size[0], args.patch_size[2])
+                elif isinstance(args.patch_size, list) and len(args.patch_size) >= 2:
+                    slice_output_image_size = (args.patch_size[0], args.patch_size[1])
+            
+            # Run visualization for this slice with correct output size
+            run_visualization_stage(slice_info['nifti'], slice_info['trk'], slice_args, output_image_size=slice_output_image_size)
             
             results['processed_slices'] += 1
             results['slice_results'].append({

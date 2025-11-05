@@ -91,11 +91,14 @@ def _generate_patch_visualization(nifti_path, trk_path, output_dir, prefix, save
     
     # Randomize cornucopia preset for variation unless explicitly set to clean_optical
     if cornucopia_preset == 'clean_optical':
-        # Weighted selection with increased heavy preset probability
+        # Weighted selection with MUCH MORE AGGRESSIVE noise presets
         presets = ['clean_optical', 'gamma_speckle', 'optical_with_debris', 
-                  'subtle_debris', 'clinical_simulation', 'heavy_speckle']
-        # Weights: clean (30%), subtle (30%), moderate (20%), heavy (20%)
-        weights = [0.05, 0.25, 0.35, 0.25, 0.10, 0.10]  # heavy_speckle gets 20%
+                  'subtle_debris', 'clinical_simulation', 'heavy_speckle', 
+                  'extreme_noise', 'ultra_heavy_speckle', 'gaussian_mixture_aggressive',
+                  'noncentral_chi_aggressive', 'aggressive_smoothing', 'comprehensive_aggressive',
+                  'random_shapes_background', 'shapes_with_noise', 'aggressive_shapes']  # Added random shapes presets
+        # Weights: clean (1%), moderate (12%), heavy (20%), extreme (30%), new aggressive (25%), shapes (12%) - MUCH MORE NOISE
+        weights = [0.01, 0.08, 0.12, 0.04, 0.02, 0.12, 0.08, 0.08, 0.08, 0.08, 0.04, 0.08, 0.08, 0.08, 0.05]  # Much more aggressive noise
         random.seed(int(time.time() * 1000000) % (2**32))  # Truly random seed
         actual_preset = random.choices(presets, weights=weights, k=1)[0]
     else:
