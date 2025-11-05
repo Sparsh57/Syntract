@@ -484,6 +484,7 @@ def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir,
             closing_footprint_size=closing_footprint_size,
             randomize=randomize,
             random_state=random_state,
+            output_image_size=output_image_size,  # Explicitly pass output_image_size
             **kwargs
         )
     else:
@@ -507,6 +508,7 @@ def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir,
             enable_orange_blobs=enable_orange_blobs,
             orange_blob_probability=orange_blob_probability,
             random_state=random_state,
+            output_image_size=output_image_size,  # Explicitly pass output_image_size
             **kwargs
         )
 
@@ -574,8 +576,10 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
 
     # Prepare available options for randomization
     if randomize:
-        # Available cornucopia presets (including None for no cornucopia)
-        cornucopia_options = [None, 'clinical_simulation']
+        # Available cornucopia presets (including None for no cornucopia) - MUCH MORE AGGRESSIVE
+        cornucopia_options = [None, 'clinical_simulation', 'extreme_noise', 'ultra_heavy_speckle', 'heavy_speckle', 'gamma_speckle',
+                             'gaussian_mixture_aggressive', 'noncentral_chi_aggressive', 'aggressive_smoothing', 'comprehensive_aggressive',
+                             'random_shapes_background', 'shapes_with_noise', 'aggressive_shapes']
         
         # Available background effects 
         background_effects = ['balanced', 'blockface_preserving']

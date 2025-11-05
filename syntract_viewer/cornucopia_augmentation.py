@@ -80,8 +80,8 @@ class CornucopiaAugmenter:
             return {}
         
         return {
-            'gaussian_mixture': RandomGaussianMixtureTransform(mu=1, sigma=0.05, fwhm=2),
-            'gaussian_noise': RandomGaussianNoiseTransform(sigma=0.02),
+            'gaussian_mixture': RandomGaussianMixtureTransform(mu=1, sigma=0.5, fwhm=3),  # EXTREME noise for dark-field microscopy
+            'gaussian_noise': RandomGaussianNoiseTransform(sigma=0.4),  # EXTREME speckle noise
             'rician_noise': self._create_rician_noise_transform(),
             'structured_noise': self._create_structured_noise_transform()
         }
@@ -120,7 +120,7 @@ class CornucopiaAugmenter:
     def _create_rician_noise_transform(self):
         """Create Rician noise transform (common in MRI)."""
         class RicianNoiseTransform:
-            def __init__(self, sigma_range=(0.01, 0.03), prob=0.5):
+            def __init__(self, sigma_range=(0.2, 0.5), prob=0.95):  # EXTREME noise for dark-field microscopy
                 self.sigma_range = sigma_range
                 self.prob = prob
             
@@ -159,7 +159,7 @@ class CornucopiaAugmenter:
         """Create structured noise that mimics acquisition artifacts."""
         class StructuredNoiseTransform:
             def __call__(self, x):
-                intensity = torch.rand(1) * 0.04 + 0.01
+                intensity = torch.rand(1) * 0.5 + 0.2  # EXTREME structured noise for dark-field microscopy
                 h, w = x.shape[-2:]
                 pattern = torch.sin(torch.linspace(0, 20*np.pi, w)).unsqueeze(0).expand(h, w)
                 pattern = pattern.to(x.device) * intensity
@@ -175,9 +175,9 @@ class CornucopiaAugmenter:
                 h, w = x.shape[-2:]
                 y_coords, x_coords = torch.meshgrid(
                     torch.linspace(-1, 1, h), torch.linspace(-1, 1, w), indexing='ij')
-                intensity_factor = torch.rand(1) * 0.17 + 0.08
+                intensity_factor = torch.rand(1) * 0.7 + 0.4  # EXTREME intensity variations for dark-field microscopy
                 bias_field = 1.0 + (x_coords**2 + y_coords**2) * intensity_factor
-                bias_field = torch.clamp(bias_field, min=0.5, max=1.5).to(x.device)
+                bias_field = torch.clamp(bias_field, min=0.4, max=1.8).to(x.device)
                 return torch.clamp(x * bias_field, 0, 1)
         return BiasFieldTransform()
     
@@ -187,8 +187,8 @@ class CornucopiaAugmenter:
             def __call__(self, x):
                 if torch.all(x == 0):
                     return x
-                scale = torch.clamp(torch.rand(1) * 0.4 + 0.8, min=0.1, max=2.0)
-                shift = torch.rand(1) * 0.2 - 0.1
+                scale = torch.clamp(torch.rand(1) * 1.5 + 0.4, min=0.1, max=3.5)  # EXTREME intensity variations
+                shift = torch.rand(1) * 0.7 - 0.35  # EXTREME shifts for dark-field microscopy
                 return torch.clamp(x * scale + shift, 0, 1)
         return AdaptiveIntensityTransform()
     
@@ -209,7 +209,7 @@ class CornucopiaAugmenter:
             def __call__(self, x):
                 if torch.all(x == 0) or torch.std(x) < 1e-6:
                     return x
-                factor = torch.rand(1) * 0.5 + 0.8
+                factor = torch.rand(1) * 1.0 + 0.5  # Much more aggressive noise
                 x_mean = torch.mean(x)
                 return torch.clamp((x - x_mean) * factor + x_mean, 0, 1)
         return AdaptiveContrastTransform()
@@ -416,10 +416,10 @@ class CornucopiaAugmenter:
     def _fallback_noise_augmentation(self, image, noise_type, intensity):
         """Fallback noise augmentation using basic numpy operations."""
         if noise_type == 'gaussian_mixture':
-            noise = np.random.normal(0, 0.02 * intensity, image.shape)
+            noise = np.random.normal(0, 0.08 * intensity, image.shape)  # EXTREME fallback noise
             return np.clip(image + noise, 0, 1)
         elif noise_type == 'rician_noise':
-            noise = np.random.normal(0, 0.01 * intensity, image.shape)
+            noise = np.random.normal(0, 0.05 * intensity, image.shape)  # EXTREME fallback noise
             return np.clip(image + noise, 0, 1)
         else:
             return image
@@ -456,7 +456,55 @@ def create_augmentation_presets():
         'clinical_simulation': {
             'spatial': {'type': 'affine_medical'},
             'intensity': {'type': 'bias_field'},
-            'noise': {'type': 'rician_noise', 'intensity': 0.2},
+            'noise': {'type': 'rician_noise', 'intensity': 0.5},  # Increased baseline noise
+            'contrast': {'type': 'adaptive_contrast'}
+        },
+        'extreme_noise': {
+            'spatial': {'type': 'affine_medical'},
+            'intensity': {'type': 'bias_field'},
+            'noise': {'type': 'rician_noise', 'intensity': 1.2},  # EXTREME noise matching slide
+            'contrast': {'type': 'adaptive_contrast'}
+        },
+        'ultra_heavy_speckle': {
+            'spatial': {'type': 'affine_medical'},
+            'intensity': {'type': 'bias_field'},
+            'noise': {'type': 'gaussian_mixture', 'intensity': 1.3},  # EXTREME speckle matching slide
+            'contrast': {'type': 'adaptive_contrast'}
+        },
+        'heavy_speckle': {
+            'spatial': {'type': 'affine_medical'},
+            'intensity': {'type': 'bias_field'},
+            'noise': {'type': 'gaussian_noise', 'intensity': 1.1},  # EXTREME speckle
+            'contrast': {'type': 'adaptive_contrast'}
+        },
+        'gamma_speckle': {
+            'spatial': {'type': 'affine_medical'},
+            'intensity': {'type': 'bias_field'},
+            'noise': {'type': 'structured_noise', 'intensity': 1.0},  # EXTREME structured noise
+            'contrast': {'type': 'adaptive_contrast'}
+        },
+        'gaussian_mixture_aggressive': {
+            'spatial': {'type': 'affine_medical'},
+            'intensity': {'type': 'bias_field'},
+            'noise': {'type': 'gaussian_mixture', 'intensity': 1.4},  # EXTREME Gaussian mixture matching slide
+            'contrast': {'type': 'adaptive_contrast'}
+        },
+        'noncentral_chi_aggressive': {
+            'spatial': {'type': 'affine_medical'},
+            'intensity': {'type': 'bias_field'},
+            'noise': {'type': 'rician_noise', 'intensity': 1.3},  # EXTREME noncentral chi matching slide
+            'contrast': {'type': 'adaptive_contrast'}
+        },
+        'aggressive_smoothing': {
+            'spatial': {'type': 'affine_medical'},
+            'intensity': {'type': 'bias_field'},
+            'noise': {'type': 'gaussian_noise', 'intensity': 1.2},  # EXTREME smoothing with heavy noise
+            'contrast': {'type': 'adaptive_contrast'}
+        },
+        'comprehensive_aggressive': {
+            'spatial': {'type': 'affine_medical'},
+            'intensity': {'type': 'bias_field'},
+            'noise': {'type': 'gaussian_mixture', 'intensity': 1.5},  # MAXIMUM noise matching slide
             'contrast': {'type': 'adaptive_contrast'}
         }
     }

@@ -191,6 +191,9 @@ def generate_examples_with_spatial_subdivisions(args, background_enhancement_ava
                         region_random_state = args.random_state + sub_id * 1000
                     
                     try:
+                        # Get output image size from args or use default
+                        output_image_size = getattr(args, 'output_image_size', (1024, 1024))
+                        
                         # Always use enhanced processing with automatic background enhancement
                         generate_enhanced_varied_examples(
                             nifti_file=temp_nifti.name,
@@ -224,7 +227,8 @@ def generate_examples_with_spatial_subdivisions(args, background_enhancement_ava
                             use_background_enhancement=background_enhancement_available,
                             enable_orange_blobs=args.enable_orange_blobs,
                             orange_blob_probability=args.orange_blob_probability,
-                            randomize=args.randomize
+                            randomize=args.randomize,
+                            output_image_size=output_image_size  # Explicitly pass output_image_size
                         )
                         
                         total_examples += args.examples
