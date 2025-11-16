@@ -744,6 +744,17 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
     dims = nii_img.shape
     affine_inv = np.linalg.inv(nii_img.affine)
     
+    # CRITICAL FIX: Use output_image_size as the target dimensions for mask generation
+    # This ensures masks are generated at the correct size regardless of patch NIfTI dimensions
+    # For coronal orientation, we need (X, Z) dimensions from output_image_size
+    if output_image_size:
+        # output_image_size is (height, width) = (X, Z) for coronal view
+        target_mask_dims = (output_image_size[0], dims[1], output_image_size[1])
+        print(f"Using target mask dimensions from output_image_size: {target_mask_dims} (instead of patch NIfTI dims: {dims})")
+    else:
+        target_mask_dims = dims
+        print(f"Using patch NIfTI dimensions for mask: {dims}")
+    
     # Load tractogram with bbox_valid_check disabled to handle coordinate issues
     tractogram = load_tractogram(trk_file, nii_img, bbox_valid_check=False)
     streamlines = tractogram.streamlines
@@ -755,6 +766,21 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
             # Apply inverse affine to convert from world to voxel coordinates
             sl_voxel = np.dot(sl, affine_inv[:3, :3].T) + affine_inv[:3, 3]
             streamlines_voxel.append(sl_voxel)
+    
+    # Scale streamline coordinates to target mask dimensions if dimensions differ
+    if target_mask_dims != dims:
+        scale_factors = np.array([
+            target_mask_dims[0] / dims[0],
+            target_mask_dims[1] / dims[1],
+            target_mask_dims[2] / dims[2]
+        ])
+        print(f"Scaling streamlines by factors: {scale_factors}")
+        
+        scaled_streamlines = []
+        for sl in streamlines_voxel:
+            scaled_sl = sl * scale_factors
+            scaled_streamlines.append(scaled_sl)
+        streamlines_voxel = scaled_streamlines
     
     # Use high fiber percentage for dense mask
     n_select = max(1, int(len(streamlines_voxel) * max_fiber_percentage / 100.0))
@@ -775,9 +801,10 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
     print(f"High-density mask parameters for {output_size}px: thickness={adaptive_thickness}, density_threshold={high_density_threshold:.3f}, gaussian_sigma={adaptive_gaussian_sigma:.1f}, min_bundle_size={high_density_min_bundle_size}")
     
     # Generate high-density mask with static absolute threshold
+    # CRITICAL: Use target_mask_dims instead of original dims
     from .masking import create_fiber_mask
     high_density_mask = create_fiber_mask(
-        selected_streamlines, slice_idx, orientation='coronal', dims=dims,
+        selected_streamlines, slice_idx, orientation='coronal', dims=target_mask_dims,
         thickness=adaptive_thickness, dilate=True, density_threshold=high_density_threshold,
         gaussian_sigma=adaptive_gaussian_sigma, close_gaps=True,  # Enable gap closing for connectivity
         closing_footprint_size=max(3, int(closing_footprint_size * size_scale * 1.2)),  # Moderate footprint for bundle joining
