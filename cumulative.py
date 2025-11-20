@@ -1383,6 +1383,10 @@ Examples:
                            help="Minimum size for bundle detection (default: 2000, only keeps very large prominent bundles)")
     mask_group.add_argument("--label-bundles", action="store_true",
                            help="Label individual fiber bundles with distinct colors (default: False)")
+    mask_group.add_argument("--filter-by-tissue", action="store_true", default=True,
+                           help="Filter streamlines by tissue/display thresholds (default: True)")
+    mask_group.add_argument("--no-filter-by-tissue", action="store_true",
+                           help="Disable tissue/display filtering, render all streamlines")
     
     # Cleanup parameters
     cleanup_group = parser.add_argument_group("Cleanup")
@@ -1397,6 +1401,9 @@ Examples:
     use_high_density_masks = not args.no_high_density_masks if hasattr(args, 'no_high_density_masks') else True
     if hasattr(args, 'use_high_density_masks') and args.use_high_density_masks:
         use_high_density_masks = True
+    
+    # Handle white matter filtering parameter (default False - render all streamlines)
+    white_matter_only = args.white_matter_only if hasattr(args, 'white_matter_only') else False
     
     # Handle cleanup parameter (default True unless explicitly disabled)
     cleanup_intermediate = not getattr(args, 'no_cleanup_intermediate', False)
@@ -1425,6 +1432,7 @@ Examples:
             orange_blob_probability=args.orange_blob_probability,
             save_masks=args.save_masks,
             use_high_density_masks=use_high_density_masks,
+            white_matter_only=white_matter_only,
             mask_thickness=args.mask_thickness,
             density_threshold=args.density_threshold,
             min_bundle_size=args.min_bundle_size,

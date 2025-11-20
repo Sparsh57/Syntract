@@ -86,7 +86,8 @@ def _generate_patch_visualization(nifti_path, trk_path, output_dir, prefix, save
                                  tract_linewidth, mask_thickness, density_threshold,
                                  gaussian_sigma, close_gaps, closing_footprint_size,
                                  label_bundles, min_bundle_size, enable_orange_blobs,
-                                 orange_blob_probability=0.3, output_image_size=(1024, 1024)):
+                                 orange_blob_probability=0.3, output_image_size=(1024, 1024),
+                                 white_matter_only=False):
     """Generate visualization for a single patch."""
     
     # Randomize cornucopia preset for variation unless explicitly set to clean_optical
@@ -132,7 +133,8 @@ def _generate_patch_visualization(nifti_path, trk_path, output_dir, prefix, save
             # High-density mask parameters
             use_high_density_masks=True,
             max_fiber_percentage=80.0,
-            min_fiber_percentage=10.0
+            min_fiber_percentage=10.0,
+            white_matter_only=white_matter_only
         )
         
         # Apply orange blobs post-processing if enabled

@@ -1,8 +1,29 @@
+# Virtual environments
 /venv/
-examples/
+*.pyc
+
+# IDE
 .idea/
 .vscode/
+.cursor/
+
+# Python artifacts
 __pycache__/
+*.egg-info/
+
+# Example data and outputs
+examples/
+registered_trk/
+patches/
+test_output*/
+output*.trk
+output*.nii
+output*.nii.gz
+
+# Data files
 *.nii.gz
 *.trk
-synthesis/MRISynth.egg-info/*
+*.png
+
+# macOS
+.DS_Store

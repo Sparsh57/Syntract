@@ -11,9 +11,15 @@ from scipy.signal import find_peaks
 def create_fiber_mask(streamlines_voxel, slice_idx, orientation='axial', dims=(256, 256, 256), 
                      thickness=1, dilate=True, density_threshold=0.6, gaussian_sigma=2.0,
                      close_gaps=False, closing_footprint_size=5, label_bundles=False,
-                     min_bundle_size=1, static_streamline_threshold=0.1):
+                     min_bundle_size=1, static_streamline_threshold=0.1, background_image=None):
     """
     Create a binary mask of fiber bundle outlines in a specific slice.
+    
+    Parameters
+    ----------
+    background_image : ndarray, optional
+        The background image (already rotated to match display orientation).
+        If provided, mask will only be generated where the background is not black.
     """
     # Create empty mask
     if orientation == 'axial':
@@ -153,12 +159,98 @@ def create_fiber_mask(streamlines_voxel, slice_idx, orientation='axial', dims=(2
             labeled_mask = measure.label(filtered_mask, connectivity=2)
             num_labels = np.max(labeled_mask)
             print(f"Found {num_labels} distinct fiber bundles in slice {slice_idx}")
+            
+            # NOTE: Background masking disabled for masks
+            # Masks should show where streamlines are, regardless of background brightness
+            # The streamline rendering already filters based on tissue presence
+            # if background_image is not None:
+            #     filtered_mask, labeled_mask = _apply_background_mask(
+            #         filtered_mask, labeled_mask, background_image
+            #     )
+            
             return filtered_mask.astype(np.uint8), labeled_mask
         else:
             print(f"No significant fiber bundles found in slice {slice_idx}")
             return np.zeros_like(mask), np.zeros_like(mask)
     
+    # NOTE: Background masking disabled for masks
+    # Masks should show where streamlines are, regardless of background brightness
+    # The streamline rendering already filters based on tissue presence
+    # if background_image is not None:
+    #     mask = _apply_background_mask_simple(mask, background_image)
+    
     return mask
+
+
+def _apply_background_mask(mask, labeled_mask, background_image):
+    """
+    Remove mask regions where the background is black.
+    
+    Parameters
+    ----------
+    mask : ndarray
+        Binary mask
+    labeled_mask : ndarray
+        Labeled mask with region IDs
+    background_image : ndarray
+        Background image (already rotated to match display orientation)
+    
+    Returns
+    -------
+    tuple
+        Filtered mask and labeled_mask
+    """
+    # Tissue presence threshold - only show masks where there's actual white matter/tissue
+    # White matter appears bright in MRI, typically 0.76+ on normalized scale
+    tissue_threshold = 0.76
+    
+    # Normalize background if needed
+    bg_normalized = background_image.copy()
+    if np.max(bg_normalized) > 1.0:
+        bg_normalized = bg_normalized / 255.0
+    
+    # Create tissue mask (True where tissue/white matter is present)
+    tissue_mask = bg_normalized >= tissue_threshold
+    
+    # Apply to both masks - only keep mask regions over actual tissue
+    filtered_mask = mask * tissue_mask.astype(np.uint8)
+    filtered_labeled_mask = labeled_mask * tissue_mask.astype(np.uint8)
+    
+    return filtered_mask, filtered_labeled_mask
+
+
+def _apply_background_mask_simple(mask, background_image):
+    """
+    Remove mask regions where there's insufficient tissue density (simple version for unlabeled masks).
+    
+    Parameters
+    ----------
+    mask : ndarray
+        Binary mask
+    background_image : ndarray
+        Background image (already rotated to match display orientation)
+    
+    Returns
+    -------
+    ndarray
+        Filtered mask
+    """
+    # Tissue presence threshold - only show masks where there's actual white matter/tissue
+    # White matter appears bright in MRI, typically 0.76+ on normalized scale
+    tissue_threshold = 0.76
+    
+    # Normalize background if needed
+    bg_normalized = background_image.copy()
+    if np.max(bg_normalized) > 1.0:
+        bg_normalized = bg_normalized / 255.0
+    
+    # Create tissue mask (True where tissue/white matter is present)
+    tissue_mask = bg_normalized >= tissue_threshold
+    
+    # Apply to mask - only keep mask regions over actual tissue
+    filtered_mask = mask * tissue_mask.astype(np.uint8)
+    
+    return filtered_mask
 
 
 def create_smart_brain_mask(image, method='adaptive_morphology', **kwargs):

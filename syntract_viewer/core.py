@@ -168,6 +168,8 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
 
         # Create mask if requested
         if save_masks and has_streamlines:
+            # Pass the non-rotated background - mask generation happens in the same coordinate space
+            
             if label_bundles:
                 mask, labeled_mask = create_fiber_mask(
                     streamlines_voxel, slice_idx, orientation='axial',
@@ -175,7 +177,8 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
                     density_threshold=density_threshold, gaussian_sigma=gaussian_sigma,
                     close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
                     label_bundles=True, min_bundle_size=min_bundle_size,
-                    static_streamline_threshold=0.1  # Require at least 0.1 streamline per pixel (any streamline)
+                    static_streamline_threshold=0.1,  # Require at least 0.1 streamline per pixel (any streamline)
+                    background_image=dark_field_slice
                 )
                 mask = np.rot90(mask)
                 labeled_mask = np.rot90(labeled_mask)
@@ -191,7 +194,8 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
                     density_threshold=density_threshold, gaussian_sigma=gaussian_sigma,
                     close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
                     min_bundle_size=min_bundle_size,
-                    static_streamline_threshold=0.1  # Require at least 0.1 streamline per pixel (any streamline)
+                    static_streamline_threshold=0.1,  # Require at least 0.1 streamline per pixel (any streamline)
+                    background_image=dark_field_slice
                 )
                 mask = np.rot90(mask)
                 # Apply vertical flip to match the image orientation (bottom to top)
@@ -202,6 +206,15 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
         if has_streamlines:
             segments = []
             colors = []
+            
+            # Tissue presence threshold - only render streamlines where there's actual white matter/tissue
+            # White matter appears bright in MRI. Using 0.76 threshold for bright tissue regions
+            # This ensures streamlines only appear in regions with dense tissue information
+            tissue_threshold = 0.76
+            background_rotated = np.rot90(dark_field_slice)
+            # Use ORIGINAL tissue data for anatomical checking, not augmented display
+            tissue_reference = np.rot90(slice_data)
+            
             for sl in streamlines_voxel:
                 sl_dense = densify_streamline(sl)
                 x = sl_dense[:, 0]
@@ -222,6 +235,41 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
                 base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.4)
 
                 for seg in segs:
+                    # DUAL THRESHOLD: Check both original tissue AND augmented display
+                    # Get midpoint of segment for checking
+                    midpoint = seg.mean(axis=0)
+                    x_mid, y_mid = int(round(midpoint[0])), int(round(midpoint[1]))
+                    
+                    # Check bounds
+                    if 0 <= y_mid < tissue_reference.shape[0] and 0 <= x_mid < tissue_reference.shape[1]:
+                        # THRESHOLD 1: Check ORIGINAL tissue intensity (anatomical validity)
+                        tissue_value = tissue_reference[y_mid, x_mid]
+                        tissue_max = np.max(tissue_reference)
+                        if tissue_max > 0:
+                            tissue_value_normalized = tissue_value / tissue_max
+                        else:
+                            tissue_value_normalized = 0.0
+                        
+                        # Skip if insufficient original tissue
+                        if tissue_value_normalized < tissue_threshold:
+                            continue
+                        
+                        # THRESHOLD 2: Check AUGMENTED display brightness (visual validity)
+                        augmented_value = background_rotated[y_mid, x_mid]
+                        augmented_max = np.max(background_rotated)
+                        if augmented_max > 0:
+                            augmented_normalized = augmented_value / augmented_max
+                        else:
+                            augmented_normalized = 0.0
+                        
+                        # Skip if augmented area is too dark (prevents black area rendering)
+                        # Threshold 0.65 = only render over bright areas (aggressively prevents dark rendering)
+                        if augmented_normalized < 0.65:
+                            continue
+                    else:
+                        # Out of bounds, skip
+                        continue
+                    
                     segments.append(seg)
                     colors.append(tract_color + (base_opacity,))
 
@@ -273,11 +321,15 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                              background_enhancement=None, cornucopia_augmentation=None,
                              truly_random=False, output_image_size=(1024, 1024),
                              use_high_density_masks=False, max_fiber_percentage=100.0,
-                             min_fiber_percentage=10.0):
+                             min_fiber_percentage=10.0, white_matter_only=False):
     """
     Visualize multiple coronal slices of a nifti file with tractography overlaid.
 
     Parameters
+    ----------
+    white_matter_only : bool, optional
+        If True, filter streamlines by tissue (0.76) and display (0.65) thresholds.
+        If False (default), render all streamlines regardless of background.
     ----------
     background_enhancement : str or dict, optional
         Background enhancement configuration to reduce pixelation
@@ -403,6 +455,8 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
             adaptive_gaussian_sigma = gaussian_sigma * size_scale
             adaptive_min_bundle_size = max(1, int(min_bundle_size * (size_scale * 0.001)))  # Tiny bundles allowed for larger images
             
+            # Pass the non-rotated background - mask generation happens in the same coordinate space
+            
             if label_bundles:
                 mask, labeled_mask = create_fiber_mask(
                     streamlines_voxel, slice_idx, orientation='coronal',
@@ -410,7 +464,8 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                     density_threshold=adaptive_density_threshold, gaussian_sigma=adaptive_gaussian_sigma,
                     close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
                     label_bundles=True, min_bundle_size=adaptive_min_bundle_size,
-                    static_streamline_threshold=0.1  # Require at least 0.1 streamline per pixel (any streamline)
+                    static_streamline_threshold=0.1,  # Require at least 0.1 streamline per pixel (any streamline)
+                    background_image=dark_field_slice
                 )
                 mask = np.rot90(mask)
                 labeled_mask = np.rot90(labeled_mask)
@@ -423,7 +478,8 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                     density_threshold=adaptive_density_threshold, gaussian_sigma=adaptive_gaussian_sigma,
                     close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
                     min_bundle_size=adaptive_min_bundle_size,
-                    static_streamline_threshold=0.1  # Require at least 0.1 streamline per pixel (any streamline)
+                    static_streamline_threshold=0.1,  # Require at least 0.1 streamline per pixel (any streamline)
+                    background_image=dark_field_slice
                 )
                 mask = np.rot90(mask)
                 fiber_masks.append(mask)
@@ -432,6 +488,12 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
         if has_streamlines:
             segments = []
             colors = []
+            # Prepare rotated background for augmented display checking
+            background_rotated = np.rot90(dark_field_slice)
+            # Use ORIGINAL tissue data for anatomical checking
+            tissue_reference = np.rot90(slice_data)
+            tissue_threshold = 0.76
+            
             for sl in streamlines_voxel:
                 sl_dense = densify_streamline(sl)
                 x = sl_dense[:, 0]
@@ -452,6 +514,33 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                 base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.4)
 
                 for seg in segs:
+                    # Only apply filtering if white_matter_only is enabled
+                    if white_matter_only:
+                        # DUAL THRESHOLD: Check both original tissue AND augmented display
+                        midpoint = seg.mean(axis=0)
+                        x_mid, y_mid = int(round(midpoint[0])), int(round(midpoint[1]))
+                        
+                        # Check bounds
+                        if 0 <= y_mid < tissue_reference.shape[0] and 0 <= x_mid < tissue_reference.shape[1]:
+                            # THRESHOLD 1: Original tissue (anatomical validity)
+                            tissue_value = tissue_reference[y_mid, x_mid]
+                            tissue_max = np.max(tissue_reference)
+                            tissue_value_normalized = tissue_value / tissue_max if tissue_max > 0 else 0.0
+                            
+                            if tissue_value_normalized < tissue_threshold:
+                                continue
+                            
+                            # THRESHOLD 2: Augmented display (visual validity)
+                            augmented_value = background_rotated[y_mid, x_mid]
+                            augmented_max = np.max(background_rotated)
+                            augmented_normalized = augmented_value / augmented_max if augmented_max > 0 else 0.0
+                            
+                            if augmented_normalized < 0.65:  # Skip black/dark areas (aggressive threshold)
+                                continue
+                        else:
+                            continue
+                    
+                    # Render segment (either passed filtering or filtering disabled)
                     segments.append(seg)
                     colors.append(tract_color + (base_opacity,))
 
@@ -475,11 +564,13 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
         if save_masks:
             if use_high_density_masks:
                 # Only generate and save high-density masks (skip regular masks)
+                # Pass the augmented dark_field_slice to ensure mask uses same data as visualization
                 _generate_and_apply_high_density_mask_coronal(
                     nifti_file, trk_file, output_file, slice_idx, 
                     max_fiber_percentage, tract_linewidth, mask_thickness,
                     density_threshold, gaussian_sigma, close_gaps, closing_footprint_size,
-                    label_bundles, min_bundle_size, output_image_size
+                    label_bundles, min_bundle_size, output_image_size,
+                    augmented_display_slice=dark_field_slice, white_matter_only=white_matter_only
                 )
             elif fiber_masks:
                 # Save regular masks only when high-density masks are not enabled
@@ -607,13 +698,16 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
         
         # Create mask if requested
         if save_masks and has_streamlines:
+            # Pass the non-rotated background - mask generation happens in the same coordinate space
+            
             mask = create_fiber_mask(
                 streamlines_voxel, slice_idx, orientation=view, 
                 dims=dims, thickness=mask_thickness, dilate=True,
                 density_threshold=density_threshold, gaussian_sigma=gaussian_sigma,
                 close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
                 min_bundle_size=min_bundle_size,
-                static_streamline_threshold=15  # Require at least 15 streamlines per pixel
+                static_streamline_threshold=15,  # Require at least 15 streamlines per pixel
+                background_image=dark_field_slice
             )
             mask = np.rot90(mask)
             fiber_masks[view] = mask
@@ -622,6 +716,12 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
         if has_streamlines:
             segments = []
             colors = []
+            # Prepare rotated background for augmented display checking
+            background_rotated = np.rot90(dark_field_slice)
+            # Use ORIGINAL tissue data for anatomical checking
+            tissue_reference = np.rot90(slice_data)
+            tissue_threshold = 0.76
+            
             for sl in streamlines_voxel:
                 sl_dense = densify_streamline(sl)
                 
@@ -662,6 +762,30 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
                 base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.4)
                 
                 for seg in segs:
+                    # DUAL THRESHOLD: Check both original tissue AND augmented display
+                    midpoint = seg.mean(axis=0)
+                    x_mid, y_mid = int(round(midpoint[0])), int(round(midpoint[1]))
+                    
+                    # Check bounds
+                    if 0 <= y_mid < tissue_reference.shape[0] and 0 <= x_mid < tissue_reference.shape[1]:
+                        # THRESHOLD 1: Original tissue (anatomical validity)
+                        tissue_value = tissue_reference[y_mid, x_mid]
+                        tissue_max = np.max(tissue_reference)
+                        tissue_value_normalized = tissue_value / tissue_max if tissue_max > 0 else 0.0
+                        
+                        if tissue_value_normalized < tissue_threshold:
+                            continue
+                        
+                        # THRESHOLD 2: Augmented display (visual validity)
+                        augmented_value = background_rotated[y_mid, x_mid]
+                        augmented_max = np.max(background_rotated)
+                        augmented_normalized = augmented_value / augmented_max if augmented_max > 0 else 0.0
+                        
+                        if augmented_normalized < 0.65:  # Skip black/dark areas (aggressive threshold)
+                            continue
+                    else:
+                        continue
+                    
                     segments.append(seg)
                     colors.append(tract_color + (base_opacity,))
                     
@@ -733,8 +857,19 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
                                                   max_fiber_percentage, tract_linewidth, mask_thickness,
                                                   density_threshold, gaussian_sigma, close_gaps, 
                                                   closing_footprint_size, label_bundles, min_bundle_size, 
-                                                  output_image_size, static_streamline_threshold=25):
-    """Generate and apply high-density mask for coronal view."""
+                                                  output_image_size, static_streamline_threshold=25,
+                                                  augmented_display_slice=None, white_matter_only=False):
+    """Generate and apply high-density mask for coronal view.
+    
+    Parameters
+    ----------
+    augmented_display_slice : ndarray, optional
+        Pre-computed augmented display slice from visualization (BEFORE rotation).
+        If provided, this will be used instead of recomputing augmentation.
+    white_matter_only : bool, optional
+        If True, filter streamlines by tissue/display thresholds before mask generation.
+        If False (default), generate mask from all streamlines.
+    """
     import nibabel as nib
     import numpy as np
     from dipy.io.streamline import load_tractogram
@@ -755,8 +890,9 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
         target_mask_dims = dims
         print(f"Using patch NIfTI dimensions for mask: {dims}")
     
-    # Load tractogram with bbox_valid_check disabled to handle coordinate issues
-    tractogram = load_tractogram(trk_file, nii_img, bbox_valid_check=False)
+    # Load tractogram using simple load (no validation) to handle registered TRK files
+    from nibabel.streamlines import load as load_trk
+    tractogram = load_trk(trk_file)
     streamlines = tractogram.streamlines
     
     # Convert streamlines to voxel coordinates
@@ -766,6 +902,159 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
             # Apply inverse affine to convert from world to voxel coordinates
             sl_voxel = np.dot(sl, affine_inv[:3, :3].T) + affine_inv[:3, 3]
             streamlines_voxel.append(sl_voxel)
+    
+    # Use high fiber percentage for dense mask (select BEFORE filtering and scaling)
+    n_select = max(1, int(len(streamlines_voxel) * max_fiber_percentage / 100.0))
+    selected_streamlines = streamlines_voxel[:n_select]
+    
+    # Filter streamlines by tissue and display thresholds BEFORE scaling
+    # Create a validity mask based on tissue and display thresholds
+    # This will be used to filter the final mask, not the streamlines themselves
+    nii_data = nii_img.get_fdata()
+    slice_data = nii_data[:, slice_idx, :]
+    
+    # Normalize slice_data to [0, 1] for consistent threshold comparison
+    if np.max(slice_data) > 1.0:
+        slice_data_normalized = slice_data / np.max(slice_data) if np.max(slice_data) > 0 else slice_data
+    else:
+        slice_data_normalized = slice_data
+    
+    # Use pre-computed augmented display if provided, otherwise generate it
+    if augmented_display_slice is not None:
+        # Use the exact same augmented display as the visualization
+        display_slice = augmented_display_slice
+        print("   High-density mask: Using pre-computed augmented display from visualization")
+    else:
+        # Fallback: Generate augmentation (may not match visualization)
+        import time
+        augmentation_seed = int(time.time() * 1000000 + slice_idx) % (2**32)
+        
+        from .contrast import apply_comprehensive_slice_processing
+        slice_enhanced = apply_comprehensive_slice_processing(
+            slice_data,
+            background_preset='preserve_edges',
+            cornucopia_preset='clean_optical',
+            contrast_method='clahe',
+            background_params=None,
+            cornucopia_params=None,
+            contrast_params={'clip_limit': 0.01, 'tile_grid_size': (32, 32)},
+            random_state=augmentation_seed
+        )
+        
+        from .effects import apply_balanced_dark_field_effect
+        intensity_params = {
+            'gamma': 1.0,
+            'brightness': 0.0,
+            'contrast': 1.0,
+            'threshold': 0.02,
+            'contrast_stretch': (0.5, 99.5),
+            'background_boost': 1.0,
+            'color_scheme': 'bw',
+            'blue_tint': 0.0
+        }
+        display_slice = apply_balanced_dark_field_effect(
+            slice_enhanced,
+            intensity_params,
+            random_state=augmentation_seed,
+            force_background_black=True
+        )
+    
+    # CRITICAL: Use SAME coordinate system as visualization rendering
+    # Visualization uses ROTATED data: tissue_reference = np.rot90(slice_data)
+    tissue_reference = np.rot90(slice_data_normalized)
+    background_rotated = np.rot90(display_slice)
+    
+    # Only apply tissue/display filtering if white_matter_only is enabled
+    if white_matter_only:
+        # Use EXACT same thresholds as visualization (lines 212, 267)
+        tissue_threshold = 0.76  # Match visualization line 212
+        display_threshold = 0.65  # Match visualization line 267
+        
+        # Normalize by max (per-slice, matching visualization lines 247, 257)
+        tissue_max = np.max(tissue_reference)
+        if tissue_max > 0:
+            tissue_normalized_for_check = tissue_reference / tissue_max
+        else:
+            tissue_normalized_for_check = tissue_reference
+        
+        display_max = np.max(background_rotated)
+        if display_max > 0:
+            display_normalized_for_check = background_rotated / display_max
+        else:
+            display_normalized_for_check = background_rotated
+        
+        print(f"   High-density mask: White matter filtering ENABLED: tissue={tissue_threshold}, display={display_threshold}")
+        print(f"   High-density mask: Tissue range [{np.min(tissue_normalized_for_check):.3f}, {np.max(tissue_normalized_for_check):.3f}], Display range [{np.min(display_normalized_for_check):.3f}, {np.max(display_normalized_for_check):.3f}]")
+    else:
+        print("   High-density mask: White matter filtering DISABLED - using all streamlines")
+    
+    # Point-by-point filtering based on white_matter_only setting
+    if white_matter_only:
+        # CORRECT APPROACH: Filter streamlines POINT-BY-POINT using ROTATED coordinates
+        # Match visualization's coordinate system exactly
+        filtered_streamlines = []
+        total_points_before = 0
+        total_points_after = 0
+        points_failed_tissue = 0
+        points_failed_display = 0
+        points_out_of_bounds = 0
+        
+        for streamline in selected_streamlines:
+            total_points_before += len(streamline)
+            
+            # Check each point against validity thresholds
+            valid_points = []
+            for point in streamline:
+                x_coord = int(np.round(point[0]))
+                y_coord = int(np.round(point[1]))
+                z_coord = int(np.round(point[2]))
+                
+                # CORONAL ORIENTATION: Check if point is near this slice (slice along Y axis)
+                # For coronal: slice_idx is the Y position, check Y coordinate
+                distance_to_slice = abs(y_coord - slice_idx)
+                if distance_to_slice > 2.0:
+                    # Skip points far from slice (won't affect this slice's visualization)
+                    continue
+                
+                # Convert to plot coordinates for CORONAL view (match visualization line 503)
+                # After np.rot90, (X, Z) becomes (Z, X), so we plot (x, z_plot)
+                z_plot = dims[2] - z_coord - 1
+                
+                # Check bounds in ROTATED coordinate system (row=z_plot, col=x_coord)
+                if 0 <= z_plot < tissue_normalized_for_check.shape[0] and 0 <= x_coord < tissue_normalized_for_check.shape[1]:
+                    # Check tissue threshold (match visualization line 509)
+                    tissue_value = tissue_normalized_for_check[z_plot, x_coord]
+                    if tissue_value < tissue_threshold:
+                        # Skip this point - insufficient tissue
+                        points_failed_tissue += 1
+                        continue
+                    
+                    # Check display threshold (match visualization line 517)
+                    display_value = display_normalized_for_check[z_plot, x_coord]
+                    if display_value < display_threshold:
+                        # Skip this point - too dark
+                        points_failed_display += 1
+                        continue
+                    
+                    # Point passes both thresholds
+                    valid_points.append(point)
+                else:
+                    # Out of bounds, skip this point
+                    points_out_of_bounds += 1
+            
+            # Only keep streamlines that have at least some valid points
+            if len(valid_points) >= 2:  # Need at least 2 points to draw a line
+                filtered_streamlines.append(np.array(valid_points))
+                total_points_after += len(valid_points)
+    
+        print(f"   High-density mask: Filtered streamlines point-by-point: {len(selected_streamlines)} streamlines → {len(filtered_streamlines)} streamlines")
+        print(f"   High-density mask: Total points: {total_points_before} → {total_points_after} ({100*total_points_after/max(1,total_points_before):.1f}% retained)")
+        print(f"   High-density mask: Points rejected - tissue: {points_failed_tissue}, display: {points_failed_display}, out_of_bounds: {points_out_of_bounds}")
+        
+        selected_streamlines = filtered_streamlines
+    else:
+        # No filtering - use all streamlines
+        print(f"   High-density mask: Using all {len(selected_streamlines)} streamlines without filtering")
     
     # Scale streamline coordinates to target mask dimensions if dimensions differ
     if target_mask_dims != dims:
@@ -777,26 +1066,20 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
         print(f"Scaling streamlines by factors: {scale_factors}")
         
         scaled_streamlines = []
-        for sl in streamlines_voxel:
+        for sl in selected_streamlines:
             scaled_sl = sl * scale_factors
             scaled_streamlines.append(scaled_sl)
-        streamlines_voxel = scaled_streamlines
-    
-    # Use high fiber percentage for dense mask
-    n_select = max(1, int(len(streamlines_voxel) * max_fiber_percentage / 100.0))
-    selected_streamlines = streamlines_voxel[:n_select]
-    
-    # Adaptive parameters based on output image size
+        selected_streamlines = scaled_streamlines
     output_size = max(output_image_size) if output_image_size else 256
     size_scale = output_size / 256.0  # Scale factor relative to base 256x256
     
-    # HIGH-DENSITY specific parameters - extremely aggressive filtering for only largest bundles
-    adaptive_thickness = max(10, int(mask_thickness * size_scale * 6))  # Much thicker lines for prominent bundles
-    # Extremely aggressive density threshold - only largest, most prominent bundles
-    high_density_threshold = max(0.5, 0.8 * (1.0 / max(1.0, size_scale * 0.3)))  # Very aggressive threshold for dense areas
-    adaptive_gaussian_sigma = gaussian_sigma * size_scale * 1.3  # Moderate smoothing for connectivity
-    # Extremely permissive minimum bundle size - keeps tiny bundles
-    high_density_min_bundle_size = max(1, int(5 * size_scale))  # Extremely permissive bundle size filtering
+    # BALANCED mask parameters - capture filtered streamlines with moderate sensitivity
+    adaptive_thickness = max(6, int(mask_thickness * size_scale * 3))  # Moderate line thickness
+    # Low but not minimal density threshold - capture small bundles but filter noise
+    high_density_threshold = 0.15  # Moderate threshold to accept small streamlines while filtering noise
+    adaptive_gaussian_sigma = gaussian_sigma * size_scale * 1.0  # Standard smoothing
+    # Permissive minimum bundle size - accept small bundles
+    high_density_min_bundle_size = max(1, int(2 * size_scale))  # Small bundles accepted
     
     print(f"High-density mask parameters for {output_size}px: thickness={adaptive_thickness}, density_threshold={high_density_threshold:.3f}, gaussian_sigma={adaptive_gaussian_sigma:.1f}, min_bundle_size={high_density_min_bundle_size}")
     
@@ -807,31 +1090,22 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
         selected_streamlines, slice_idx, orientation='coronal', dims=target_mask_dims,
         thickness=adaptive_thickness, dilate=True, density_threshold=high_density_threshold,
         gaussian_sigma=adaptive_gaussian_sigma, close_gaps=True,  # Enable gap closing for connectivity
-        closing_footprint_size=max(3, int(closing_footprint_size * size_scale * 1.2)),  # Moderate footprint for bundle joining
+        closing_footprint_size=max(5, int(closing_footprint_size * size_scale * 1.5)),  # Larger footprint for better connectivity
         label_bundles=False, min_bundle_size=high_density_min_bundle_size,
-        static_streamline_threshold=0.1  # Require at least 0.1 streamline per pixel for high-density masks
+        static_streamline_threshold=0.05  # Low threshold - accept sparse streamlines
     )
     
-    # Additional processing to limit to at most 4 largest bundles
+    # No restrictive bundle filtering - keep all filtered streamlines regardless of size/count
+    # This ensures even sparse streamlines are captured in the mask
     if np.any(high_density_mask):
         from skimage import measure
         labeled_mask = measure.label(high_density_mask, connectivity=2)
         regions = measure.regionprops(labeled_mask)
-        
-        if len(regions) > 4:
-            # Sort regions by area (largest first) and keep only top 4
-            regions_sorted = sorted(regions, key=lambda r: r.area, reverse=True)
-            top_4_regions = regions_sorted[:4]
-            
-            # Create new mask with only top 4 largest bundles
-            filtered_mask = np.zeros_like(high_density_mask)
-            for region in top_4_regions:
-                filtered_mask[labeled_mask == region.label] = 1
-            high_density_mask = filtered_mask
-            
-            print(f"Limited high-density mask to top 4 bundles (from {len(regions)} total)")
-        else:
-            print(f"High-density mask contains {len(regions)} bundles (≤4, keeping all)")
+        print(f"High-density mask contains {len(regions)} bundle regions, keeping all")
+    
+    # No need for post-mask filtering since we filtered streamlines point-by-point
+    # The mask is already generated only from valid streamline points
+    print(f"   High-density mask: Generated from filtered streamlines, {np.sum(high_density_mask)} pixels")
     
     # Apply the same rotation as the regular masks
     high_density_mask = np.rot90(high_density_mask)

@@ -1,20 +1,28 @@
 [build-system]
-requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+requires = ["setuptools>=61.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "SynTract"
-description = "MRI synthesis and tractography processing tools"
+name = "syntract"
+version = "1.0.0"
+description = "Advanced NIfTI Tractography Visualization with Dark Field Effects and Machine Learning Dataset Generation"
 readme = "README.md"
 requires-python = ">=3.8"
 license = {text = "MIT"}
 authors = [
-    {name = "SynTract Contributors"}
+    {name = "Sparsh Makharia, LINC Team"}
+]
+keywords = [
+    "tractography", "visualization", "dark-field", "neuroimaging", "nifti", 
+    "machine-learning", "medical-imaging", "augmentation", "brain-mapping", 
+    "white-matter", "streamlines", "fiber-tracking", "dipy", "dataset-generation",
+    "mri", "resampling", "interpolation", "ants", "registration", 
+    "gpu-acceleration", "parallel-processing", "cornucopia"
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
+    "Intended Audience :: Healthcare Industry",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.8",
@@ -22,8 +30,48 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Topic :: Scientific/Engineering :: Visualization",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
-dynamic = ["version"]
+dependencies = [
+    "numpy>=1.18.0",
+    "nibabel>=3.0.0",
+    "matplotlib>=3.3.0",
+    "scikit-image>=0.17.0",
+    "scipy>=1.5.0",
+    "dipy>=1.4.0",
+    "joblib>=1.0.0",
+    "tqdm>=4.50.0",
+    "opencv-python>=4.5.0",
+    "psutil>=5.8.0",
+    "cornucopia>=0.3.0",
+]
+
+[project.optional-dependencies]
+gpu = [
+    "cupy>=9.0.0",
+    "numba>=0.50.0",
+]
+dev = [
+    "pytest>=6.0",
+    "pytest-cov>=2.0",
+    "black>=21.0",
+    "flake8>=3.8",
+]
+all = [
+    "cupy>=9.0.0",
+    "numba>=0.50.0",
+]
+
+[project.scripts]
+syntract = "syntract:main"
+syntract-visualize = "syntract_viewer.core:main"
+syntract-process = "synthesis.main:main"
+
+[project.urls]
+Homepage = "https://github.com/Sparsh57/Syntract"
+"Bug Tracker" = "https://github.com/Sparsh57/Syntract/issues"
+"Source Code" = "https://github.com/Sparsh57/Syntract"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -37,4 +85,8 @@ markers = [
 minversion = "6.0"
 
 [tool.setuptools]
-packages = ["synthesis", "syntract_viewer"] 
+packages = ["synthesis", "syntract_viewer"]
+include-package-data = true
+
+[tool.setuptools.package-data]
+"*" = ["*.json", "*.yaml", "*.yml"] 

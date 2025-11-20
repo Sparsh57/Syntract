@@ -13,14 +13,14 @@ from pathlib import Path
 
 try:
     from .core import visualize_nifti_with_trk, visualize_nifti_with_trk_coronal, visualize_multiple_views
-    from .contrast import apply_enhanced_contrast_and_augmentation, CORNUCOPIA_INTEGRATION_AVAILABLE
+    from .contrast import apply_enhanced_contrast_and_augmentation, apply_contrast_enhancement, CORNUCOPIA_INTEGRATION_AVAILABLE
     from .masking import create_aggressive_brain_mask, create_fiber_mask
     from .effects import apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
     from .utils import select_random_streamlines, densify_streamline, generate_tract_color_variation, get_colormap
     from .orange_blob_generator import apply_orange_artifacts
 except ImportError:
     from core import visualize_nifti_with_trk, visualize_nifti_with_trk_coronal, visualize_multiple_views
-    from contrast import apply_enhanced_contrast_and_augmentation, CORNUCOPIA_INTEGRATION_AVAILABLE
+    from contrast import apply_enhanced_contrast_and_augmentation, apply_contrast_enhancement, CORNUCOPIA_INTEGRATION_AVAILABLE
     from masking import create_aggressive_brain_mask, create_fiber_mask
     from effects import apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
     from utils import select_random_streamlines, densify_streamline, generate_tract_color_variation, get_colormap
@@ -610,7 +610,8 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
         elif randomize:
             # For true randomization, use current time + example index as seed
             import time
-            true_random_seed = int(time.time() * 1000000) + i * 1000 + random.randint(1, 999)
+            # Ensure seed is within valid range (0 to 2^32 - 1)
+            true_random_seed = (int(time.time() * 1000) + i * 1000 + random.randint(1, 999)) % (2**32)
             random.seed(true_random_seed)
             np.random.seed(true_random_seed)
             print(f"Example {i+1} using truly random seed: {true_random_seed}")
@@ -812,36 +813,53 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
              interpolation='bicubic', vmin=brain_min, vmax=brain_max)
     ax.set_facecolor('black')
     
-    # Create mask if requested
-    if save_masks:
+    # Filter streamlines based on tissue and display thresholds BEFORE rendering and masking
+    # This ensures masks only show where streamlines actually get rendered
+    filtered_streamlines = _filter_streamlines_by_tissue_and_display(
+        selected_streamlines, slice_mode, slice_idx, dims,
+        tissue_reference=slice_data,
+        display_reference=dark_field_slice
+    )
+    
+    print(f"   Filtered {len(selected_streamlines)} -> {len(filtered_streamlines)} streamlines based on tissue/display thresholds")
+    
+    # Create masks from FILTERED streamlines (so masks match what's actually rendered)
+    if save_masks and len(filtered_streamlines) > 0:
         label_bundles = kwargs.get('label_bundles', False)
         if label_bundles:
             mask, labeled_mask = create_fiber_mask(
-                selected_streamlines, slice_idx, orientation=slice_mode,
+                filtered_streamlines, slice_idx, orientation=slice_mode,
                 dims=dims, thickness=kwargs.get('mask_thickness', 1),
                 density_threshold=kwargs.get('density_threshold', 0.15),
                 gaussian_sigma=kwargs.get('gaussian_sigma', 2.0),
                 close_gaps=kwargs.get('close_gaps', False),
                 closing_footprint_size=kwargs.get('closing_footprint_size', 5),
                 label_bundles=True,
-                min_bundle_size=kwargs.get('min_bundle_size', 20)
+                min_bundle_size=kwargs.get('min_bundle_size', 20),
+                background_image=None  # No additional filtering needed
             )
             mask = np.rot90(mask)
             labeled_mask = np.rot90(labeled_mask)
         else:
             mask = create_fiber_mask(
-                selected_streamlines, slice_idx, orientation=slice_mode,
+                filtered_streamlines, slice_idx, orientation=slice_mode,
                 dims=dims, thickness=kwargs.get('mask_thickness', 1),
                 density_threshold=kwargs.get('density_threshold', 0.15),
                 gaussian_sigma=kwargs.get('gaussian_sigma', 2.0),
                 close_gaps=kwargs.get('close_gaps', False),
                 closing_footprint_size=kwargs.get('closing_footprint_size', 5),
-                min_bundle_size=kwargs.get('min_bundle_size', 20)
+                min_bundle_size=kwargs.get('min_bundle_size', 20),
+                background_image=None  # No additional filtering needed
             )
             mask = np.rot90(mask)
     
-    # Overlay streamlines
-    _add_streamlines_to_plot(ax, selected_streamlines, slice_mode, slice_idx, dims, tract_linewidth, example_random_state, background_effect)
+    # Overlay streamlines (use FILTERED streamlines so rendering matches masks)
+    _add_streamlines_to_plot(
+        ax, filtered_streamlines, slice_mode, slice_idx, dims, 
+        tract_linewidth, example_random_state, background_effect, 
+        background_image=np.rot90(dark_field_slice),  # For display only
+        tissue_reference=None  # Already filtered, no need to re-check
+    )
     
     # Add orange injection site streamlines if enabled - EXTREME VISIBILITY VERSION
     if enable_orange_blobs:  # Always add when enabled, ignore probability for now
@@ -986,14 +1004,132 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
     plt.close()
 
 
-def _add_streamlines_to_plot(ax, streamlines, slice_mode, slice_idx, dims, tract_linewidth, random_state, background_effect='balanced'):
-    """Add streamlines to the plot with opacity adjusted based on background effect."""
+def _filter_streamlines_by_tissue_and_display(streamlines, slice_mode, slice_idx, dims, tissue_reference, display_reference):
+    """
+    Filter streamlines based on dual threshold: tissue presence AND display brightness.
+    Returns only streamlines that pass both checks.
+    
+    Parameters
+    ----------
+    streamlines : list
+        List of streamlines to filter
+    slice_mode : str
+        Orientation ('axial', 'coronal', 'sagittal')
+    slice_idx : int
+        Slice index
+    dims : tuple
+        Volume dimensions
+    tissue_reference : ndarray
+        Original tissue data (NOT rotated, NOT augmented)
+    display_reference : ndarray
+        Augmented display data (NOT rotated)
+    
+    Returns
+    -------
+    list
+        Filtered streamlines that pass both thresholds
+    """
+    try:
+        from .utils import densify_streamline
+    except ImportError:
+        from utils import densify_streamline
+    
+    tissue_threshold = 0.76
+    display_threshold = 0.65
+    
+    print(f"   [FILTER DEBUG] Filtering {len(streamlines)} streamlines with tissue≥{tissue_threshold}, display≥{display_threshold}")
+    print(f"   [FILTER DEBUG] Tissue ref shape: {tissue_reference.shape}, range: [{np.min(tissue_reference):.2f}, {np.max(tissue_reference):.2f}]")
+    print(f"   [FILTER DEBUG] Display ref shape: {display_reference.shape}, range: [{np.min(display_reference):.2f}, {np.max(display_reference):.2f}]")
+    
+    # Normalize references
+    tissue_max = np.max(tissue_reference)
+    display_max = np.max(display_reference)
+    
+    filtered = []
+    
+    for sl in streamlines:
+        # Densify for accurate checking
+        sl_dense = densify_streamline(sl)
+        
+        # Project based on slice mode
+        if slice_mode == "coronal":
+            y = sl_dense[:, 1]
+            distance_to_slice = np.abs(y - slice_idx)
+            if np.min(distance_to_slice) > 2.0:
+                continue
+            x = sl_dense[:, 0]
+            z = sl_dense[:, 2]
+            # Check points in slice coordinates
+            check_points = np.column_stack([x, z])
+        elif slice_mode == "axial":
+            z = sl_dense[:, 2]
+            distance_to_slice = np.abs(z - slice_idx)
+            if np.min(distance_to_slice) > 2.0:
+                continue
+            x = sl_dense[:, 0]
+            y = sl_dense[:, 1]
+            check_points = np.column_stack([x, y])
+        else:  # sagittal
+            x = sl_dense[:, 0]
+            distance_to_slice = np.abs(x - slice_idx)
+            if np.min(distance_to_slice) > 2.0:
+                continue
+            y = sl_dense[:, 1]
+            z = sl_dense[:, 2]
+            check_points = np.column_stack([y, z])
+        
+        # Check if ANY point of this streamline passes both thresholds
+        passes = False
+        for pt in check_points:
+            x_coord = int(np.clip(pt[0], 0, tissue_reference.shape[0] - 1))
+            y_coord = int(np.clip(pt[1], 0, tissue_reference.shape[1] - 1))
+            
+            # Check tissue
+            tissue_val = tissue_reference[x_coord, y_coord] / tissue_max if tissue_max > 0 else 0.0
+            if tissue_val < tissue_threshold:
+                continue
+            
+            # Check display
+            display_val = display_reference[x_coord, y_coord] / display_max if display_max > 0 else 0.0
+            if display_val < display_threshold:
+                continue
+            
+            # This point passes both thresholds
+            passes = True
+            break
+        
+        if passes:
+            filtered.append(sl)
+    
+    print(f"   [FILTER DEBUG] Result: {len(filtered)}/{len(streamlines)} streamlines passed filtering")
+    
+    return filtered
+
+
+def _add_streamlines_to_plot(ax, streamlines, slice_mode, slice_idx, dims, tract_linewidth, random_state, background_effect='balanced', background_image=None, tissue_reference=None):
+    """
+    Add streamlines to the plot with opacity adjusted based on background effect.
+    
+    Parameters
+    ----------
+    background_image : ndarray, optional
+        The background image for display (already rotated, augmented with cornucopia).
+    tissue_reference : ndarray, optional
+        The original tissue data (already rotated) to check tissue presence.
+        If provided, streamlines will only be drawn where actual tissue is present.
+        This should be the ORIGINAL brain data, not the cornucopia-augmented version.
+    """
     from matplotlib.collections import LineCollection
     
     segments = []
     colors = []
 
     opacity_multiplier = 0.5
+    
+    # Tissue presence threshold - only render streamlines where there's actual white matter/tissue
+    # White matter appears bright in MRI, typically 0.76+ on normalized scale
+    # This ensures streamlines only appear in regions with dense tissue information
+    tissue_threshold = 0.76
     
     for sl in streamlines:
         sl_dense = densify_streamline(sl)
@@ -1048,6 +1184,44 @@ def _add_streamlines_to_plot(ax, streamlines, slice_mode, slice_idx, dims, tract
         adjusted_opacity = min(1.0, base_opacity * opacity_multiplier)  # Cap at 1.0
         
         for seg in segs:
+            # DUAL THRESHOLD: Check both original tissue AND augmented display
+            # This prevents streamlines over areas that cornucopia darkened to black
+            if tissue_reference is not None:
+                # Get midpoint of segment for checking
+                midpoint = seg.mean(axis=0)
+                x_mid, y_mid = int(round(midpoint[0])), int(round(midpoint[1]))
+                
+                # Check bounds
+                if 0 <= y_mid < tissue_reference.shape[0] and 0 <= x_mid < tissue_reference.shape[1]:
+                    # THRESHOLD 1: Check ORIGINAL tissue intensity (anatomical validity)
+                    tissue_value = tissue_reference[y_mid, x_mid]
+                    tissue_max = np.max(tissue_reference)
+                    if tissue_max > 0:
+                        tissue_value_normalized = tissue_value / tissue_max
+                    else:
+                        tissue_value_normalized = 0.0
+                    
+                    # Skip if insufficient original tissue density
+                    if tissue_value_normalized < tissue_threshold:
+                        continue
+                    
+                    # THRESHOLD 2: Check AUGMENTED display brightness (visual validity)
+                    # Prevents rendering over black areas created by cornucopia
+                    augmented_value = background_image[y_mid, x_mid]
+                    augmented_max = np.max(background_image)
+                    if augmented_max > 0:
+                        augmented_normalized = augmented_value / augmented_max
+                    else:
+                        augmented_normalized = 0.0
+                    
+                    # Skip if augmented area is too dark (black/very dark grey)
+                    # Threshold 0.65 = only render over bright areas (aggressively prevents dark space rendering)
+                    if augmented_normalized < 0.65:
+                        continue
+                else:
+                    # Out of bounds, skip
+                    continue
+            
             segments.append(seg)
             colors.append(tract_color + (adjusted_opacity,))
     
@@ -1090,10 +1264,68 @@ def _generate_high_density_masks(nifti_file, trk_file, output_dir, prefix, slice
         streamlines_voxel, max_fiber_percentage, random_state=random_state
     )
     
+    # Load and process slice data for filtering
+    nii_data = nii_img.get_fdata()
+    if slice_mode == "coronal":
+        slice_data = nii_data[:, slice_idx, :]
+    elif slice_mode == "axial":
+        slice_data = nii_data[:, :, slice_idx]
+    else:  # sagittal
+        slice_data = nii_data[slice_idx, :, :]
+    
+    # Apply contrast enhancement to slice
+    enhanced_slice = apply_contrast_enhancement(
+        slice_data, 
+        clip_limit=contrast_params.get('clip_limit', 0.01),
+        tile_grid_size=contrast_params.get('tile_grid_size', (8, 8))
+    )
+    
+    # Apply dark-field effect to get display reference (same as visualization)
+    # Use default intensity params for consistent filtering
+    intensity_params = {
+        'gamma': 1.0,
+        'brightness': 0.0,
+        'contrast': 1.0,
+        'color_scheme': 'bw',
+        'blue_tint': 0.0
+    }
+    
+    # Use balanced dark field effect (default)
+    display_slice = apply_balanced_dark_field_effect(
+        enhanced_slice,
+        intensity_params,
+        random_state=random_state,
+        force_background_black=True
+    )
+    
+    # Apply tissue/display filtering to high-density masks
+    # Check ORIGINAL tissue (slice_data) and AUGMENTED display (display_slice)
+    filtered_streamlines = _filter_streamlines_by_tissue_and_display(
+        selected_streamlines, slice_mode, slice_idx, dims,
+        tissue_reference=slice_data,
+        display_reference=display_slice  # Use augmented display for threshold check
+    )
+    
+    print(f"   High-density mask: Filtered {len(selected_streamlines)} -> {len(filtered_streamlines)} streamlines")
+    
+    # Create mask from FILTERED streamlines
+    if len(filtered_streamlines) == 0:
+        print(f"   WARNING: No streamlines passed filtering for high-density mask at slice {slice_idx}")
+        # Create empty masks
+        empty_mask = np.zeros((dims[0], dims[1]) if slice_mode == "axial" else 
+                              (dims[0], dims[2]) if slice_mode == "coronal" else 
+                              (dims[1], dims[2]), dtype=np.uint8)
+        if label_bundles:
+            high_density_masks[slice_idx] = np.rot90(empty_mask)
+            high_density_labeled_masks[slice_idx] = np.rot90(empty_mask)
+        else:
+            high_density_masks[slice_idx] = np.rot90(empty_mask)
+        return
+    
     # Create mask
     if label_bundles:
         mask, labeled_mask = create_fiber_mask(
-            selected_streamlines, slice_idx, orientation=slice_mode,
+            filtered_streamlines, slice_idx, orientation=slice_mode,
             dims=dims, thickness=mask_thickness, dilate=True,
             density_threshold=density_threshold, gaussian_sigma=gaussian_sigma,
             close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
@@ -1103,7 +1335,7 @@ def _generate_high_density_masks(nifti_file, trk_file, output_dir, prefix, slice
         high_density_labeled_masks[slice_idx] = np.rot90(labeled_mask)
     else:
         mask = create_fiber_mask(
-            selected_streamlines, slice_idx, orientation=slice_mode,
+            filtered_streamlines, slice_idx, orientation=slice_mode,
             dims=dims, thickness=mask_thickness, dilate=True,
             density_threshold=density_threshold, gaussian_sigma=gaussian_sigma,
             close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,

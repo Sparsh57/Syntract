@@ -102,6 +102,7 @@ def run_visualization_stage(nifti_file, trk_file, args, output_image_size=(1024,
     viz_args.tract_linewidth = 1.0
     viz_args.save_masks = args.save_masks
     viz_args.use_high_density_masks = args.use_high_density_masks
+    viz_args.white_matter_only = args.white_matter_only
     viz_args.label_bundles = args.label_bundles
     viz_args.enable_orange_blobs = args.enable_orange_blobs
     viz_args.orange_blob_probability = args.orange_blob_probability
@@ -332,7 +333,7 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                     skip_synthesis=False, disable_patch_processing=False,
                     n_examples=10, viz_prefix="synthetic_",
                     enable_orange_blobs=False, orange_blob_probability=0.3,
-                    save_masks=True, use_high_density_masks=True, mask_thickness=1,
+                    save_masks=True, use_high_density_masks=True, white_matter_only=False, mask_thickness=1,
                     density_threshold=0.6, min_bundle_size=2000, label_bundles=False,
                     output_image_size=None, cleanup_intermediate=True):
     """Main processing function"""
@@ -456,7 +457,8 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                                 min_bundle_size=min_bundle_size,
                                 enable_orange_blobs=enable_orange_blobs,
                                 orange_blob_probability=orange_blob_probability,
-                                output_image_size=output_image_size
+                                output_image_size=output_image_size,
+                                white_matter_only=white_matter_only
                             )
                     
                     print(f"Patch-first optimization complete!")
@@ -703,6 +705,8 @@ Examples:
                            help="Minimum size for bundle detection (default: 2000, only keeps very large prominent bundles)")
     mask_group.add_argument("--label_bundles", action="store_true",
                            help="Label individual fiber bundles with distinct colors (default: False)")
+    mask_group.add_argument("--white_matter_only", action="store_true", default=False,
+                           help="Filter streamlines to only render over white matter tissue (tissue threshold 0.76, display threshold 0.65)")
     
     
     args = parser.parse_args()
@@ -729,6 +733,9 @@ Examples:
     use_high_density_masks = not args.no_high_density_masks if hasattr(args, 'no_high_density_masks') else True
     if hasattr(args, 'use_high_density_masks') and args.use_high_density_masks:
         use_high_density_masks = True
+    
+    # Handle white matter filtering parameter (default False - render all streamlines)
+    white_matter_only = args.white_matter_only if hasattr(args, 'white_matter_only') else False
     
     # Handle cleanup parameter (default True unless explicitly disabled)
     cleanup_intermediate = not getattr(args, 'no_cleanup_intermediate', False)
@@ -766,6 +773,7 @@ Examples:
         orange_blob_probability=args.orange_blob_probability,
         save_masks=args.save_masks,
         use_high_density_masks=use_high_density_masks,
+        white_matter_only=white_matter_only,
         mask_thickness=args.mask_thickness,
         density_threshold=args.density_threshold,
         min_bundle_size=args.min_bundle_size,
