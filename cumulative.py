@@ -1156,7 +1156,8 @@ def process_patches_inmemory(
                         label_bundles=False,
                         min_bundle_size=2000,
                         output_image_size=output_image_size,
-                        static_streamline_threshold=0.1
+                        static_streamline_threshold=0.1,
+                        white_matter_only=white_matter_only
                     )
                     
                     # Load the generated mask
