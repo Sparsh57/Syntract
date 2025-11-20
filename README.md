@@ -117,6 +117,7 @@ python cumulative.py  # Edit paths in script
 | `--density_threshold` | float | 0.15 | Fiber density threshold for masking |
 | `--min_bundle_size` | int | 20 | Minimum size for bundle detection |
 | `--label_bundles` | flag | False | Label individual fiber bundles |
+| `--white_matter_only` | flag | False | Filter streamlines to render only over white matter tissue (tissue threshold: 0.76, display threshold: 0.65) |
 
 ### Slice Extraction
 | Parameter | Type | Description |

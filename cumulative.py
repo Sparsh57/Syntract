@@ -41,7 +41,8 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
                   n_examples=10, viz_prefix="synthetic_", enable_orange_blobs=False,
                   orange_blob_probability=0.3, save_masks=True, use_high_density_masks=True,
                   mask_thickness=1, density_threshold=0.6, min_bundle_size=2000,
-                  label_bundles=False, disable_patch_processing=False, cleanup_intermediate=True):
+                  label_bundles=False, disable_patch_processing=False, cleanup_intermediate=True,
+                  white_matter_only=False):
     """
     Process multiple TRK files with a common NIfTI file.
     
@@ -247,7 +248,8 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
             enable_orange_blobs=enable_orange_blobs,
             orange_blob_probability=orange_blob_probability,
             output_image_size=output_image_size,
-            random_state=None
+            random_state=None,
+            white_matter_only=white_matter_only
         )
         
         # Create result object in same format as process_syntract
@@ -531,6 +533,7 @@ def process_patches_inmemory(
     orange_blob_probability: float = 0.3,
     output_image_size: tuple = None,
     random_state: int = None,
+    white_matter_only: bool = False,
     **kwargs
 ) -> Tuple[List[np.ndarray], List[np.ndarray]]:
     """
@@ -1001,7 +1004,8 @@ def process_patches_inmemory(
                         cornucopia_augmentation='clean_optical',
                         tract_linewidth=1.0,
                         output_image_size=output_image_size,
-                        random_state=random_state + i if random_state else None
+                        random_state=random_state + i if random_state else None,
+                        white_matter_only=white_matter_only
                     )
                     
                 except Exception as e:
