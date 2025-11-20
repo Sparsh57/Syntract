@@ -42,7 +42,7 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
                   orange_blob_probability=0.3, save_masks=True, use_high_density_masks=True,
                   mask_thickness=1, density_threshold=0.6, min_bundle_size=2000,
                   label_bundles=False, disable_patch_processing=False, cleanup_intermediate=True,
-                  white_matter_only=False):
+                  white_matter_only=False, wm_mask_file=None):
     """
     Process multiple TRK files with a common NIfTI file.
     
@@ -270,6 +270,24 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
             patches_extracted = result.get('result', {}).get('patches_extracted', 0)
             images_generated = result.get('result', {}).get('images_generated', 0)
             masks_generated = result.get('result', {}).get('masks_generated', 0)
+            
+            # Save images and masks to disk
+            if patches_extracted > 0:
+                print(f"\nSaving {images_generated} images and {masks_generated} masks to {output_dir}...")
+                from PIL import Image
+                
+                for i, (img_array, mask_array) in enumerate(zip(images, masks)):
+                    # Save image
+                    img_filename = os.path.join(output_dir, f"{viz_prefix}{i:04d}.png")
+                    img_pil = Image.fromarray(img_array)
+                    img_pil.save(img_filename)
+                    
+                    # Save mask
+                    mask_filename = os.path.join(output_dir, f"{viz_prefix}{i:04d}_mask.png")
+                    mask_pil = Image.fromarray(mask_array)
+                    mask_pil.save(mask_filename)
+                
+                print(f"  Saved {images_generated} images and {masks_generated} masks")
             
             if patches_extracted == 0:
                 print(f"SUCCESS ({file_time:.1f}s) - No patches extracted (sparse data)")
@@ -589,12 +607,12 @@ def process_patches_inmemory(
     --------
     >>> # Single TRK file
     >>> images, masks = process_patches_inmemory(
-    ...     'brain.nii.gz', 
+    ...     'brain.nii.gz',
     ...     'fibers.trk',
     ...     num_patches=10,
     ...     patch_size=[512, 1, 512]
     ... )
-    >>> 
+    >>>
     >>> # TRK directory (randomly selects files)
     >>> images, masks = process_patches_inmemory(
     ...     'brain.nii.gz',
@@ -1172,7 +1190,7 @@ def process_patches_inmemory(
                         label_bundles=False,
                         min_bundle_size=2000,
                         output_image_size=output_image_size,
-                        static_streamline_threshold=0.1,
+                        static_streamline_threshold=0.08,  # Moderate threshold - less aggressive, still filters isolated dots
                         white_matter_only=white_matter_only
                     )
                     
@@ -1404,6 +1422,11 @@ Examples:
                            help="Minimum size for bundle detection (default: 2000, only keeps very large prominent bundles)")
     mask_group.add_argument("--label-bundles", action="store_true",
                            help="Label individual fiber bundles with distinct colors (default: False)")
+    mask_group.add_argument("--white-matter-only", action="store_true", default=False,
+                           help="Filter streamlines to only render over white matter tissue")
+    mask_group.add_argument("--wm-mask-file", type=str, default=None,
+                           help="Path to white matter mask NIfTI file. If provided, used for filtering when --white-matter-only is enabled. "
+                                "Falls back to tissue thresholding if not provided.")
     mask_group.add_argument("--filter-by-tissue", action="store_true", default=True,
                            help="Filter streamlines by tissue/display thresholds (default: True)")
     mask_group.add_argument("--no-filter-by-tissue", action="store_true",
