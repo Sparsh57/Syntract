@@ -991,6 +991,21 @@ def process_patches_inmemory(
                     # Random fiber percentage for high-density masks (70-100%)
                     max_fiber_pct = np.random.uniform(70, 100) if random_state is None else np.random.RandomState(random_state + i).uniform(70, 100)
                     
+                    # Randomize cornucopia preset for variation (matching syntract.py behavior)
+                    # Weighted selection with MUCH MORE AGGRESSIVE noise presets
+                    presets = ['clean_optical', 'gamma_speckle', 'optical_with_debris', 
+                              'subtle_debris', 'clinical_simulation', 'heavy_speckle', 
+                              'extreme_noise', 'ultra_heavy_speckle', 'gaussian_mixture_aggressive',
+                              'noncentral_chi_aggressive', 'aggressive_smoothing', 'comprehensive_aggressive',
+                              'random_shapes_background', 'shapes_with_noise', 'aggressive_shapes']
+                    # Weights: clean (1%), moderate (12%), heavy (20%), extreme (30%), new aggressive (25%), shapes (12%) - MUCH MORE NOISE
+                    weights = [0.01, 0.08, 0.12, 0.04, 0.02, 0.12, 0.08, 0.08, 0.08, 0.08, 0.04, 0.08, 0.08, 0.08, 0.05]
+                    
+                    import random
+                    import time
+                    random.seed(int(time.time() * 1000000) % (2**32) + i)  # Truly random seed with patch variation
+                    actual_cornucopia_preset = random.choices(presets, weights=weights, k=1)[0]
+                    
                     # Generate visualization without saving to disk
                     fig, axes, _ = visualize_nifti_with_trk_coronal(
                         nifti_file=nifti_file,
@@ -1001,11 +1016,12 @@ def process_patches_inmemory(
                         use_high_density_masks=False,
                         contrast_method='clahe',
                         background_enhancement='preserve_edges',
-                        cornucopia_augmentation='clean_optical',
+                        cornucopia_augmentation=actual_cornucopia_preset,
                         tract_linewidth=1.0,
                         output_image_size=output_image_size,
                         random_state=random_state + i if random_state else None,
-                        white_matter_only=white_matter_only
+                        white_matter_only=white_matter_only,
+                        truly_random=True  # Enable truly random parameters like syntract.py
                     )
                     
                 except Exception as e:
