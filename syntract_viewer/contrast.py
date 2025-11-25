@@ -204,45 +204,24 @@ def apply_enhanced_contrast_and_augmentation(slice_data,
     np.ndarray
         Enhanced and augmented slice data
     """
+    # SIMPLIFIED: Keep original texture, only normalize to 0-1
     processed_slice = slice_data.copy()
     
+    # Normalize to 0-1 range
+    if np.ptp(processed_slice) > 0:
+        processed_slice = (processed_slice - np.min(processed_slice)) / np.ptp(processed_slice)
+    
     # Create mask for actual tissue vs empty/padding regions
-    # Use a small threshold to identify truly empty areas
-    zero_threshold = np.percentile(slice_data[slice_data > 0], 1) if np.any(slice_data > 0) else 0.01
-    tissue_mask = slice_data > zero_threshold
+    zero_threshold = 0.01
+    tissue_mask = processed_slice > zero_threshold
     
-    original_unique_count = len(np.unique(slice_data[slice_data > 0]))
-    was_quantized = original_unique_count < 200
+    # SKIP aggressive preprocessing - it destroys texture
+    # processed_slice = preprocess_quantized_data(processed_slice)  # DISABLED
     
-    processed_slice = preprocess_quantized_data(processed_slice)
+    # SKIP background enhancement - it destroys texture  
+    # background_enhancement disabled
     
-    if background_enhancement is not None and BACKGROUND_ENHANCEMENT_AVAILABLE:
-        if np.all(slice_data == 0) or np.std(slice_data) < 1e-6:
-            pass
-        else:
-            try:
-                if isinstance(background_enhancement, str):
-                    processed_slice = enhance_slice_background(
-                        processed_slice,
-                        preset=background_enhancement,
-                        apply_sharpening=enable_sharpening,
-                        sharpening_params={'radius': 0.8, 'amount': sharpening_strength} if enable_sharpening else None,
-                        random_state=random_state
-                    )
-                elif isinstance(background_enhancement, dict):
-                    processed_slice = enhance_slice_background(
-                        processed_slice,
-                        apply_sharpening=enable_sharpening,
-                        sharpening_params={'radius': 0.8, 'amount': sharpening_strength} if enable_sharpening else None,
-                        random_state=random_state,
-                        **background_enhancement
-                    )
-                
-                if np.any(np.isnan(processed_slice)) or np.any(np.isinf(processed_slice)) or np.std(processed_slice) < 1e-6:
-                    processed_slice = slice_data.copy()
-            except Exception:
-                processed_slice = slice_data.copy()
-    
+    # Apply Cornucopia augmentation if configured (for noise effects)
     if cornucopia_augmentation is not None and CORNUCOPIA_INTEGRATION_AVAILABLE:
         if np.all(processed_slice == 0) or np.std(processed_slice) < 1e-6:
             pass
@@ -268,31 +247,19 @@ def apply_enhanced_contrast_and_augmentation(slice_data,
             except Exception:
                 pass
     
+    # SIMPLIFIED: Light contrast enhancement only, preserve texture
     if contrast_params is None:
         contrast_params = {}
     
-    gentle_mode = was_quantized and len(np.unique(processed_slice[processed_slice > 0])) > original_unique_count * 10
-    
+    # Use very gentle CLAHE to preserve texture
     enhanced_slice = apply_contrast_enhancement(
         processed_slice, 
-        clip_limit=contrast_params.get('clip_limit', 0.01),
-        tile_grid_size=contrast_params.get('tile_grid_size', (8, 8)),
-        gentle_mode=gentle_mode
+        clip_limit=contrast_params.get('clip_limit', 0.005),  # Very low clip limit
+        tile_grid_size=contrast_params.get('tile_grid_size', (64, 64)),  # Large tiles
+        gentle_mode=True  # Always gentle
     )
     
-    # Apply heavy background-only noise (like dark-field microscopy)
-    # Noise is RANDOMIZED - ALL images get noise but with varying intensity
-    if apply_background_noise:
-        enhanced_slice = apply_background_only_noise(
-            enhanced_slice,
-            noise_intensity=background_noise_intensity,
-            fiber_threshold_percentile=65,  # Top 35% are considered fibers
-            random_state=random_state,
-            noise_probability=1.0  # 100% of images get noise (but varying levels)
-        )
-    
-    # Apply tissue mask to ensure empty/padding regions stay black
-    # This prevents background enhancement from brightening non-tissue areas
+    # Apply tissue mask to ensure empty regions stay black
     enhanced_slice = enhanced_slice * tissue_mask
     
     return enhanced_slice

@@ -41,7 +41,8 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
                   n_examples=10, viz_prefix="synthetic_", enable_orange_blobs=False,
                   orange_blob_probability=0.3, save_masks=True, use_high_density_masks=True,
                   mask_thickness=1, density_threshold=0.6, min_bundle_size=2000,
-                  label_bundles=False, disable_patch_processing=False, cleanup_intermediate=True):
+                  label_bundles=False, disable_patch_processing=False, cleanup_intermediate=True,
+                  white_mask_file=None):
     """
     Process multiple TRK files with a common NIfTI file.
     
@@ -73,6 +74,8 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
         ANTs inverse warp file path  
     ants_aff : str, optional
         ANTs affine file path
+    white_mask_file : str, optional
+        Path to white matter mask NIfTI file for filtering streamlines (default: None)
         
     Returns:
     --------
@@ -247,7 +250,9 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
             enable_orange_blobs=enable_orange_blobs,
             orange_blob_probability=orange_blob_probability,
             output_image_size=output_image_size,
-            random_state=None
+            random_state=None,
+            white_mask_file=white_mask_file,
+            output_dir=output_dir  # Pass output_dir for debug visualization saving
         )
         
         # Create result object in same format as process_syntract
@@ -328,7 +333,10 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
 
 def _capture_figure_as_array(fig, target_size=(1024, 1024)):
     """
-    Capture matplotlib figure as numpy array.
+    Capture matplotlib figure as numpy array with high quality.
+    
+    Renders at optimal DPI matching the target size to avoid artifacts
+    from excessive upscaling/downscaling.
     
     Parameters
     ----------
@@ -342,35 +350,54 @@ def _capture_figure_as_array(fig, target_size=(1024, 1024)):
     np.ndarray
         RGB image array with shape (H, W, 3) in uint8 format
     """
-    # Draw the canvas to ensure it's rendered
+    import io
+    from PIL import Image
+    
+    # CRITICAL: Force canvas draw before saving to ensure proper rendering
+    # This is essential when capturing without output_file parameter
     fig.canvas.draw()
     
-    # Get the RGBA buffer from the canvas
-    # Use buffer_rgba() for newer matplotlib, with fallback to tostring_rgb() for older versions
-    try:
-        # Try newer API first (matplotlib >= 3.3)
-        buf = fig.canvas.buffer_rgba()
-        ncols, nrows = fig.canvas.get_width_height()
-        # buffer_rgba() returns RGBA, so we need to handle 4 channels
-        array = np.frombuffer(buf, dtype=np.uint8).reshape(nrows, ncols, 4)
-        # Convert RGBA to RGB by dropping the alpha channel
-        array = array[:, :, :3]
-    except AttributeError:
-        # Fallback for older matplotlib versions
-        try:
-            buf = fig.canvas.tostring_rgb()
-            ncols, nrows = fig.canvas.get_width_height()
-            array = np.frombuffer(buf, dtype=np.uint8).reshape(nrows, ncols, 3)
-        except AttributeError:
-            # Alternative: use print_to_buffer()
-            buf, (width, height) = fig.canvas.print_to_buffer()
-            array = np.frombuffer(buf, dtype=np.uint8).reshape(height, width, 4)
-            array = array[:, :, :3]  # Drop alpha channel
+    # Use high DPI (300) for quality, then resize
+    # This matches syntract's approach exactly
+    buf = io.BytesIO()
+    # CRITICAL FIX: Do NOT use bbox_inches='tight' as it adds white padding!
+    # Use pad_inches=0 without bbox_inches to get clean edges
+    fig.savefig(buf, format='png', dpi=300, facecolor='black', 
+               edgecolor='black', pad_inches=0)
+    buf.seek(0)
     
-    # Resize if needed
-    from syntract_viewer.utils import resize_image_to_size
-    if array.shape[:2] != target_size:
-        array = resize_image_to_size(array, target_size, is_mask=False)
+    # Open with PIL
+    pil_image = Image.open(buf)
+    
+    # Convert RGBA to RGB if needed (remove alpha channel)
+    if pil_image.mode == 'RGBA':
+        # Create black background
+        rgb_image = Image.new('RGB', pil_image.size, (0, 0, 0))
+        # Paste RGBA on black background
+        rgb_image.paste(pil_image, mask=pil_image.split()[3])  # Use alpha as mask
+        pil_image = rgb_image
+    elif pil_image.mode != 'RGB':
+        pil_image = pil_image.convert('RGB')
+    
+    print(f"  [RENDER] Intermediate size: {pil_image.size}, mode: {pil_image.mode}")
+    
+    # Resize with high-quality LANCZOS if needed
+    if pil_image.size != (target_size[1], target_size[0]):  # PIL uses (width, height)
+        resized_image = pil_image.resize((target_size[1], target_size[0]), Image.LANCZOS)
+        print(f"  [RENDER] Resized to: {resized_image.size}")
+    else:
+        resized_image = pil_image
+        print(f"  [RENDER] No resize needed")
+    
+    # Convert to numpy array
+    array = np.array(resized_image)
+    
+    # Final verification - ensure RGB
+    if len(array.shape) == 3 and array.shape[2] == 4:
+        # If somehow still RGBA, drop alpha
+        array = array[:, :, :3]
+    
+    buf.close()
     
     return array
 
@@ -531,6 +558,8 @@ def process_patches_inmemory(
     orange_blob_probability: float = 0.3,
     output_image_size: tuple = None,
     random_state: int = None,
+    white_mask_file: str = None,
+    output_dir: str = None,  # Added for debug visualization saving
     **kwargs
 ) -> Tuple[List[np.ndarray], List[np.ndarray]]:
     """
@@ -573,6 +602,8 @@ def process_patches_inmemory(
         Output image size (height, width). Derived from patch_size if not provided
     random_state : int, optional
         Random seed for reproducibility
+    white_mask_file : str, optional
+        Path to white matter mask NIfTI file for filtering streamlines (default: None)
     **kwargs : dict
         Additional keyword arguments
         
@@ -610,6 +641,10 @@ def process_patches_inmemory(
     print(f"Input NIfTI: {input_nifti}")
     print(f"Input TRK: {trk_file}")
     print(f"Num patches: {num_patches}")
+    if white_mask_file:
+        print(f"White mask: {white_mask_file}")
+    else:
+        print("White mask: None (no filtering)")
     
     # Import numpy at the beginning
     import numpy as np
@@ -619,6 +654,8 @@ def process_patches_inmemory(
         raise FileNotFoundError(f"NIfTI file not found: {input_nifti}")
     if not os.path.exists(trk_file):
         raise FileNotFoundError(f"TRK file/directory not found: {trk_file}")
+    if white_mask_file and not os.path.exists(white_mask_file):
+        raise FileNotFoundError(f"White mask file not found: {white_mask_file}")
     
     # Check if trk_file is a directory and find TRK files
     trk_files = []
@@ -793,6 +830,7 @@ def process_patches_inmemory(
                         ants_aff_path=ants_aff,
                         random_state=random_state + attempts if random_state else None,
                         use_gpu=True,
+                        white_mask_path=white_mask_file
                     )
                     
                     if patch_result['success'] and patch_result['patches_extracted'] > 0:
@@ -923,6 +961,7 @@ def process_patches_inmemory(
                 ants_aff_path=ants_aff,
                 random_state=random_state,
                 use_gpu=True,
+                white_mask_path=white_mask_file
             )
         
         if not patch_result['success'] or patch_result['patches_extracted'] == 0:
@@ -982,11 +1021,40 @@ def process_patches_inmemory(
                 # Generate visualization - if it fails, skip this patch and try another
                 print(f"  Generating visualization...")
                 
+                # Get white mask patch file if available
+                white_mask_patch = None
+                if white_mask_file:
+                    # Check if white mask was saved for this patch
+                    if 'white_mask' in patch_detail.get('files', {}):
+                        white_mask_patch = patch_detail['files']['white_mask']
+                        if os.path.exists(white_mask_patch):
+                            print(f"  Using white mask patch: {white_mask_patch}")
+                        else:
+                            print(f"  Warning: White mask patch file not found: {white_mask_patch}")
+                            white_mask_patch = None
+                    else:
+                        print(f"  Warning: White mask requested but not found in patch files")
+                        print(f"  Available keys: {list(patch_detail.get('files', {}).keys())}")
+                
                 try:
                     from syntract_viewer.core import visualize_nifti_with_trk_coronal
+                    import random as rnd
+                    import time
                     
                     # Random fiber percentage for high-density masks (70-100%)
                     max_fiber_pct = np.random.uniform(70, 100) if random_state is None else np.random.RandomState(random_state + i).uniform(70, 100)
+                    
+                    # Randomize cornucopia preset for variation (same as syntract.py)
+                    presets = ['clean_optical', 'gamma_speckle', 'optical_with_debris', 
+                              'subtle_debris', 'clinical_simulation', 'heavy_speckle', 
+                              'extreme_noise', 'ultra_heavy_speckle', 'gaussian_mixture_aggressive',
+                              'noncentral_chi_aggressive', 'aggressive_smoothing', 'comprehensive_aggressive',
+                              'random_shapes_background', 'shapes_with_noise', 'aggressive_shapes']
+                    # Weights: clean (1%), moderate (12%), heavy (20%), extreme (30%), new aggressive (25%), shapes (12%)
+                    weights = [0.01, 0.08, 0.12, 0.04, 0.02, 0.12, 0.08, 0.08, 0.08, 0.08, 0.04, 0.08, 0.08, 0.08, 0.05]
+                    rnd.seed(int(time.time() * 1000000) % (2**32))  # Truly random seed
+                    actual_cornucopia_preset = rnd.choices(presets, weights=weights, k=1)[0]
+                    print(f"  Using randomized cornucopia preset: {actual_cornucopia_preset}")
                     
                     # Generate visualization without saving to disk
                     fig, axes, _ = visualize_nifti_with_trk_coronal(
@@ -998,10 +1066,11 @@ def process_patches_inmemory(
                         use_high_density_masks=False,
                         contrast_method='clahe',
                         background_enhancement='preserve_edges',
-                        cornucopia_augmentation='clean_optical',
+                        cornucopia_augmentation=actual_cornucopia_preset,
                         tract_linewidth=1.0,
                         output_image_size=output_image_size,
-                        random_state=random_state + i if random_state else None
+                        random_state=random_state + i if random_state else None,
+                        white_mask_file=white_mask_patch
                     )
                     
                 except Exception as e:
@@ -1111,8 +1180,10 @@ def process_patches_inmemory(
                 # Capture figure as numpy array
                 if fig is not None:
                     image_array = _capture_figure_as_array(fig, target_size=output_image_size)
-                    plt.close(fig)
                     print(f"  Image captured: shape={image_array.shape}, target={output_image_size}")
+                    
+                    # Close the main figure
+                    plt.close(fig)
                 else:
                     print(f"  WARNING: Figure not generated, skipping")
                     continue
@@ -1152,7 +1223,8 @@ def process_patches_inmemory(
                         label_bundles=False,
                         min_bundle_size=2000,
                         output_image_size=output_image_size,
-                        static_streamline_threshold=0.1
+                        static_streamline_threshold=0.1,
+                        white_mask_file=white_mask_patch  # Pass white mask for filtering
                     )
                     
                     # Load the generated mask
@@ -1175,13 +1247,9 @@ def process_patches_inmemory(
                             mask_array = resize_image_to_size(mask_array, image_array.shape[:2], is_mask=True)
                             print(f"     Mask after resize: {mask_array.shape}")
                         
-                        # Clean up temporary mask file
-                        try:
-                            os.remove(mask_file)
-                            if os.path.exists(temp_viz_file):
-                                os.remove(temp_viz_file)
-                        except:
-                            pass
+                        # DON'T clean up mask files - keep them for reference
+                        # User can clean up manually if needed
+                        print(f"  Mask saved to: {mask_file}")
                     else:
                         print(f"   MASK GENERATION FAILED: Mask file not created")
                         print(f"   SKIPPING this patch - will try another patch to reach target count")
@@ -1343,6 +1411,13 @@ Examples:
     ants_group.add_argument('--ants-iwarp', help='ANTs inverse warp file')
     ants_group.add_argument('--ants-aff', help='ANTs affine file')
     
+    # White matter mask
+    wm_group = parser.add_argument_group("White Matter Filtering")
+    wm_group.add_argument('--white-mask', '--wm-mask-file', dest='white_mask_file',
+                         help='Path to white matter mask NIfTI file for filtering streamlines')
+    wm_group.add_argument('--white-matter-only', action='store_true',
+                         help='Requires --white-mask to be specified (validation flag)')
+    
     # Patch Processing
     patch_group = parser.add_argument_group("Patch Processing")
     patch_group.add_argument("--total-patches", type=int, default=30,
@@ -1393,6 +1468,11 @@ Examples:
     
     args = parser.parse_args()
     
+    # Validate white matter filtering arguments
+    if hasattr(args, 'white_matter_only') and args.white_matter_only:
+        if not args.white_mask_file:
+            parser.error("--white-matter-only requires --white-mask or --wm-mask-file to be specified")
+    
     # Handle high density masks default (True unless explicitly disabled)
     use_high_density_masks = not args.no_high_density_masks if hasattr(args, 'no_high_density_masks') else True
     if hasattr(args, 'use_high_density_masks') and args.use_high_density_masks:
@@ -1430,7 +1510,8 @@ Examples:
             min_bundle_size=args.min_bundle_size,
             label_bundles=args.label_bundles,
             disable_patch_processing=args.disable_patch_processing,
-            cleanup_intermediate=cleanup_intermediate
+            cleanup_intermediate=cleanup_intermediate,
+            white_mask_file=getattr(args, 'white_mask_file', None)
         )
         
         if results['failed']:

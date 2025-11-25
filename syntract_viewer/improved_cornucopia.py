@@ -56,14 +56,11 @@ class ImprovedCornucopiaAugmenter:
         """Initialize noise transforms optimized for optical imaging."""
         self.noise_transforms = {}
         
-        if CORNUCOPIA_AVAILABLE:
-            # Gamma noise (speckle) - ideal for optical imaging
-            self.noise_transforms['gamma_speckle'] = self._create_gamma_speckle_transform()
-            self.noise_transforms['gamma_multiplicative'] = self._create_gamma_multiplicative_transform()
-            self.noise_transforms['optical_speckle'] = self._create_optical_speckle_transform()
+        # NOTE: Use FallbackSpeckle for gamma_speckle because it uses actual np.random.gamma()
+        # multiplicative noise, whereas the Cornucopia GammaSpeckleTransform just does
+        # gamma power correction (x^gamma) which doesn't add noise!
         
-        # Fallback implementations
-        self.noise_transforms['fallback_speckle'] = self._create_fallback_speckle()
+        # These fallback implementations actually produce better noise effects
         self.noise_transforms['gamma_speckle'] = self._create_fallback_speckle()
         self.noise_transforms['gamma_multiplicative'] = self._create_fallback_multiplicative()
         self.noise_transforms['optical_speckle'] = self._create_fallback_speckle()
@@ -71,6 +68,13 @@ class ImprovedCornucopiaAugmenter:
         self.noise_transforms['gaussian_mixture'] = self._create_fallback_gaussian_mixture()
         self.noise_transforms['aggressive_smoothing'] = self._create_fallback_aggressive_smoothing()
         self.noise_transforms['random_shapes'] = self._create_fallback_random_shapes()
+        self.noise_transforms['fallback_speckle'] = self._create_fallback_speckle()
+        
+        # Only use Cornucopia transforms for specific advanced features if needed
+        if CORNUCOPIA_AVAILABLE:
+            # These are kept for reference but the fallbacks are better for noise
+            self.noise_transforms['cornucopia_gamma'] = self._create_gamma_speckle_transform()
+            self.noise_transforms['cornucopia_optical'] = self._create_optical_speckle_transform()
     
     def _init_intensity_transforms(self):
         """Initialize intensity transforms with multiplicative fields."""
@@ -81,11 +85,18 @@ class ImprovedCornucopiaAugmenter:
             self.intensity_transforms['smooth_multiplicative'] = self._create_smooth_multiplicative_field()
             self.intensity_transforms['multiplicative_field'] = self._create_multiplicative_field()
             self.intensity_transforms['optical_intensity'] = self._create_optical_intensity_transform()
-        
-        # Fallback implementations
-        self.intensity_transforms['fallback_multiplicative'] = self._create_fallback_multiplicative()
-        self.intensity_transforms['aggressive_gamma'] = self._create_fallback_aggressive_gamma()
-        self.intensity_transforms['aggressive_bias_field'] = self._create_fallback_aggressive_bias_field()
+            # Also add the aggressive transforms (these use fallback implementations but work well)
+            self.intensity_transforms['aggressive_gamma'] = self._create_fallback_aggressive_gamma()
+            self.intensity_transforms['aggressive_bias_field'] = self._create_fallback_aggressive_bias_field()
+            self.intensity_transforms['fallback_multiplicative'] = self._create_fallback_multiplicative()
+        else:
+            # Fallback implementations when cornucopia is NOT available
+            self.intensity_transforms['fallback_multiplicative'] = self._create_fallback_multiplicative()
+            self.intensity_transforms['aggressive_gamma'] = self._create_fallback_aggressive_gamma()
+            self.intensity_transforms['aggressive_bias_field'] = self._create_fallback_aggressive_bias_field()
+            self.intensity_transforms['smooth_multiplicative'] = self._create_fallback_multiplicative()
+            self.intensity_transforms['multiplicative_field'] = self._create_fallback_multiplicative()
+            self.intensity_transforms['optical_intensity'] = self._create_fallback_multiplicative()
     
     def _init_spatial_transforms(self):
         """Initialize spatial transforms."""
@@ -187,6 +198,53 @@ class ImprovedCornucopiaAugmenter:
                 return gamma_transform(x)
         
         return CustomGammaSpeckleTransform(intensity_range, prob)
+    
+    def _create_custom_noise_transform(self, noise_type, scale_range=None, intensity_range=None, prob=0.8):
+        """Create a custom noise transform based on type and parameters.
+        
+        Routes to appropriate fallback implementations with custom parameters.
+        This restores the custom parameter handling that was removed.
+        """
+        # Use FallbackSpeckle with custom parameters for all speckle-type noise
+        # because it uses actual np.random.gamma() multiplicative noise
+        
+        class CustomFallbackSpeckle:
+            def __init__(self, scale_range, intensity_range, prob):
+                self.scale_range = scale_range or (0.8, 1.2)
+                self.intensity_range = intensity_range or (0.9, 1.1)
+                self.prob = prob
+            
+            def __call__(self, x):
+                if random.random() > self.prob:
+                    return x
+                
+                if isinstance(x, torch.Tensor):
+                    x_np = x.cpu().numpy()
+                else:
+                    x_np = np.array(x)
+                
+                # Determine scale from intensity_range or scale_range
+                if self.intensity_range:
+                    # Use intensity_range to determine gamma shape parameter
+                    shape = random.uniform(self.intensity_range[0] * 10, self.intensity_range[1] * 10)
+                else:
+                    shape = random.uniform(5, 15)
+                
+                if self.scale_range:
+                    scale = random.uniform(*self.scale_range)
+                else:
+                    scale = 1.0 / shape
+                
+                # Generate gamma noise (multiplicative)
+                noise = np.random.gamma(shape, scale, x_np.shape).astype(x_np.dtype)
+                result = x_np * noise
+                result = np.clip(result, 0, 1)
+                
+                if isinstance(x, torch.Tensor):
+                    return torch.from_numpy(result).to(x.device)
+                return result
+        
+        return CustomFallbackSpeckle(scale_range, intensity_range, prob)
     
     def _create_optical_speckle_transform(self):
         """Create optical speckle transform."""
@@ -1197,20 +1255,18 @@ class ImprovedCornucopiaAugmenter:
                 noise_config = augmentation_config['noise']
                 noise_type = noise_config.get('type', 'gamma_speckle')
                 if noise_type in self.noise_transforms:
-                    # Create transform with custom parameters if provided
-                    if noise_type == 'gamma_multiplicative' and 'scale_range' in noise_config:
-                        custom_transform = self._create_custom_gamma_multiplicative(
-                            scale_range=noise_config.get('scale_range', (0.02, 0.06)),
-                            prob=noise_config.get('prob', 0.7)
-                        )
-                        tensor_img = custom_transform(tensor_img)
-                    elif noise_type == 'gamma_speckle' and 'intensity_range' in noise_config:
-                        custom_transform = self._create_custom_gamma_speckle(
-                            intensity_range=noise_config.get('intensity_range', (0.9, 1.05)),
+                    # Check for custom parameters in the noise config
+                    if 'scale_range' in noise_config or 'intensity_range' in noise_config:
+                        # Create custom transform with specified parameters
+                        custom_transform = self._create_custom_noise_transform(
+                            noise_type=noise_type,
+                            scale_range=noise_config.get('scale_range'),
+                            intensity_range=noise_config.get('intensity_range'),
                             prob=noise_config.get('prob', 0.8)
                         )
                         tensor_img = custom_transform(tensor_img)
                     else:
+                        # Use the registered noise transform (fallbacks produce better noise)
                         tensor_img = self.noise_transforms[noise_type](tensor_img)
             
             if 'debris' in augmentation_config:
@@ -1228,7 +1284,7 @@ class ImprovedCornucopiaAugmenter:
                         tensor_img = custom_transform(tensor_img)
                     else:
                         tensor_img = self.debris_transforms[debris_type](tensor_img)
-                    tensor_img = self.debris_transforms[debris_type](tensor_img)
+                    # NOTE: Removed duplicate debris application that was here
             
             # Convert back to numpy
             if CORNUCOPIA_AVAILABLE and hasattr(tensor_img, 'cpu'):

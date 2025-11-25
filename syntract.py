@@ -334,7 +334,7 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                     enable_orange_blobs=False, orange_blob_probability=0.3,
                     save_masks=True, use_high_density_masks=True, mask_thickness=1,
                     density_threshold=0.6, min_bundle_size=2000, label_bundles=False,
-                    output_image_size=None, cleanup_intermediate=True):
+                    output_image_size=None, cleanup_intermediate=True, white_mask_path=None):
     """Main processing function"""
     import signal
     import sys
@@ -421,7 +421,8 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                 ants_iwarp_path=ants_iwarp_path,
                 ants_aff_path=ants_aff_path,
                 random_state=None,  # Could be parameterized
-                use_gpu=True
+                use_gpu=True,
+                white_mask_path=white_mask_path
             )
             
             # Add visualization generation for patches if successful
@@ -438,6 +439,11 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                         
                         if os.path.exists(nifti_file) and os.path.exists(trk_file):
                             patch_viz_prefix = f"patch_{patch_id:04d}"
+                            # Get the corresponding white mask patch if available
+                            white_mask_patch_file = None
+                            if 'white_mask' in patch_detail['files']:
+                                white_mask_patch_file = patch_detail['files']['white_mask']
+                            
                             _generate_patch_visualization(
                                 nifti_file, trk_file, 
                                 patch_output_path, 
@@ -456,7 +462,8 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                                 min_bundle_size=min_bundle_size,
                                 enable_orange_blobs=enable_orange_blobs,
                                 orange_blob_probability=orange_blob_probability,
-                                output_image_size=output_image_size
+                                output_image_size=output_image_size,
+                                white_mask_path=white_mask_patch_file
                             )
                     
                     print(f"Patch-first optimization complete!")
@@ -473,11 +480,12 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                 print(f"\nCleaning up {patch_result['patches_extracted']} intermediate patch files...")
                 patch_files_to_cleanup = []
                 
-                # Find all patch files created
+                # Find all patch files created (including white_mask files)
                 for i in range(1, patch_result['patches_extracted'] + 1):
                     patch_nifti = os.path.join(patch_output_path, f"{patch_prefix.rstrip('_')}_{i:04d}.nii.gz")
                     patch_trk = os.path.join(patch_output_path, f"{patch_prefix.rstrip('_')}_{i:04d}.trk")
-                    patch_files_to_cleanup.extend([patch_nifti, patch_trk])
+                    patch_white_mask = os.path.join(patch_output_path, f"{patch_prefix.rstrip('_')}_{i:04d}_white_mask.nii.gz")
+                    patch_files_to_cleanup.extend([patch_nifti, patch_trk, patch_white_mask])
                 
                 # Clean up the files
                 cleaned_count = 0
@@ -626,6 +634,10 @@ Examples:
     parser.add_argument("--input", required=True, help="Input NIfTI file path")
     parser.add_argument("--trk", required=True, help="Input TRK file path")
     parser.add_argument("--output", default="output", help="Output base name")
+    parser.add_argument("--white_mask", help="Optional white mask NIfTI file for filtering streamline painting")
+    parser.add_argument("--wm_mask_file", dest="white_mask", help="Alias for --white_mask (white matter mask file)")
+    parser.add_argument("--white_matter_only", action="store_true", 
+                       help="Enable white matter filtering (requires --wm_mask_file or --white_mask)")
     
     # Synthesis parameters
     synthesis_group = parser.add_argument_group("Synthesis Parameters")
@@ -713,6 +725,11 @@ Examples:
             print("ERROR: --use_ants requires --ants_warp, --ants_iwarp, and --ants_aff")
             sys.exit(1)
     
+    # Validate white matter mask parameters
+    if args.white_matter_only and not args.white_mask:
+        print("ERROR: --white_matter_only requires --white_mask or --wm_mask_file")
+        sys.exit(1)
+    
     # Set up extraction mode
     enable_slice_extraction = args.slice_count is not None
     slice_output_dir = args.slice_output_dir or f"{args.output}_slices"
@@ -771,7 +788,8 @@ Examples:
         min_bundle_size=args.min_bundle_size,
         label_bundles=args.label_bundles,
         output_image_size=None,  # Let process_syntract determine it automatically
-        cleanup_intermediate=cleanup_intermediate
+        cleanup_intermediate=cleanup_intermediate,
+        white_mask_path=args.white_mask
     )
     
     if not result['success']:

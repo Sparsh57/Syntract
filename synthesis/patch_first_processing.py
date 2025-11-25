@@ -453,7 +453,8 @@ def process_patch_first_extraction(
     ants_iwarp_path: Optional[str] = None,
     ants_aff_path: Optional[str] = None,
     random_state: Optional[int] = None,
-    use_gpu: bool = True
+    use_gpu: bool = True,
+    white_mask_path: Optional[str] = None
 ) -> Dict:
     """
     Main patch-first extraction pipeline.
@@ -508,6 +509,7 @@ def process_patch_first_extraction(
     print(f"Target patch size: {target_patch_size}")
     print(f"Number of patches: {num_patches}")
     print(f"ANTs enabled: {use_ants}")
+    print(f"White mask: {white_mask_path if white_mask_path else 'None'}")
     
     # Initialize results tracking
     results = {
@@ -567,6 +569,46 @@ def process_patch_first_extraction(
             streamlines_ras = trk_obj.tractogram.streamlines
             
             print(f"Original data loaded. {len(streamlines_ras)} streamlines available.")
+        
+        # Load and upscale white mask if provided
+        upscaled_white_mask = None
+        if white_mask_path and os.path.exists(white_mask_path):
+            print(f"\nLoading and upscaling white mask...")
+            try:
+                white_mask_img = nib.load(white_mask_path)
+                white_mask_img = nib.as_closest_canonical(white_mask_img)
+                white_mask_data = white_mask_img.get_fdata()
+                
+                # Handle 4D masks - take first volume
+                if white_mask_data.ndim == 4:
+                    print(f"  4D mask detected, taking first volume")
+                    white_mask_data = white_mask_data[..., 0]
+                elif white_mask_data.ndim != 3:
+                    raise ValueError(f"White mask must be 3D or 4D, got {white_mask_data.ndim}D")
+                
+                # Upscale white mask to blockface space (same as original MRI)
+                # We ignore the affine as requested - just match the shape
+                from scipy.ndimage import zoom
+                
+                # Calculate zoom factors to match original MRI shape
+                mask_shape_3d = white_mask_data.shape[:3]
+                zoom_factors = np.array(mri_shape) / np.array(mask_shape_3d)
+                print(f"  White mask shape: {mask_shape_3d}")
+                print(f"  Blockface shape: {mri_shape}")
+                print(f"  Zoom factors: {zoom_factors}")
+                
+                # Upscale using nearest neighbor to preserve binary mask values
+                upscaled_white_mask = zoom(white_mask_data, zoom_factors, order=0)
+                print(f"  Upscaled white mask to shape: {upscaled_white_mask.shape}")
+                
+                # Ensure binary mask (threshold at 0.5)
+                upscaled_white_mask = (upscaled_white_mask > 0.5).astype(np.uint8)
+                print(f"  White mask successfully upscaled to blockface space")
+                
+            except Exception as e:
+                print(f"  Warning: Could not load/upscale white mask: {e}")
+                print(f"  Mask shape details: {white_mask_data.shape if 'white_mask_data' in locals() else 'N/A'}")
+                upscaled_white_mask = None
         
         # Step 2: Build target coordinate system for validation
         print(f"\nStep 2: Sampling patch locations...")
@@ -651,6 +693,48 @@ def process_patch_first_extraction(
                             violation_coords = all_points[outside_points][:3]
                             print(f"    DEBUG: first 3 violations: {violation_coords}")
                 
+                # Extract white mask patch if available
+                white_mask_patch_path = None
+                if upscaled_white_mask is not None:
+                    try:
+                        # Get voxel bounds from bbox
+                        vox_min = bbox['vox_min']
+                        vox_max = bbox['vox_max']
+                        
+                        # Ensure bounds are within volume
+                        vox_min = np.maximum(vox_min, 0)
+                        vox_max = np.minimum(vox_max, upscaled_white_mask.shape)
+                        
+                        # Extract the same region from white mask as from NIfTI
+                        white_mask_patch_data = upscaled_white_mask[
+                            vox_min[0]:vox_max[0],
+                            vox_min[1]:vox_max[1], 
+                            vox_min[2]:vox_max[2]
+                        ].copy()
+                        
+                        # Resample white mask patch to target resolution using nearest neighbor
+                        from scipy.ndimage import zoom
+                        mask_zoom_factors = np.array(target_patch_size) / np.array(white_mask_patch_data.shape[:3])
+                        white_mask_patch_resampled = zoom(white_mask_patch_data, mask_zoom_factors, order=0)
+                        
+                        # Ensure it matches target patch size exactly
+                        if white_mask_patch_resampled.shape != target_patch_size:
+                            # Crop or pad if needed
+                            final_mask = np.zeros(target_patch_size, dtype=np.uint8)
+                            slices = tuple(slice(0, min(s1, s2)) for s1, s2 in zip(white_mask_patch_resampled.shape, target_patch_size))
+                            final_mask[slices] = white_mask_patch_resampled[slices]
+                            white_mask_patch_resampled = final_mask
+                        
+                        # Save white mask patch
+                        white_mask_patch_path = f"{output_prefix}_{patch_id:04d}_white_mask.nii.gz"
+                        white_mask_patch_img = nib.Nifti1Image(white_mask_patch_resampled, patch_nifti.affine)
+                        nib.save(white_mask_patch_img, white_mask_patch_path)
+                        print(f"  White mask patch saved: {white_mask_patch_path}")
+                        
+                    except Exception as e:
+                        print(f"  Warning: Could not extract white mask patch: {e}")
+                        white_mask_patch_path = None
+                
                 # Save patch files
                 patch_prefix = f"{output_prefix}_{patch_id:04d}"
                 
@@ -709,16 +793,20 @@ def process_patch_first_extraction(
                 
                 # Record success
                 results['patches_extracted'] += 1
+                patch_files = {
+                    'nifti': nifti_path,
+                    'trk': trk_path
+                }
+                if white_mask_patch_path:
+                    patch_files['white_mask'] = white_mask_patch_path
+                
                 results['patch_details'].append({
                     'patch_id': patch_id,
                     'center_ras': patch_center_ras.tolist(),
                     'bbox': {k: v.tolist() if isinstance(v, np.ndarray) else v for k, v in bbox.items()},
                     'num_streamlines': len(patch_streamlines),
                     'validation': validation,
-                    'files': {
-                        'nifti': nifti_path,
-                        'trk': trk_path
-                    }
+                    'files': patch_files
                 })
                 
                 print(f"  Patch {patch_id} completed: {len(patch_streamlines)} streamlines")

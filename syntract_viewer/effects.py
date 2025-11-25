@@ -172,63 +172,157 @@ def apply_balanced_dark_field_effect(slice_clahe, intensity_params=None, random_
 def apply_blockface_preserving_dark_field_effect(slice_clahe, intensity_params=None, random_state=None, 
                                                 force_background_black=True):
     """
-    Apply black background masking like balanced effect but keep entire original image as-is.
-    No inversion - just preserve original anatomy with black background.
+    Apply dark field effect while PRESERVING original intensity relationships.
+    
+    Creates TRUE dark field look (like balanced) but preserves relative intensities:
+    - Balanced: inverts (white matter becomes dark, gray matter becomes bright)
+    - Preserving: scales down intensities (white matter stays brighter RELATIVE to gray)
+    
+    Both produce dark field appearance (dim tissue on black background).
+    The difference is in relative tissue contrast, not overall brightness.
     """
     if random_state is not None:
         random.seed(random_state)
     
     if intensity_params is None:
         intensity_params = {
-            'gamma': 1.0,  # Fixed value for consistency
-            'threshold': 0.08,  # MUCH HIGHER threshold - only very bright areas survive
-            'contrast_stretch': (0.5, 99.5),  # Fixed balanced stretch
-            'background_boost': 1.0,  # Fixed value for consistency
+            'gamma': 1.2,
+            'threshold': 0.02,
+            'contrast_stretch': (0.5, 99.5),
+            'background_boost': 1.0,
             'color_scheme': random.choice(['bw', 'blue']),
             'blue_tint': random.uniform(0.1, 0.4)
         }
     
-    # PRESERVE ORIGINAL IMAGE - no inversion anywhere, but create dark field appearance
-    preserved_image = slice_clahe.copy()
-
-    # Simple background removal - make background black for dark field look
-    background_threshold = 0.05
-    background_mask = slice_clahe < background_threshold
-    preserved_image[background_mask] = 0.0
+    # CRITICAL: First check if CLAHE made everything too bright
+    # If mean intensity is very high, CLAHE over-enhanced - force dark output
+    if np.mean(slice_clahe) > 0.4:
+        print(f"Warning: CLAHE over-enhanced (mean={np.mean(slice_clahe):.3f}) - forcing very dark output")
+        dark_field = np.zeros_like(slice_clahe)
+        # Create minimal structure visibility
+        dark_field = np.clip(slice_clahe * 0.02, 0, 0.02)
+        return dark_field
     
-    # Create dark field appearance: make everything very close to black
-    # This preserves blockface intensity relationships but creates dark field look
-    anatomy_areas = preserved_image >= background_threshold
-    if np.any(anatomy_areas):
-        # Work directly on the image array to avoid broadcasting issues
-        # Very aggressive dark field transformation
-        dark_field_gamma = 5.0  # Much higher gamma for extreme darkening
-        darkened_image = np.power(preserved_image, dark_field_gamma)
+    # Create brain mask with intelligent validation
+    basic_threshold = 0.015
+    brain_mask_basic = slice_clahe > basic_threshold
+    bright_areas = slice_clahe > 0.3
+    brain_mask = brain_mask_basic | bright_areas
+    
+    brain_mask = morphology.binary_closing(brain_mask, morphology.disk(2))
+    brain_mask = morphology.remove_small_objects(brain_mask, min_size=100)
+    
+    # Start with black canvas
+    dark_field = np.zeros_like(slice_clahe)
+    
+    # Only process within brain mask
+    if not np.any(brain_mask):
+        return dark_field  # Return black if no brain detected
+    
+    tissue_values = slice_clahe[brain_mask]
+    
+    # CRITICAL: Check if this is a low-contrast slice (noise/artifact)
+    # Real brain tissue has meaningful intensity variation
+    tissue_std = np.std(tissue_values)
+    tissue_mean = np.mean(tissue_values)
+    
+    if tissue_std < 0.02 or tissue_mean < 0.05:
+        # Very low contrast or very dark - likely noise or bad slice
+        # Return minimal dark field
+        dark_field[brain_mask] = 0.01
+        return np.clip(dark_field, 0, 0.02)
+    
+    if tissue_values.max() <= tissue_values.min():
+        dark_field[brain_mask] = 0.01
+        return np.clip(dark_field, 0, 0.02)
+    
+    # TRUE DARK FIELD: Scale down all intensities dramatically
+    # Normalize to 0-1 within tissue
+    normalized = (slice_clahe - tissue_values.min()) / (tissue_values.max() - tissue_values.min())
+    
+    # Create CONTINUOUS mapping - keep it VERY dark
+    dark_field[brain_mask] = normalized[brain_mask] * 0.05
+    
+    # Apply gamma for contrast
+    dark_field = np.power(dark_field, intensity_params['gamma'])
+    
+    # Heavy smoothing to eliminate blockiness
+    dark_field = filters.gaussian(dark_field, sigma=1.5)
+    
+    # Light contrast stretch ONLY if there's real tissue variation
+    if np.any(dark_field[brain_mask] > 0):
+        p_low, p_high = intensity_params['contrast_stretch']
+        tissue_vals = dark_field[brain_mask]
         
-        # Only the brightest features remain visible
-        visibility_threshold = 0.02  # Very low threshold - only brightest areas survive
-        bright_features = darkened_image > visibility_threshold
+        # Skip contrast stretch if tissue has very low variation (artifact/noise)
+        if np.std(tissue_vals) < 0.001:
+            # Too uniform - skip stretch to avoid amplifying noise
+            pass
+        else:
+            p1, p99 = np.percentile(tissue_vals, (p_low, p_high))
+            
+            if p99 > p1 and (p99 - p1) > 0.005:  # Require meaningful range
+                # Gentle rescale maintaining the dark field look
+                stretched = (dark_field - p1) / (p99 - p1)
+                stretched = np.clip(stretched, 0, 1)
+                # Keep max VERY low with hard cap
+                dark_field = np.minimum(stretched * 0.08, 0.08)
+                # Keep non-brain areas black
+                dark_field[~brain_mask] = 0.0
+    
+    # Additional smoothing after contrast stretch
+    dark_field = filters.gaussian(dark_field, sigma=0.8)
+    
+    # CRITICAL: Final safety clamp to prevent white backgrounds
+    # Ensure max value never exceeds 0.10 (very dark gray at most)
+    dark_field = np.clip(dark_field, 0, 0.10)
+    
+    # Edge softening (same as balanced)
+    brain_distance = ndimage.distance_transform_edt(brain_mask)
+    edge_distance = ndimage.distance_transform_edt(~brain_mask)
+    
+    transition_zone = (edge_distance <= 3) & (brain_distance <= 3)
+    if np.any(transition_zone):
+        edge_factor = np.minimum(brain_distance[transition_zone] / 3.0, 1.0)
+        edge_factor = np.power(edge_factor, 0.7)
+        dark_field[transition_zone] *= edge_factor
+    
+    # Force background black
+    clear_background = edge_distance > 3
+    dark_field[clear_background] = 0.0
+    
+    # MINIMAL artifact removal - only remove very bright outliers
+    if np.any(dark_field > 0):
+        bright_threshold_artifact = np.percentile(dark_field[dark_field > 0], 95)  # 95th instead of 90th
+        bright_regions = dark_field > bright_threshold_artifact
         
-        # Make everything extremely dark - near black
-        preserved_image[anatomy_areas] = 0.001  # Almost black base
+        labeled_bright = measure.label(bright_regions)
+        regions = measure.regionprops(labeled_bright)
         
-        # Even the "bright" features are kept quite dark
-        if np.any(bright_features):
-            bright_values = darkened_image[bright_features]
-            # Scale down bright features to stay dark but still visible
-            preserved_image[bright_features] = bright_values * 0.3  # Scale down to 30%
+        brain_area = np.sum(brain_mask)
+        min_region_size = max(25, brain_area * 0.0005)
+        
+        for region in regions:
+            # Only remove TINY bright artifacts
+            if region.area < max(5, min_region_size * 0.3):
+                artifact_mask = labeled_bright == region.label
+                y_min, x_min, y_max, x_max = region.bbox
+                
+                pad = 2  # Smaller padding
+                y_start = max(0, y_min - pad)
+                y_end = min(dark_field.shape[0], y_max + pad)
+                x_start = max(0, x_min - pad)
+                x_end = min(dark_field.shape[1], x_max + pad)
+                
+                surrounding_region = dark_field[y_start:y_end, x_start:x_end]
+                surrounding_mask = brain_mask[y_start:y_end, x_start:x_end] & (surrounding_region > 0)
+                
+                if np.any(surrounding_mask):
+                    # Use median only
+                    median_val = np.median(surrounding_region[surrounding_mask])
+                    dark_field[artifact_mask] = median_val
     
-    # Ensure the brightest blockface areas stay prominent but still dark
-    very_bright = slice_clahe > 0.8  # Higher threshold - only the absolute brightest areas
-    if np.any(very_bright):
-        # Keep bright areas visible but still quite dark
-        bright_values = slice_clahe[very_bright]
-        darkened_bright = np.power(bright_values, 3.0)  # Darken even the brightest areas
-        preserved_image[very_bright] = darkened_bright * 0.4  # Scale down to 40%
+    # Final smoothing
+    dark_field = filters.gaussian(dark_field, sigma=0.3)
     
-    # Light smoothing to clean up edges
-    preserved_image = filters.gaussian(preserved_image, sigma=0.2)
-    
-    print(f"   NO INVERSION: Original blockface preserved with three-level thresholding")
-    
-    return preserved_image 
+    return np.clip(dark_field, 0, 1) 

@@ -48,6 +48,14 @@ python syntract.py --input brain.nii.gz --trk fibers.trk --use_ants \
   --ants_warp warp.nii.gz --ants_iwarp iwarp.nii.gz --ants_aff affine.mat
 ```
 
+### White Matter Filtering
+```bash
+# Filter streamlines to only white matter regions using a white matter mask
+python syntract.py --input brain.nii.gz --trk fibers.trk \
+  --white_matter_only --wm_mask_file white_matter_mask.nii.gz \
+  --use_high_density_masks
+```
+
 ### Advanced Patch Processing
 ```bash
 # High-throughput: many small patches
@@ -117,6 +125,12 @@ python cumulative.py  # Edit paths in script
 | `--density_threshold` | float | 0.15 | Fiber density threshold for masking |
 | `--min_bundle_size` | int | 20 | Minimum size for bundle detection |
 | `--label_bundles` | flag | False | Label individual fiber bundles |
+
+### White Matter Filtering
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `--white_matter_only` | flag | False | Enable white matter filtering for streamlines |
+| `--wm_mask_file` | str | None | Path to white matter mask NIfTI file |
 
 ### Slice Extraction
 | Parameter | Type | Description |
@@ -386,7 +400,11 @@ result = process_syntract(
     mask_thickness=1,              # Thickness of generated masks
     density_threshold=0.15,        # Fiber density threshold for masking
     min_bundle_size=20,            # Minimum size for bundle detection
-    label_bundles=False            # Label individual fiber bundles
+    label_bundles=False,           # Label individual fiber bundles
+    
+    # White matter filtering
+    white_matter_only=False,       # Enable white matter filtering
+    wm_mask_file=None              # Path to white matter mask NIfTI file
 )
 ```
 

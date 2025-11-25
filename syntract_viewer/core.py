@@ -154,9 +154,9 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
             random_state=random_state
         )
 
-        # Use balanced dark field effect for good artifact removal with smooth transitions
-        # Preserve bright blockface areas by not forcing background to black
-        dark_field_slice = apply_balanced_dark_field_effect(
+        # Use blockface-preserving dark field (no inversion) to keep original intensities
+        # This preserves the normal NIfTI appearance while darkening the background
+        dark_field_slice = apply_blockface_preserving_dark_field_effect(
             slice_enhanced,
             slice_intensity_params,
             random_state=random_state,
@@ -273,7 +273,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                              background_enhancement=None, cornucopia_augmentation=None,
                              truly_random=False, output_image_size=(1024, 1024),
                              use_high_density_masks=False, max_fiber_percentage=100.0,
-                             min_fiber_percentage=10.0):
+                             min_fiber_percentage=10.0, white_mask_file=None):
     """
     Visualize multiple coronal slices of a nifti file with tractography overlaid.
 
@@ -307,6 +307,22 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
     nii_img = nib.as_closest_canonical(nii_img)
     nii_data = nii_img.get_fdata()
     dims = nii_data.shape
+    
+    # Load white mask if provided
+    white_mask_data = None
+    if white_mask_file and os.path.exists(white_mask_file):
+        try:
+            white_mask_img = nib.load(white_mask_file)
+            white_mask_img = nib.as_closest_canonical(white_mask_img)
+            white_mask_data = white_mask_img.get_fdata()
+            # Convert to binary mask
+            white_mask_data = (white_mask_data > 0.5).astype(np.uint8)
+            print(f"Loaded white mask from {white_mask_file}")
+            print(f"  White mask shape: {white_mask_data.shape}")
+            print(f"  NIfTI shape: {dims}")
+        except Exception as e:
+            print(f"Warning: Could not load white mask: {e}")
+            white_mask_data = None
 
     # Load tractography
     try:
@@ -379,9 +395,9 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
             random_state=random_state
         )
 
-        # Use balanced dark field effect for good artifact removal with smooth transitions
-        # Preserve bright blockface areas by not forcing background to black
-        dark_field_slice = apply_balanced_dark_field_effect(
+        # Use blockface-preserving dark field (no inversion) to keep original intensities
+        # This preserves the normal NIfTI appearance while darkening the background
+        dark_field_slice = apply_blockface_preserving_dark_field_effect(
             slice_enhanced,
             slice_intensity_params,
             random_state=random_state,
@@ -390,6 +406,57 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
 
         axes[i].imshow(np.rot90(dark_field_slice), cmap=dark_field_cmap, aspect='equal', interpolation='bilinear')
         axes[i].set_facecolor('black')
+
+        # Extract white mask slice if available (needed for both filtering and drawing)
+        white_mask_slice = None
+        if white_mask_data is not None:
+            try:
+                # Handle thin slices (middle dimension is 1)
+                if white_mask_data.shape[1] == 1:
+                    # For thin slices, squeeze the middle dimension
+                    white_mask_slice = white_mask_data[:, 0, :]
+                else:
+                    # Normal case: extract slice at slice_idx
+                    white_mask_slice = white_mask_data[:, slice_idx, :]
+                
+                # Validate shape
+                if white_mask_slice.ndim == 1:
+                    print(f"  Warning: White mask slice is 1D (shape: {white_mask_slice.shape}), skipping mask filtering")
+                    white_mask_slice = None
+                else:
+                    print(f"  Using white mask for slice {slice_idx}, shape: {white_mask_slice.shape}")
+            except Exception as e:
+                print(f"  Warning: Could not extract white mask slice: {e}")
+                white_mask_slice = None
+
+        # Filter streamlines by white mask before creating masks
+        streamlines_for_mask = streamlines_voxel
+        if white_mask_slice is not None and has_streamlines:
+            filtered_streamlines = []
+            for streamline in streamlines_voxel:
+                # Check if streamline passes through white mask
+                # Find points in this coronal slice
+                slice_points = streamline[np.abs(streamline[:, 1] - slice_idx) < 0.5]
+                if len(slice_points) == 0:
+                    continue
+                
+                # Check if any point is in the white mask
+                # NOTE: Use RAW coordinates - no transformation needed!
+                # The z_plot transformation (dims[2] - z - 1) is ONLY for visualization plotting,
+                # NOT for mask coordinate lookup
+                valid = False
+                for point in slice_points:
+                    x_idx = int(np.clip(point[0], 0, white_mask_slice.shape[0] - 1))
+                    z_idx = int(np.clip(point[2], 0, white_mask_slice.shape[1] - 1))
+                    
+                    if white_mask_slice[x_idx, z_idx] > 0:
+                        valid = True
+                        break
+                
+                if valid:
+                    filtered_streamlines.append(streamline)
+            
+            streamlines_for_mask = filtered_streamlines
 
         # Create mask if requested - skip regular masks if high-density masks are enabled
         if save_masks and has_streamlines and not use_high_density_masks:
@@ -405,7 +472,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
             
             if label_bundles:
                 mask, labeled_mask = create_fiber_mask(
-                    streamlines_voxel, slice_idx, orientation='coronal',
+                    streamlines_for_mask, slice_idx, orientation='coronal',
                     dims=dims, thickness=adaptive_thickness, dilate=True,
                     density_threshold=adaptive_density_threshold, gaussian_sigma=adaptive_gaussian_sigma,
                     close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
@@ -418,7 +485,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                 labeled_masks.append(labeled_mask)
             else:
                 mask = create_fiber_mask(
-                    streamlines_voxel, slice_idx, orientation='coronal',
+                    streamlines_for_mask, slice_idx, orientation='coronal',
                     dims=dims, thickness=adaptive_thickness, dilate=True,
                     density_threshold=adaptive_density_threshold, gaussian_sigma=adaptive_gaussian_sigma,
                     close_gaps=close_gaps, closing_footprint_size=closing_footprint_size,
@@ -432,7 +499,11 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
         if has_streamlines:
             segments = []
             colors = []
-            for sl in streamlines_voxel:
+            
+            # Use streamlines_for_mask (filtered) instead of streamlines_voxel (unfiltered)
+            streamlines_to_draw = streamlines_for_mask if white_mask_slice is not None else streamlines_voxel
+            
+            for sl in streamlines_to_draw:
                 sl_dense = densify_streamline(sl)
                 x = sl_dense[:, 0]
                 y = sl_dense[:, 1]
@@ -451,7 +522,28 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                 # Reduce fiber contrast to make them less obvious and blend better with dark background
                 base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.4)
 
-                for seg in segs:
+                for seg_idx, seg in enumerate(segs):
+                    # SEGMENT-LEVEL white mask filtering
+                    # Even though streamlines are filtered, we need to ensure segments don't extend into non-WM areas
+                    if white_mask_slice is not None:
+                        # Check both endpoints of the segment using ORIGINAL z coordinates (not z_plot)
+                        # seg shape is (2, 2) where seg[0] is start point [x, z_plot], seg[1] is end point [x, z_plot]
+                        start_x = int(np.clip(seg[0, 0], 0, white_mask_slice.shape[0] - 1))
+                        # Use original z array (not z_plot) for mask lookup
+                        start_z = int(np.clip(z[seg_idx], 0, white_mask_slice.shape[1] - 1))
+                        
+                        end_x = int(np.clip(seg[1, 0], 0, white_mask_slice.shape[0] - 1))
+                        end_z = int(np.clip(z[seg_idx + 1], 0, white_mask_slice.shape[1] - 1))
+                        
+                        # Check if BOTH endpoints are in white matter
+                        start_in_wm = white_mask_slice[start_x, start_z] > 0
+                        end_in_wm = white_mask_slice[end_x, end_z] > 0
+                        
+                        # Only draw segment if at least one endpoint is in white matter
+                        # This allows segments that partially cross WM boundaries
+                        if not (start_in_wm or end_in_wm):
+                            continue
+                    
                     segments.append(seg)
                     colors.append(tract_color + (base_opacity,))
 
@@ -479,7 +571,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                     nifti_file, trk_file, output_file, slice_idx, 
                     max_fiber_percentage, tract_linewidth, mask_thickness,
                     density_threshold, gaussian_sigma, close_gaps, closing_footprint_size,
-                    label_bundles, min_bundle_size, output_image_size
+                    label_bundles, min_bundle_size, output_image_size, white_mask_file=white_mask_file
                 )
             elif fiber_masks:
                 # Save regular masks only when high-density masks are not enabled
@@ -593,9 +685,9 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
             contrast_params={'clip_limit': clahe_clip_limit, 'tile_grid_size': (clahe_tile_grid_size, clahe_tile_grid_size)}
         )
 
-        # Use balanced dark field effect for good artifact removal with smooth transitions
-        # Preserve bright blockface areas by not forcing background to black
-        dark_field_slice = apply_balanced_dark_field_effect(
+        # Use blockface-preserving dark field (no inversion) to keep original intensities
+        # This preserves the normal NIfTI appearance while darkening the background
+        dark_field_slice = apply_blockface_preserving_dark_field_effect(
             slice_enhanced,
             intensity_params,
             random_state=random_state,
@@ -733,11 +825,25 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
                                                   max_fiber_percentage, tract_linewidth, mask_thickness,
                                                   density_threshold, gaussian_sigma, close_gaps, 
                                                   closing_footprint_size, label_bundles, min_bundle_size, 
-                                                  output_image_size, static_streamline_threshold=25):
+                                                  output_image_size, static_streamline_threshold=25, white_mask_file=None):
     """Generate and apply high-density mask for coronal view."""
     import nibabel as nib
     import numpy as np
     from dipy.io.streamline import load_tractogram
+    import os
+    
+    # Load white mask if provided
+    white_mask_data = None
+    if white_mask_file and os.path.exists(white_mask_file):
+        try:
+            white_mask_img = nib.load(white_mask_file)
+            white_mask_img = nib.as_closest_canonical(white_mask_img)
+            white_mask_data = white_mask_img.get_fdata()
+            white_mask_data = (white_mask_data > 0.5).astype(np.uint8)
+            print(f"Loaded white mask for filtering: {white_mask_file}")
+        except Exception as e:
+            print(f"Warning: Could not load white mask for filtering: {e}")
+            white_mask_data = None
     
     # Load data
     nii_img = nib.load(nifti_file)
@@ -766,6 +872,43 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
             # Apply inverse affine to convert from world to voxel coordinates
             sl_voxel = np.dot(sl, affine_inv[:3, :3].T) + affine_inv[:3, 3]
             streamlines_voxel.append(sl_voxel)
+    
+    # Filter streamlines by white mask if provided
+    if white_mask_data is not None:
+        print(f"Filtering {len(streamlines_voxel)} streamlines by white mask...")
+        
+        # Extract white mask slice for this coronal slice
+        white_mask_slice = None
+        try:
+            if white_mask_data.shape[1] == 1:
+                white_mask_slice = white_mask_data[:, 0, :]
+            else:
+                white_mask_slice = white_mask_data[:, slice_idx, :]
+        except Exception as e:
+            print(f"  Warning: Could not extract white mask slice: {e}")
+        
+        if white_mask_slice is not None:
+            filtered_streamlines = []
+            for streamline in streamlines_voxel:
+                # Check if streamline passes through white mask
+                slice_points = streamline[np.abs(streamline[:, 1] - slice_idx) < 0.5]
+                if len(slice_points) == 0:
+                    continue
+                
+                # Check if any point is in the white mask
+                valid = False
+                for point in slice_points:
+                    x_idx = int(np.clip(point[0], 0, white_mask_slice.shape[0] - 1))
+                    z_idx = int(np.clip(point[2], 0, white_mask_slice.shape[1] - 1))
+                    if white_mask_slice[x_idx, z_idx] > 0:
+                        valid = True
+                        break
+                
+                if valid:
+                    filtered_streamlines.append(streamline)
+            
+            streamlines_voxel = filtered_streamlines
+            print(f"  Filtered to {len(streamlines_voxel)} streamlines")
     
     # Scale streamline coordinates to target mask dimensions if dimensions differ
     if target_mask_dims != dims:
