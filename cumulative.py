@@ -252,8 +252,46 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
             output_image_size=output_image_size,
             random_state=None,
             white_mask_file=white_mask_file,
-            output_dir=output_dir  # Pass output_dir for debug visualization saving
+            output_dir=None  # Don't save in process_patches_inmemory, we'll save here
         )
+        
+        # Save the images and masks to disk
+        if images and masks:
+            print(f"\nSaving {len(images)} images and {len(masks)} masks to disk...")
+            
+            # Create output subdirectories
+            images_dir = os.path.join(output_dir, "images")
+            masks_dir = os.path.join(output_dir, "masks")
+            os.makedirs(images_dir, exist_ok=True)
+            os.makedirs(masks_dir, exist_ok=True)
+            
+            from PIL import Image
+            
+            saved_count = 0
+            for i, (img, mask) in enumerate(zip(images, masks)):
+                try:
+                    # Save image
+                    image_filename = f"patch_{i:04d}.png"
+                    image_path = os.path.join(images_dir, image_filename)
+                    img_pil = Image.fromarray(img)
+                    img_pil.save(image_path)
+                    
+                    # Save mask
+                    mask_filename = f"patch_{i:04d}_mask.png"
+                    mask_path = os.path.join(masks_dir, mask_filename)
+                    mask_pil = Image.fromarray(mask)
+                    mask_pil.save(mask_path)
+                    
+                    saved_count += 1
+                    
+                    if (i + 1) % 10 == 0 or (i + 1) == len(images):
+                        print(f"  Saved {i + 1}/{len(images)} patches...")
+                        
+                except Exception as e:
+                    print(f"  WARNING: Failed to save patch {i}: {e}")
+            
+            print(f"Successfully saved {saved_count} images to: {images_dir}")
+            print(f"Successfully saved {saved_count} masks to: {masks_dir}")
         
         # Create result object in same format as process_syntract
         result = {
