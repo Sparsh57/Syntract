@@ -345,7 +345,7 @@ def resample_nifti_patch(patch_img, target_affine, target_shape, use_gpu=False):
     else:
         new_data = np.zeros(target_shape, dtype=np.float32)
     
-    # Perform resampling - vectorized for better performance
+    # Perform resampling with trilinear interpolation for smooth results
     x_coords, y_coords, z_coords = np.mgrid[0:target_shape[0], 0:target_shape[1], 0:target_shape[2]]
     coords_flat = np.vstack([x_coords.ravel(), y_coords.ravel(), z_coords.ravel(), np.ones(x_coords.size)])
     
@@ -353,38 +353,59 @@ def resample_nifti_patch(patch_img, target_affine, target_shape, use_gpu=False):
     world_coords = target_affine @ coords_flat
     old_vox_coords = old_affine_inv @ world_coords
     
-    # Extract integer coordinates
-    i_coords = old_vox_coords[0, :].astype(int)
-    j_coords = old_vox_coords[1, :].astype(int) 
-    k_coords = old_vox_coords[2, :].astype(int)
+    # Extract floating point coordinates for interpolation
+    i_coords = old_vox_coords[0, :]
+    j_coords = old_vox_coords[1, :] 
+    k_coords = old_vox_coords[2, :]
     
-    # Create validity mask
-    valid_mask = ((i_coords >= 0) & (i_coords < data_in.shape[0]) &
-                  (j_coords >= 0) & (j_coords < data_in.shape[1]) &
-                  (k_coords >= 0) & (k_coords < data_in.shape[2]))
+    # Get integer floor coordinates and interpolation weights
+    i0 = np.floor(i_coords).astype(int)
+    j0 = np.floor(j_coords).astype(int)
+    k0 = np.floor(k_coords).astype(int)
     
-    # Sample valid points
-    if use_gpu:
-        # Transfer data to GPU if using GPU
-        data_in_gpu = xp.array(data_in)
-        valid_indices = xp.array(np.where(valid_mask)[0])
-        i_valid = xp.array(i_coords[valid_mask])
-        j_valid = xp.array(j_coords[valid_mask])
-        k_valid = xp.array(k_coords[valid_mask])
-        
-        # Sample using advanced indexing
-        sampled_values = data_in_gpu[i_valid, j_valid, k_valid]
-        
-        # Place values in output array
-        output_flat = xp.zeros(x_coords.size, dtype=xp.float32)
-        output_flat[valid_indices] = sampled_values
-        new_data = output_flat.reshape(target_shape)
-    else:
-        # CPU version
-        output_flat = np.zeros(x_coords.size, dtype=np.float32)
-        valid_indices = np.where(valid_mask)[0]
-        output_flat[valid_indices] = data_in[i_coords[valid_mask], j_coords[valid_mask], k_coords[valid_mask]]
-        new_data = output_flat.reshape(target_shape)
+    i1 = i0 + 1
+    j1 = j0 + 1
+    k1 = k0 + 1
+    
+    # Compute interpolation weights
+    wi = i_coords - i0
+    wj = j_coords - j0
+    wk = k_coords - k0
+    
+    # Create validity masks for all 8 corners
+    def is_valid(i, j, k):
+        return ((i >= 0) & (i < data_in.shape[0]) &
+                (j >= 0) & (j < data_in.shape[1]) &
+                (k >= 0) & (k < data_in.shape[2]))
+    
+    # Trilinear interpolation
+    output_flat = np.zeros(x_coords.size, dtype=np.float32)
+    
+    # For each valid point, interpolate from 8 neighbors
+    valid_center = is_valid(i0, j0, k0)
+    
+    for di in [0, 1]:
+        for dj in [0, 1]:
+            for dk in [0, 1]:
+                i_curr = i0 + di
+                j_curr = j0 + dj
+                k_curr = k0 + dk
+                
+                valid_curr = is_valid(i_curr, j_curr, k_curr)
+                valid_indices = np.where(valid_curr)[0]
+                
+                if len(valid_indices) > 0:
+                    # Calculate weight for this corner
+                    weight_i = (1 - wi) if di == 0 else wi
+                    weight_j = (1 - wj) if dj == 0 else wj
+                    weight_k = (1 - wk) if dk == 0 else wk
+                    weights = weight_i * weight_j * weight_k
+                    
+                    # Sample values at valid locations
+                    sampled = data_in[i_curr[valid_indices], j_curr[valid_indices], k_curr[valid_indices]]
+                    output_flat[valid_indices] += sampled * weights[valid_indices]
+    
+    new_data = output_flat.reshape(target_shape)
     
     # Convert back to numpy if on GPU
     if use_gpu and hasattr(new_data, 'get'):

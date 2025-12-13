@@ -1081,6 +1081,7 @@ def process_patches_inmemory(
                     
                     # Random fiber percentage for high-density masks (70-100%)
                     max_fiber_pct = np.random.uniform(70, 100) if random_state is None else np.random.RandomState(random_state + i).uniform(70, 100)
+                    print(f"  Using {max_fiber_pct:.1f}% of fibers for both visualization and mask")
                     
                     # Randomize cornucopia preset for variation (same as syntract.py)
                     presets = ['clean_optical', 'gamma_speckle', 'optical_with_debris', 
@@ -1107,6 +1108,7 @@ def process_patches_inmemory(
                         cornucopia_augmentation=actual_cornucopia_preset,
                         tract_linewidth=1.0,
                         output_image_size=output_image_size,
+                        streamline_percentage=max_fiber_pct,  # USE SAME PERCENTAGE AS MASK
                         random_state=random_state + i if random_state else None,
                         white_mask_file=white_mask_patch
                     )
@@ -1253,15 +1255,15 @@ def process_patches_inmemory(
                         slice_idx=slice_idx,
                         max_fiber_percentage=max_fiber_pct,
                         tract_linewidth=1.0,
-                        mask_thickness=1,
-                        density_threshold=0.6,
-                        gaussian_sigma=2.0,
-                        close_gaps=False,
-                        closing_footprint_size=5,
+                        mask_thickness=6,  # Smaller thickness to prevent merging
+                        density_threshold=0.01,  # Low threshold to capture sparse streamlines
+                        gaussian_sigma=0.5,  # Minimal smoothing to preserve separation
+                        close_gaps=False,  # Disable gap closing to preserve separation
+                        closing_footprint_size=3,  # Smaller footprint
                         label_bundles=False,
-                        min_bundle_size=2000,
+                        min_bundle_size=10,  # Very low to keep all visible bundles separate
                         output_image_size=output_image_size,
-                        static_streamline_threshold=0.1,
+                        static_streamline_threshold=0.05,  # Lower threshold to detect sparser streamlines
                         white_mask_file=white_mask_patch  # Pass white mask for filtering
                     )
                     
@@ -1272,7 +1274,8 @@ def process_patches_inmemory(
                     
                     if os.path.exists(mask_file):
                         mask_array = _load_and_resize_mask(mask_file, target_size=output_image_size)
-                        print(f"  Mask loaded: shape={mask_array.shape}, target={output_image_size}")
+                        mask_nonzero = np.sum(mask_array > 0)
+                        print(f"  Mask loaded: shape={mask_array.shape}, target={output_image_size}, nonzero={mask_nonzero}")
                         
                         # CRITICAL VALIDATION: Ensure mask matches image dimensions
                         if mask_array.shape[:2] != image_array.shape[:2]:

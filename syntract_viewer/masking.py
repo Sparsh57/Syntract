@@ -11,9 +11,15 @@ from scipy.signal import find_peaks
 def create_fiber_mask(streamlines_voxel, slice_idx, orientation='axial', dims=(256, 256, 256), 
                      thickness=1, dilate=True, density_threshold=0.6, gaussian_sigma=2.0,
                      close_gaps=False, closing_footprint_size=5, label_bundles=False,
-                     min_bundle_size=1, static_streamline_threshold=0.1):
+                     min_bundle_size=1, static_streamline_threshold=0.1, white_mask_slice=None):
     """
     Create a binary mask of fiber bundle outlines in a specific slice.
+    
+    Parameters
+    ----------
+    white_mask_slice : ndarray, optional
+        2D white matter mask for the slice. If provided, only draw segments where both 
+        endpoints are in white matter (same filtering as visualization).
     """
     # Create empty mask
     if orientation == 'axial':
@@ -44,6 +50,7 @@ def create_fiber_mask(streamlines_voxel, slice_idx, orientation='axial', dims=(2
             continue
             
         mask_points = []
+        mask_point_indices = []  # Track original coord indices
         for i in range(len(coords)):
             if distance_to_slice[i] <= distance_threshold:
                 if orientation == 'axial':
@@ -53,12 +60,14 @@ def create_fiber_mask(streamlines_voxel, slice_idx, orientation='axial', dims=(2
                     y_plot = dims[1] - y - 1
                     if 0 <= x < dims[0] and 0 <= y_plot < dims[1]:
                         mask_points.append((x, y_plot))
+                        mask_point_indices.append(i)
                 elif orientation == 'coronal':
                     x, z = int(coords[i, 0]), int(coords[i, 2])
                     # Use the same coordinate transformation as streamline plotting
                     z_plot = dims[2] - z - 1
                     if 0 <= x < dims[0] and 0 <= z_plot < dims[2]:
                         mask_points.append((x, z_plot))
+                        mask_point_indices.append(i)
                 elif orientation == 'sagittal':
                     y, z = int(coords[i, 1]), int(coords[i, 2])
                     # ALWAYS use the same coordinate transformation as streamline plotting
@@ -66,11 +75,35 @@ def create_fiber_mask(streamlines_voxel, slice_idx, orientation='axial', dims=(2
                     z_plot = dims[2] - z - 1
                     if 0 <= y < dims[1] and 0 <= z_plot < dims[2]:
                         mask_points.append((y, z_plot))
+                        mask_point_indices.append(i)
         
         # Increment density map
         for j in range(len(mask_points) - 1):
             p1 = mask_points[j]
             p2 = mask_points[j + 1]
+            
+            # Apply white mask filtering at segment level (same as visualization)
+            if white_mask_slice is not None:
+                # Get original coordinates (before plot transformation)
+                if orientation == 'coronal':
+                    # Get original indices from coords array
+                    orig_idx1 = mask_point_indices[j]
+                    orig_idx2 = mask_point_indices[j + 1]
+                    orig_z1 = int(coords[orig_idx1, 2])
+                    orig_z2 = int(coords[orig_idx2, 2])
+                    
+                    # Check if both endpoints are in white matter
+                    x1_idx = int(np.clip(p1[0], 0, white_mask_slice.shape[0] - 1))
+                    z1_idx = int(np.clip(orig_z1, 0, white_mask_slice.shape[1] - 1))
+                    x2_idx = int(np.clip(p2[0], 0, white_mask_slice.shape[0] - 1))
+                    z2_idx = int(np.clip(orig_z2, 0, white_mask_slice.shape[1] - 1))
+                    
+                    start_in_wm = white_mask_slice[x1_idx, z1_idx] > 0
+                    end_in_wm = white_mask_slice[x2_idx, z2_idx] > 0
+                    
+                    # Skip segment if neither endpoint is in white matter
+                    if not (start_in_wm or end_in_wm):
+                        continue
             
             rr, cc = draw.line(p1[0], p1[1], p2[0], p2[1])
             valid_indices = (
@@ -81,6 +114,7 @@ def create_fiber_mask(streamlines_voxel, slice_idx, orientation='axial', dims=(2
                 density_map[rr[valid_indices], cc[valid_indices]] += 1
     
     if np.max(density_map) == 0:
+        print(f"WARNING: No streamlines found for slice {slice_idx} in {orientation} orientation - mask will be empty")
         if label_bundles:
             return np.zeros(mask_shape, dtype=np.uint8), np.zeros(mask_shape, dtype=np.uint8)
         else:
@@ -105,10 +139,37 @@ def create_fiber_mask(streamlines_voxel, slice_idx, orientation='axial', dims=(2
     # Apply absolute threshold directly to density map (no normalization)
     mask = (density_map >= static_streamline_threshold).astype(np.uint8)
     
-    # Apply morphological operations
+    # Debug: Report mask statistics
+    mask_pixels = np.sum(mask > 0)
+    if mask_pixels > 0:
+        print(f"  Mask generated: {mask_pixels} pixels, max density: {np.max(density_map):.1f}, threshold: {static_streamline_threshold}")
+    else:
+        print(f"  WARNING: Mask is empty after thresholding! Max density: {np.max(density_map):.1f}, threshold: {static_streamline_threshold}")
+    
+    # SMART DILATION: Label bundles first, then dilate each independently
     if dilate and np.any(mask):
-        mask = morphology.binary_closing(mask, morphology.disk(thickness))
-        mask = morphology.binary_dilation(mask, morphology.disk(thickness))
+        # First, label all separate bundles
+        labeled_mask = measure.label(mask, connectivity=2)
+        num_bundles = labeled_mask.max()
+        
+        if num_bundles > 0:
+            # Dilate each bundle independently to preserve gaps
+            dilated_mask = np.zeros_like(mask)
+            
+            for bundle_id in range(1, num_bundles + 1):
+                # Extract this bundle
+                bundle = (labeled_mask == bundle_id).astype(np.uint8)
+                
+                # Light dilation only - don't use closing which fills gaps aggressively
+                # Use smaller disk to prevent merging nearby bundles
+                bundle_dilated = morphology.binary_dilation(bundle, morphology.disk(thickness))
+                
+                # Add to result (bundles won't merge because we process them separately)
+                dilated_mask = np.maximum(dilated_mask, bundle_dilated.astype(np.uint8))
+            
+            mask = dilated_mask
+            
+            # NO extra merging dilation - keep bundles completely separate
         
         # Remove only single-pixel noise (minimal filtering)
         if np.sum(mask) > 0:

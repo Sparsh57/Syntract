@@ -38,6 +38,72 @@ except ImportError:
         select_random_streamlines
     )
 
+from scipy.spatial import cKDTree
+
+
+def filter_streamlines_by_density(streamlines, slice_idx, min_neighbors=3, search_radius=5.0):
+    """
+    Filter streamlines based on local density - remove isolated streamlines.
+    
+    Parameters:
+    -----------
+    streamlines : list of arrays
+        List of streamlines in voxel coordinates
+    slice_idx : int
+        The coronal slice index to focus on
+    min_neighbors : int
+        Minimum number of nearby streamlines required (default: 3)
+    search_radius : float
+        Search radius in voxels for finding neighbors (default: 5.0)
+    
+    Returns:
+    --------
+    list of arrays
+        Filtered streamlines that have sufficient neighbors
+    """
+    if len(streamlines) == 0:
+        return streamlines
+    
+    # Extract representative points for each streamline on the slice
+    representative_points = []
+    valid_indices = []
+    
+    for idx, streamline in enumerate(streamlines):
+        # Get points near the slice
+        slice_points = streamline[np.abs(streamline[:, 1] - slice_idx) < 0.5]
+        if len(slice_points) > 0:
+            # Use median point as representative
+            rep_point = np.median(slice_points, axis=0)
+            representative_points.append(rep_point)
+            valid_indices.append(idx)
+    
+    if len(representative_points) == 0:
+        return streamlines
+    
+    representative_points = np.array(representative_points)
+    
+    # Build KD-tree for efficient neighbor search
+    tree = cKDTree(representative_points)
+    
+    # Count neighbors for each streamline (including itself)
+    neighbor_counts = tree.query_ball_point(representative_points, search_radius, return_length=True)
+    
+    # Filter streamlines that have enough neighbors
+    filtered_streamlines = []
+    removed_count = 0
+    
+    for i, idx in enumerate(valid_indices):
+        # Subtract 1 because query includes the point itself
+        num_neighbors = neighbor_counts[i] - 1
+        if num_neighbors >= min_neighbors:
+            filtered_streamlines.append(streamlines[idx])
+        else:
+            removed_count += 1
+    
+    print(f"  Density filtering: removed {removed_count} isolated streamlines (kept {len(filtered_streamlines)}/{len(streamlines)})")
+    
+    return filtered_streamlines
+
 
 def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1, cmap='gray',
                              clahe_clip_limit=0.01, clahe_tile_grid_size=32, intensity_params=None,
@@ -395,6 +461,17 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
             random_state=random_state
         )
 
+        # Create streamline mask BEFORE dark field effect if streamlines present
+        streamline_mask_for_effect = None
+        if has_streamlines:
+            streamline_mask_for_effect = create_fiber_mask(
+                streamlines_voxel, slice_idx, orientation='coronal',
+                dims=dims, thickness=10, dilate=False,  # Increased from mask_thickness to 10 to capture nearby streamlines
+                density_threshold=0, gaussian_sigma=0,
+                close_gaps=False, label_bundles=False,
+                static_streamline_threshold=0.01  # Lower threshold to catch more streamlines
+            )
+
         # Use blockface-preserving dark field (no inversion) to keep original intensities
         # This preserves the normal NIfTI appearance while darkening the background
         dark_field_slice = apply_blockface_preserving_dark_field_effect(
@@ -685,6 +762,17 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
             contrast_params={'clip_limit': clahe_clip_limit, 'tile_grid_size': (clahe_tile_grid_size, clahe_tile_grid_size)}
         )
 
+        # Create streamline mask BEFORE dark field effect if streamlines present
+        streamline_mask_for_effect = None
+        if has_streamlines:
+            streamline_mask_for_effect = create_fiber_mask(
+                streamlines_voxel, slice_idx, orientation=view,
+                dims=dims, thickness=10, dilate=False,  # Increased from mask_thickness to 10 to capture nearby streamlines
+                density_threshold=0, gaussian_sigma=0,
+                close_gaps=False, label_bundles=False,
+                static_streamline_threshold=0.01  # Lower threshold to catch more streamlines
+            )
+
         # Use blockface-preserving dark field (no inversion) to keep original intensities
         # This preserves the normal NIfTI appearance while darkening the background
         dark_field_slice = apply_blockface_preserving_dark_field_effect(
@@ -825,7 +913,7 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
                                                   max_fiber_percentage, tract_linewidth, mask_thickness,
                                                   density_threshold, gaussian_sigma, close_gaps, 
                                                   closing_footprint_size, label_bundles, min_bundle_size, 
-                                                  output_image_size, static_streamline_threshold=25, white_mask_file=None):
+                                                  output_image_size, static_streamline_threshold=0.05, white_mask_file=None):
     """Generate and apply high-density mask for coronal view."""
     import nibabel as nib
     import numpy as np
@@ -873,42 +961,52 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
             sl_voxel = np.dot(sl, affine_inv[:3, :3].T) + affine_inv[:3, 3]
             streamlines_voxel.append(sl_voxel)
     
-    # Filter streamlines by white mask if provided
+    # Store white mask info for filtering streamlines AND post-mask filtering
+    white_mask_slice = None
     if white_mask_data is not None:
-        print(f"Filtering {len(streamlines_voxel)} streamlines by white mask...")
-        
-        # Extract white mask slice for this coronal slice
-        white_mask_slice = None
+        print(f"Loading white mask for streamline filtering...")
         try:
             if white_mask_data.shape[1] == 1:
                 white_mask_slice = white_mask_data[:, 0, :]
             else:
                 white_mask_slice = white_mask_data[:, slice_idx, :]
+            print(f"  White mask slice shape: {white_mask_slice.shape}, slice_idx: {slice_idx}")
         except Exception as e:
             print(f"  Warning: Could not extract white mask slice: {e}")
-        
-        if white_mask_slice is not None:
-            filtered_streamlines = []
-            for streamline in streamlines_voxel:
-                # Check if streamline passes through white mask
-                slice_points = streamline[np.abs(streamline[:, 1] - slice_idx) < 0.5]
-                if len(slice_points) == 0:
-                    continue
-                
-                # Check if any point is in the white mask
-                valid = False
-                for point in slice_points:
-                    x_idx = int(np.clip(point[0], 0, white_mask_slice.shape[0] - 1))
-                    z_idx = int(np.clip(point[2], 0, white_mask_slice.shape[1] - 1))
-                    if white_mask_slice[x_idx, z_idx] > 0:
-                        valid = True
-                        break
-                
-                if valid:
-                    filtered_streamlines.append(streamline)
+    
+    # Filter streamlines by white mask BEFORE mask generation (like visualization does)
+    if white_mask_slice is not None and len(streamlines_voxel) > 0:
+        print(f"Filtering {len(streamlines_voxel)} streamlines by white mask...")
+        filtered_streamlines = []
+        for streamline in streamlines_voxel:
+            # Check if streamline passes through white mask
+            slice_points = streamline[np.abs(streamline[:, 1] - slice_idx) < 0.5]
+            if len(slice_points) == 0:
+                continue
             
-            streamlines_voxel = filtered_streamlines
-            print(f"  Filtered to {len(streamlines_voxel)} streamlines")
+            # Check if any point is in the white mask
+            valid = False
+            for point in slice_points:
+                x_idx = int(np.clip(point[0], 0, white_mask_slice.shape[0] - 1))
+                z_idx = int(np.clip(point[2], 0, white_mask_slice.shape[1] - 1))
+                if white_mask_slice[x_idx, z_idx] > 0:
+                    valid = True
+                    break
+            
+            if valid:
+                filtered_streamlines.append(streamline)
+        
+        print(f"  Filtered to {len(filtered_streamlines)} streamlines (from {len(streamlines_voxel)})")
+        streamlines_voxel = filtered_streamlines
+    
+    # Apply density-based filtering to remove isolated streamlines (after white matter filtering)
+    if len(streamlines_voxel) > 0:
+        streamlines_voxel = filter_streamlines_by_density(
+            streamlines_voxel, 
+            slice_idx=slice_idx,
+            min_neighbors=1,  # Require at least 1 nearby streamline
+            search_radius=12.0  # Search within 12 voxels
+        )
     
     # Scale streamline coordinates to target mask dimensions if dimensions differ
     if target_mask_dims != dims:
@@ -929,17 +1027,19 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
     n_select = max(1, int(len(streamlines_voxel) * max_fiber_percentage / 100.0))
     selected_streamlines = streamlines_voxel[:n_select]
     
+    print(f"  Mask generation: using {len(selected_streamlines)} streamlines (from {len(streamlines_voxel)} after filtering)")
+    
     # Adaptive parameters based on output image size
     output_size = max(output_image_size) if output_image_size else 256
     size_scale = output_size / 256.0  # Scale factor relative to base 256x256
     
-    # HIGH-DENSITY specific parameters - extremely aggressive filtering for only largest bundles
-    adaptive_thickness = max(10, int(mask_thickness * size_scale * 6))  # Much thicker lines for prominent bundles
-    # Extremely aggressive density threshold - only largest, most prominent bundles
-    high_density_threshold = max(0.5, 0.8 * (1.0 / max(1.0, size_scale * 0.3)))  # Very aggressive threshold for dense areas
-    adaptive_gaussian_sigma = gaussian_sigma * size_scale * 1.3  # Moderate smoothing for connectivity
-    # Extremely permissive minimum bundle size - keeps tiny bundles
-    high_density_min_bundle_size = max(1, int(5 * size_scale))  # Extremely permissive bundle size filtering
+    # HIGH-DENSITY specific parameters - wider masks that merge nearby bundles
+    adaptive_thickness = max(2, int(mask_thickness * size_scale))  # Wider for better visibility
+    # Lower density threshold to capture sparser white matter tracts
+    high_density_threshold = max(0.01, density_threshold * (1.0 / max(1.0, size_scale)))  # Permissive threshold
+    adaptive_gaussian_sigma = max(1.0, gaussian_sigma * size_scale * 0.5)  # More smoothing for connectivity
+    # Permissive minimum bundle size - keeps smaller bundles
+    high_density_min_bundle_size = max(1, int(min_bundle_size * size_scale * 0.01))  # Very permissive bundle size filtering
     
     print(f"High-density mask parameters for {output_size}px: thickness={adaptive_thickness}, density_threshold={high_density_threshold:.3f}, gaussian_sigma={adaptive_gaussian_sigma:.1f}, min_bundle_size={high_density_min_bundle_size}")
     
@@ -949,10 +1049,11 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
     high_density_mask = create_fiber_mask(
         selected_streamlines, slice_idx, orientation='coronal', dims=target_mask_dims,
         thickness=adaptive_thickness, dilate=True, density_threshold=high_density_threshold,
-        gaussian_sigma=adaptive_gaussian_sigma, close_gaps=True,  # Enable gap closing for connectivity
-        closing_footprint_size=max(3, int(closing_footprint_size * size_scale * 1.2)),  # Moderate footprint for bundle joining
+        gaussian_sigma=adaptive_gaussian_sigma, close_gaps=close_gaps,  # Use parameter from caller
+        closing_footprint_size=closing_footprint_size,  # Use parameter from caller
         label_bundles=False, min_bundle_size=high_density_min_bundle_size,
-        static_streamline_threshold=0.1  # Require at least 0.1 streamline per pixel for high-density masks
+        static_streamline_threshold=static_streamline_threshold,  # Use parameter from caller
+        white_mask_slice=white_mask_slice  # Pass white mask for segment-level filtering
     )
     
     # Additional processing to limit to at most 4 largest bundles
@@ -976,10 +1077,59 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
         else:
             print(f"High-density mask contains {len(regions)} bundles (≤4, keeping all)")
     
+    # SKIP post-mask white matter filtering - we already filtered streamlines
+    # This avoids double-filtering that makes masks too strict
+    
+    # Smoothen the mask VERY LIGHTLY to avoid merging bundles
+    if np.any(high_density_mask):
+        from scipy.ndimage import gaussian_filter
+        from skimage import morphology, measure
+        
+        print(f"  Light smoothing to preserve separation...")
+        
+        # Label bundles first to smooth each independently
+        labeled_mask = measure.label(high_density_mask, connectivity=2)
+        num_bundles = labeled_mask.max()
+        
+        if num_bundles > 0:
+            smoothed_mask = np.zeros_like(high_density_mask)
+            
+            for bundle_id in range(1, num_bundles + 1):
+                bundle = (labeled_mask == bundle_id).astype(float)
+                
+                # Very light Gaussian smoothing per bundle
+                bundle_smoothed = gaussian_filter(bundle, sigma=0.8)
+                
+                # Threshold back to binary
+                bundle_binary = (bundle_smoothed > 0.3).astype(np.uint8)
+                
+                # Add to result
+                smoothed_mask = np.maximum(smoothed_mask, bundle_binary)
+            
+            high_density_mask = smoothed_mask
+        
+        print(f"  Smoothing complete")
+    
     # Apply the same rotation as the regular masks
     high_density_mask = np.rot90(high_density_mask)
     # Apply vertical flip to match the image orientation (bottom to top)
     high_density_mask = np.flipud(high_density_mask)
+    
+    # DEBUG: Check mask content
+    mask_nonzero = np.sum(high_density_mask > 0)
+    mask_total = high_density_mask.size
+    mask_min = np.min(high_density_mask)
+    mask_max = np.max(high_density_mask)
+    print(f"  DEBUG: Mask has {mask_nonzero}/{mask_total} non-zero pixels ({100*mask_nonzero/mask_total:.2f}%)")
+    print(f"  DEBUG: Mask value range: [{mask_min}, {mask_max}]")
+    print(f"  DEBUG: Mask dtype: {high_density_mask.dtype}")
+    print(f"  DEBUG: Used {len(selected_streamlines)} streamlines after filtering")
+    
+    if mask_nonzero == 0:
+        print(f"  ERROR: Mask is completely black! This means no streamlines passed the filtering criteria.")
+        print(f"  Suggestions: 1) Lower static_streamline_threshold (currently {static_streamline_threshold})")
+        print(f"               2) Check if streamlines actually intersect this slice")
+        print(f"               3) If using white_matter_only, verify white mask is correct")
     
     # Save high-density mask
     mask_dir = os.path.dirname(output_file)
