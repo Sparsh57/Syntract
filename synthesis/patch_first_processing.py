@@ -287,6 +287,13 @@ def filter_streamlines_to_patch_ras(streamlines: List[np.ndarray],
     patch_streamlines = []
     ras_min, ras_max = bbox['ras_min'], bbox['ras_max']
     
+    # Add small safety margin to RAS bbox to prevent boundary floating-point errors
+    # This ensures transformed streamlines stay within voxel bounds
+    voxel_size = np.abs(np.diag(target_patch_affine[:3, :3]))
+    safety_margin = voxel_size * 0.01  # 1% of voxel size in RAS space
+    ras_min = ras_min + safety_margin
+    ras_max = ras_max - safety_margin
+    
     # Inverse of target patch affine for coordinate conversion
     patch_affine_inv = np.linalg.inv(target_patch_affine)
     
