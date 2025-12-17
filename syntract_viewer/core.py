@@ -162,7 +162,17 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
     # Convert streamlines to voxel coordinates
     streamlines_voxel = []
     if has_streamlines:
-        affine_inv = np.linalg.inv(nii_img.affine)
+        # CRITICAL FIX: Use TRK's affine for pre-registered files
+        try:
+            trk_affine = tractogram.affine
+            affine_diff = np.abs(trk_affine - nii_img.affine).max()
+            if affine_diff > 0.1:
+                print(f"  Pre-registered TRK detected, using TRK affine")
+                affine_inv = np.linalg.inv(trk_affine)
+            else:
+                affine_inv = np.linalg.inv(nii_img.affine)
+        except:
+            affine_inv = np.linalg.inv(nii_img.affine)
         streamlines_voxel = list(transform_streamlines(streamlines, affine_inv))
 
         if streamline_percentage < 100.0:
@@ -403,7 +413,17 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
     # Convert streamlines to voxel coordinates
     streamlines_voxel = []
     if has_streamlines:
-        affine_inv = np.linalg.inv(nii_img.affine)
+        # CRITICAL FIX: Use TRK's affine for pre-registered files
+        try:
+            trk_affine = tractogram.affine
+            affine_diff = np.abs(trk_affine - nii_img.affine).max()
+            if affine_diff > 0.1:
+                print(f"  Pre-registered TRK detected, using TRK affine")
+                affine_inv = np.linalg.inv(trk_affine)
+            else:
+                affine_inv = np.linalg.inv(nii_img.affine)
+        except:
+            affine_inv = np.linalg.inv(nii_img.affine)
         streamlines_voxel = list(transform_streamlines(streamlines, affine_inv))
 
         if streamline_percentage < 100.0:
@@ -711,7 +731,17 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
     # Convert streamlines to voxel coordinates
     streamlines_voxel = []
     if has_streamlines:
-        affine_inv = np.linalg.inv(nii_img.affine)
+        # CRITICAL FIX: Use TRK's affine for pre-registered files
+        try:
+            trk_affine = tractogram.affine
+            affine_diff = np.abs(trk_affine - nii_img.affine).max()
+            if affine_diff > 0.1:
+                print(f"  Pre-registered TRK detected, using TRK affine")
+                affine_inv = np.linalg.inv(trk_affine)
+            else:
+                affine_inv = np.linalg.inv(nii_img.affine)
+        except:
+            affine_inv = np.linalg.inv(nii_img.affine)
         streamlines_voxel = list(transform_streamlines(streamlines, affine_inv))
 
         if streamline_percentage < 100.0:
@@ -936,7 +966,19 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
     # Load data
     nii_img = nib.load(nifti_file)
     dims = nii_img.shape
-    affine_inv = np.linalg.inv(nii_img.affine)
+    
+    # CRITICAL FIX: Use TRK's affine for pre-registered files  
+    try:
+        tractogram = load(trk_file)
+        trk_affine = tractogram.affine
+        affine_diff = np.abs(trk_affine - nii_img.affine).max()
+        if affine_diff > 0.1:
+            print(f"  Pre-registered TRK detected, using TRK affine for mask generation")
+            affine_inv = np.linalg.inv(trk_affine)
+        else:
+            affine_inv = np.linalg.inv(nii_img.affine)
+    except:
+        affine_inv = np.linalg.inv(nii_img.affine)
     
     # CRITICAL FIX: Use output_image_size as the target dimensions for mask generation
     # This ensures masks are generated at the correct size regardless of patch NIfTI dimensions
