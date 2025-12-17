@@ -137,11 +137,7 @@ def visualize_labeled_bundles(labeled_mask, output_file=None, colormap='viridis'
     if output_file:
         plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor=fig.get_facecolor())
         print(f"Labeled bundles visualization saved to {output_file}")
-        
-        plt.close(fig)
-        
-        # Return None for fig since it's been closed
-        return None, None
+        return fig, ax
     else:
         plt.show()
         return fig, ax

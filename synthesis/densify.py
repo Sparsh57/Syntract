@@ -818,6 +818,10 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                 streamline = np.array(streamline, dtype=np.float32)
             return streamline
 
+        # Avoid expensive Hermite interpolation (and overshoot) for simple two-point streamlines
+        if len(streamline) == 2 and interp_method == 'hermite':
+            interp_method = 'linear'
+
         # Ensure streamline is a numpy array at this point
         if not isinstance(streamline, np.ndarray):
             try:

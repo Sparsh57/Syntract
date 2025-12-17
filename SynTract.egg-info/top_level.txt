@@ -1,2 +1,0 @@
-synthesis
-syntract_viewer
