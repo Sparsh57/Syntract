@@ -749,11 +749,12 @@ def process_patch_first_extraction(
                 nifti_path = f"{patch_prefix}.nii.gz"
                 nib.save(patch_nifti, nifti_path)
                 
-                # Save TRK
+                # Save TRK (always, even if empty)
+                from nibabel.streamlines import Tractogram, TrkFile
+                
                 trk_path = f"{patch_prefix}.trk"
+                
                 if len(patch_streamlines) > 0:
-                    from nibabel.streamlines import Tractogram, TrkFile
-                    
                     # FINAL SAFETY CHECK: Ensure all streamlines are strictly within voxel bounds
                     bounded_streamlines = []
                     for streamline in patch_streamlines:
@@ -782,21 +783,23 @@ def process_patch_first_extraction(
                         streamline_ras = nib.affines.apply_affine(patch_nifti.affine, streamline_vox)
                         ras_streamlines.append(streamline_ras.astype(np.float32))
                     
-                    # Create tractogram
-                    tractogram = Tractogram(ras_streamlines, affine_to_rasmm=np.eye(4))
-                    
-                    # Create TRK file with proper header
-                    trk_file = TrkFile(tractogram)
-                    trk_file.header['dimensions'] = np.array(target_patch_size, dtype=np.int16)
-                    trk_file.header['voxel_sizes'] = np.array([target_voxel_size] * 3, dtype=np.float32)
-                    trk_file.header['voxel_to_rasmm'] = patch_nifti.affine.astype(np.float32)
-                    
-                    trk_file.save(trk_path)
-                    
                     # Update results to reflect the actual number of bounded streamlines
                     patch_streamlines = bounded_streamlines
                 else:
                     print(f"  WARNING: No streamlines in patch {patch_id}")
+                    # Create empty streamline list
+                    ras_streamlines = []
+                
+                # Create tractogram (empty or with streamlines)
+                tractogram = Tractogram(ras_streamlines, affine_to_rasmm=np.eye(4))
+                
+                # Create TRK file with proper header
+                trk_file = TrkFile(tractogram)
+                trk_file.header['dimensions'] = np.array(target_patch_size, dtype=np.int16)
+                trk_file.header['voxel_sizes'] = np.array([target_voxel_size] * 3, dtype=np.float32)
+                trk_file.header['voxel_to_rasmm'] = patch_nifti.affine.astype(np.float32)
+                
+                trk_file.save(trk_path)
                 
                 # Record success
                 results['patches_extracted'] += 1

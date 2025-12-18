@@ -361,32 +361,3 @@ def process_with_ants(
 
     return moved_mri, affine_vox2fix, transformed_streamlines, streamlines_list
 
-
-# Compatibility function to replace the original process_with_ants
-def process_with_ants_updated(
-        path_warp,
-        path_iwarp,
-        path_aff,
-        path_mri,
-        path_trk,
-        output_mri=None,
-        output_trk=None,
-        transform_mri=False,
-):
-    """
-    Compatibility wrapper for the corrected ANTs processing.
-    
-    This maintains the same interface as the updated function while using
-    the corrected methodology with proper orientation handling.
-    """
-    return process_with_ants(
-        path_warp=path_warp,
-        path_iwarp=path_iwarp,
-        path_aff=path_aff,
-        path_mri=path_mri,
-        path_trk=path_trk,
-        output_mri=output_mri,
-        output_trk=output_trk,
-        transform_mri=transform_mri,
-    )
-

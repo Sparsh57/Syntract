@@ -5,9 +5,7 @@ import os
 import sys
 import tempfile
 import shutil
-import psutil
 import signal
-import time
 from pathlib import Path
 
 # Import synthesis functions
@@ -51,203 +49,6 @@ except ImportError:
     except ImportError:
         SYNTRACT_AVAILABLE = False
         print("Warning: Syntract viewer module not available")
-
-
-def monitor_memory():
-    """Monitor current memory usage."""
-    try:
-        process = psutil.Process()
-        memory_info = process.memory_info()
-        memory_mb = memory_info.rss / 1024 / 1024  # Convert to MB
-        print(f"Current memory usage: {memory_mb:.1f} MB")
-        return memory_mb
-    except Exception as e:
-        print(f"Could not monitor memory: {e}")
-        return 0
-
-
-def timeout_handler(signum, frame):
-    """Handle timeout signal."""
-    print("WARNING: Process timed out - this might be due to HPC resource limits")
-    raise TimeoutError("Process exceeded time limit")
-
-
-def run_visualization_stage(nifti_file, trk_file, args, output_image_size=(1024, 1024)):
-    """Run the visualization generation stage."""
-    if not SYNTRACT_AVAILABLE:
-        raise RuntimeError("Syntract viewer module not available. Cannot run visualization stage.")
-    
-    print("\n" + "="*60)
-    print("STAGE 2: VISUALIZATION GENERATION")
-    print("="*60)
-    print(f"Output image size: {output_image_size}")
-    
-    # Create output directory for visualizations
-    viz_output_dir = args.viz_output_dir
-    os.makedirs(viz_output_dir, exist_ok=True)
-    
-    # Prepare visualization arguments  
-    viz_args = argparse.Namespace()
-    
-    # Set essential visualization parameters  
-    viz_args.nifti = nifti_file
-    viz_args.trk = trk_file
-    viz_args.output_dir = viz_output_dir
-    viz_args.examples = args.n_examples
-    viz_args.prefix = args.viz_prefix
-    viz_args.view = "coronal"  # Fixed to coronal
-    viz_args.specific_slice = None
-    viz_args.streamline_percentage = 100.0
-    viz_args.roi_sphere = None
-    viz_args.tract_linewidth = 1.0
-    viz_args.save_masks = args.save_masks
-    viz_args.use_high_density_masks = args.use_high_density_masks
-    viz_args.label_bundles = args.label_bundles
-    viz_args.enable_orange_blobs = args.enable_orange_blobs
-    viz_args.orange_blob_probability = args.orange_blob_probability
-    viz_args.mask_thickness = args.mask_thickness
-    viz_args.min_fiber_pct = 10.0
-    viz_args.max_fiber_pct = 100.0
-    viz_args.min_bundle_size = args.min_bundle_size
-    viz_args.density_threshold = args.density_threshold
-    viz_args.contrast_method = "clahe"
-    viz_args.background_preset = "preserve_edges"
-    viz_args.cornucopia_preset = "clean_optical"
-    viz_args.enable_sharpening = False
-    viz_args.sharpening_strength = 1.0
-    viz_args.close_gaps = False
-    viz_args.closing_footprint_size = 3
-    viz_args.randomize = False
-    viz_args.random_state = 42
-    viz_args.output_image_size = output_image_size  # Pass the output image size
-    
-    # Run visualization
-    generate_examples_original_mode(viz_args, True)  # background_enhancement_available=True
-    
-    print(f"Visualization generation completed!")
-    print(f"Output directory: {viz_output_dir}")
-
-
-def batch_process_slice_folders(slice_output_dir, args):
-    """
-    Automatically batch process extracted slice folders through the visualization pipeline.
-    
-    Args:
-        slice_output_dir (str): Directory containing slice folders (slice_XXX/)
-        args: Arguments object with visualization parameters
-        
-    Returns:
-        dict: Summary of batch processing results
-    """
-    print(f"\n=== Starting Automated Batch Processing ===")
-    print(f"Processing slices from: {slice_output_dir}")
-    
-    if not os.path.exists(slice_output_dir):
-        print(f"Error: Slice output directory not found: {slice_output_dir}")
-        return {'success': False, 'error': 'Directory not found'}
-    
-    # Find all slice folders
-    slice_folders = []
-    for item in os.listdir(slice_output_dir):
-        item_path = os.path.join(slice_output_dir, item)
-        if os.path.isdir(item_path) and item.startswith('slice_'):
-            # Check if folder contains both required files
-            nifti_file = None
-            trk_file = None
-            
-            for file in os.listdir(item_path):
-                if file.endswith('.nii.gz') or file.endswith('.nii'):
-                    nifti_file = os.path.join(item_path, file)
-                elif file.endswith('.trk'):
-                    trk_file = os.path.join(item_path, file)
-            
-            if nifti_file and trk_file:
-                slice_folders.append({
-                    'folder': item,
-                    'path': item_path,
-                    'nifti': nifti_file,
-                    'trk': trk_file
-                })
-            else:
-                print(f"Warning: Incomplete slice folder {item} (missing NIfTI or TRK file)")
-    
-    if not slice_folders:
-        print("No valid slice folders found for processing")
-        return {'success': False, 'error': 'No valid slice folders found'}
-    
-    print(f"Found {len(slice_folders)} valid slice folders to process")
-    
-    # Create batch output directory
-    batch_viz_dir = os.path.join(slice_output_dir, "batch_visualizations")
-    os.makedirs(batch_viz_dir, exist_ok=True)
-    
-    results = {
-        'success': True,
-        'total_slices': len(slice_folders),
-        'processed_slices': 0,
-        'failed_slices': 0,
-        'slice_results': [],
-        'output_dir': batch_viz_dir
-    }
-    
-    for i, slice_info in enumerate(slice_folders, 1):
-        print(f"\nProcessing slice {i}/{len(slice_folders)}: {slice_info['folder']}")
-        
-        try:
-            # Create individual output directory for this slice
-            slice_viz_dir = os.path.join(batch_viz_dir, slice_info['folder'])
-            os.makedirs(slice_viz_dir, exist_ok=True)
-            
-            # Update args for this slice
-            slice_args = argparse.Namespace(**vars(args))
-            slice_args.viz_output_dir = slice_viz_dir
-            slice_args.prefix = f"{slice_info['folder']}_"
-            
-            # Determine output image size from patch size or args
-            slice_output_image_size = (1024, 1024)  # Default
-            if hasattr(args, 'output_image_size') and args.output_image_size is not None:
-                slice_output_image_size = args.output_image_size
-            elif hasattr(args, 'patch_size') and args.patch_size:
-                # Derive from patch size
-                if isinstance(args.patch_size, list) and len(args.patch_size) == 3:
-                    slice_output_image_size = (args.patch_size[0], args.patch_size[2])
-                elif isinstance(args.patch_size, list) and len(args.patch_size) >= 2:
-                    slice_output_image_size = (args.patch_size[0], args.patch_size[1])
-            
-            # Run visualization for this slice with correct output size
-            run_visualization_stage(slice_info['nifti'], slice_info['trk'], slice_args, output_image_size=slice_output_image_size)
-            
-            results['processed_slices'] += 1
-            results['slice_results'].append({
-                'slice': slice_info['folder'],
-                'status': 'success',
-                'output_dir': slice_viz_dir
-            })
-            
-            print(f"Successfully processed {slice_info['folder']}")
-            
-        except Exception as e:
-            print(f"ERROR: Error processing {slice_info['folder']}: {e}")
-            results['failed_slices'] += 1
-            results['slice_results'].append({
-                'slice': slice_info['folder'],
-                'status': 'failed',
-                'error': str(e)
-            })
-    
-    print(f"\n=== Batch Processing Complete ===")
-    print(f"Successfully processed: {results['processed_slices']}/{results['total_slices']} slices")
-    print(f"Failed: {results['failed_slices']} slices")
-    print(f"Output directory: {batch_viz_dir}")
-    
-    # Save summary
-    import json
-    summary_file = os.path.join(batch_viz_dir, "batch_processing_summary.json")
-    with open(summary_file, 'w') as f:
-        json.dump(results, f, indent=2)
-    print(f"Summary saved: {summary_file}")
-    
-    return results
 
 
 def calculate_target_dimensions(input_nifti, target_voxel_size=0.05):
@@ -325,8 +126,6 @@ def calculate_target_dimensions(input_nifti, target_voxel_size=0.05):
 
 def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size, 
                     use_ants=False, ants_warp_path=None, ants_iwarp_path=None, ants_aff_path=None,
-                    slice_count=None, enable_slice_extraction=False, slice_output_dir=None,
-                    use_simplified_slicing=True, force_full_slicing=False, auto_batch_process=False,
                     total_patches=50, patch_size=[600, 1, 600], min_streamlines_per_patch=0,
                     patch_prefix="patch", patch_output_dir="patches", patch_batch_size=50,
                     skip_synthesis=False, disable_patch_processing=False,
@@ -570,25 +369,7 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
         if disable_patch_processing:
             return {'success': True, 'stage': 'traditional_synthesis', 'result': synthesis_result}
         
-        # Proceed with slice extraction or visualization as needed
-        if enable_slice_extraction:
-            from synthesis.main import process_and_save
-            
-            synthesis_result = process_and_save(
-                original_nifti_path=input_nifti,
-                original_trk_path=input_trk,
-                target_voxel_size=voxel_size,
-                target_dimensions=new_dim,
-                output_prefix=output_base,
-                use_ants=use_ants,
-                ants_warp_path=ants_warp_path,
-                ants_iwarp_path=ants_iwarp_path,
-                ants_aff_path=ants_aff_path,
-                step_size=voxel_size * 0.5,  # Use fine step size (0.5x voxel) for good curvature preservation
-                interpolation_method='hermite'  # Use Hermite for base synthesis too
-            )
-            
-            return {'success': True, 'stage': 'synthesis', 'result': synthesis_result}
+        return {'success': True, 'stage': 'complete'}
         
     except Exception as e:
         print(f"ERROR: Error in syntract processing: {e}")
@@ -656,15 +437,6 @@ Examples:
     ants_group.add_argument("--ants_iwarp", help="ANTs inverse warp field file")
     ants_group.add_argument("--ants_aff", help="ANTs affine transformation file")
     
-    # Slice extraction parameters
-    slice_group = parser.add_argument_group("Slice Extraction")
-    slice_group.add_argument("--slice_count", type=int,
-                            help="Number of coronal slices to extract")
-    slice_group.add_argument("--slice_output_dir", 
-                            help="Directory for slice outputs")
-    slice_group.add_argument("--auto_batch_process", action="store_true",
-                            help="Automatically process all extracted slices through visualization")
-    
     # Patch Processing (Default Method)
     patch_group = parser.add_argument_group("Patch Processing")
     patch_group.add_argument("--total_patches", type=int, default=50,
@@ -730,10 +502,6 @@ Examples:
         print("ERROR: --white_matter_only requires --white_mask or --wm_mask_file")
         sys.exit(1)
     
-    # Set up extraction mode
-    enable_slice_extraction = args.slice_count is not None
-    slice_output_dir = args.slice_output_dir or f"{args.output}_slices"
-    
     # Auto-calculate target dimensions if not provided
     if args.new_dim is None:
         print("No target dimensions specified, auto-calculating...")
@@ -764,12 +532,6 @@ Examples:
         ants_warp_path=args.ants_warp,
         ants_iwarp_path=args.ants_iwarp,
         ants_aff_path=args.ants_aff,
-        slice_count=args.slice_count,
-        enable_slice_extraction=enable_slice_extraction,
-        slice_output_dir=slice_output_dir,
-        use_simplified_slicing=True,
-        force_full_slicing=False,
-        auto_batch_process=args.auto_batch_process,
         disable_patch_processing=getattr(args, 'disable_patch_processing', False),
         patch_output_dir=args.patch_output_dir,
         total_patches=args.total_patches,

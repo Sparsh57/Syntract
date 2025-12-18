@@ -398,23 +398,11 @@ def generate_enhanced_varied_examples(nifti_file, trk_file, output_dir,
     os.makedirs(output_dir, exist_ok=True)
 
     # Set up base augmentation configuration
+    # Just use the preset name directly - augment_fiber_slice() handles preset lookup
     augmentation_config = None
     if use_cornucopia_per_example and cornucopia_preset and CORNUCOPIA_INTEGRATION_AVAILABLE and not randomize:
-        try:
-            try:
-                from .cornucopia_augmentation import create_augmentation_presets
-            except ImportError:
-                from cornucopia_augmentation import create_augmentation_presets
-
-            presets = create_augmentation_presets()
-            if cornucopia_preset in presets:
-                augmentation_config = presets[cornucopia_preset]
-            else:
-                print(f"Warning: Unknown Cornucopia preset '{cornucopia_preset}', using 'clinical_simulation'")
-                augmentation_config = presets.get('clinical_simulation', None)
-        except Exception as e:
-            print(f"Warning: Failed to create augmentation config: {e}")
-            augmentation_config = None
+        # Pass preset name directly as string
+        augmentation_config = cornucopia_preset
 
     # Set up base background enhancement configuration
     background_config = None
@@ -584,20 +572,14 @@ def _generate_examples_with_comprehensive_processing(nifti_file, trk_file, outpu
         # Available background effects 
         background_effects = ['balanced', 'blockface_preserving']
         
-        # Prepare cornucopia configs
+        # Prepare cornucopia configs - just use preset names as strings
+        # The augment_fiber_slice() function will handle the actual preset lookup
         cornucopia_configs = {None: None}
         if CORNUCOPIA_INTEGRATION_AVAILABLE:
-            try:
-                try:
-                    from .cornucopia_augmentation import create_augmentation_presets
-                except ImportError:
-                    from cornucopia_augmentation import create_augmentation_presets
-                
-                # Use truly random presets when randomizing
-                presets = create_augmentation_presets(truly_random=True)
-                cornucopia_configs.update(presets)
-            except Exception as e:
-                print(f"Warning: Failed to load cornucopia presets: {e}")
+            # Add all available preset names from improved_cornucopia
+            for preset_name in cornucopia_options:
+                if preset_name is not None:
+                    cornucopia_configs[preset_name] = preset_name  # Store name, not object
 
     # Generate examples
     for i in range(n_examples):

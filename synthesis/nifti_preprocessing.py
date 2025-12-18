@@ -26,29 +26,7 @@ def cubic_kernel(x):
         else:
             return 0
 
-def interpolate_point(data_in, i, j, k):
-    """High-quality cubic interpolation for a single point"""
-    # Tricubic interpolation
-    i_center, j_center, k_center = int(round(i)), int(round(j)), int(round(k))
-    
-    result = 0.0
-    total_weight = 0.0
-    
-    for di in range(-1, 3):  # 4x4x4 neighborhood
-        for dj in range(-1, 3):
-            for dk in range(-1, 3):
-                ii, jj, kk = i_center + di, j_center + dj, k_center + dk
-                
-                if (0 <= ii < data_in.shape[0] and 0 <= jj < data_in.shape[1] and 0 <= kk < data_in.shape[2]):
-                    weight_i = cubic_kernel(i - ii)
-                    weight_j = cubic_kernel(j - jj) 
-                    weight_k = cubic_kernel(k - kk)
-                    weight = weight_i * weight_j * weight_k
-                    
-                    result += data_in[ii, jj, kk] * weight
-                    total_weight += weight
-    
-    return result / max(total_weight, 1e-10)
+
 
 def estimate_memory_usage(shape, dtype=np.float32):
     """

@@ -119,10 +119,14 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
             # Calculate physical size and target dimensions
             physical_size_mm = np.array(original_shape) * np.array(original_voxel_sizes)
             target_dimensions = np.round(physical_size_mm / voxel_size).astype(int)
-            target_dimensions = np.clip(target_dimensions, 32, 4000)
+            # Only enforce minimum to prevent degenerate cases, no maximum cap
+            target_dimensions = np.maximum(target_dimensions, 32)
             new_dim = tuple(target_dimensions)
             
             print(f"  Original shape: {original_shape}")
+            print(f"  Original voxel sizes: {original_voxel_sizes}")
+            print(f"  Physical size (mm): {physical_size_mm}")
+            print(f"  Target voxel size: {voxel_size}mm")
             print(f"  Target dimensions: {new_dim}")
         except Exception as e:
             print(f"  Warning: Could not auto-calculate ({e}), using default")
@@ -736,10 +740,14 @@ def process_patches_inmemory(
             # Calculate physical size and target dimensions
             physical_size_mm = np.array(original_shape) * np.array(original_voxel_sizes)
             target_dimensions = np.round(physical_size_mm / voxel_size).astype(int)
-            target_dimensions = np.clip(target_dimensions, 32, 4000)
+            # Only enforce minimum to prevent degenerate cases, no maximum cap
+            target_dimensions = np.maximum(target_dimensions, 32)
             new_dim = tuple(target_dimensions)
             
             print(f"  Original shape: {original_shape}")
+            print(f"  Original voxel sizes: {original_voxel_sizes}")
+            print(f"  Physical size (mm): {physical_size_mm}")
+            print(f"  Target voxel size: {voxel_size}mm")
             print(f"  Target dimensions: {new_dim}")
         except Exception as e:
             print(f"  Warning: Could not auto-calculate ({e}), using default")
