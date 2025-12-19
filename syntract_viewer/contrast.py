@@ -67,7 +67,8 @@ def apply_enhanced_contrast_and_augmentation(slice_data,
                                            random_state=None,
                                            patch_size=None,
                                            apply_background_noise=True,
-                                           background_noise_intensity=0.4):
+                                           background_noise_intensity=0.4,
+                                           debug=False):
     """
     Apply background enhancement, then Cornucopia augmentation, then contrast enhancement.
     Now with option to apply noise ONLY to background, keeping fibers clean.
@@ -124,14 +125,16 @@ def apply_enhanced_contrast_and_augmentation(slice_data,
                         processed_slice,
                         preset=cornucopia_augmentation,
                         random_state=random_state,
-                        patch_size=patch_size
+                        patch_size=patch_size,
+                        debug=debug
                     )
                 elif isinstance(cornucopia_augmentation, dict):
                     cornucopia_result = augment_fiber_slice(
                         processed_slice,
                         custom_config=cornucopia_augmentation,
                         random_state=random_state,
-                        patch_size=patch_size
+                        patch_size=patch_size,
+                        debug=debug
                     )
                 
                 if not (np.all(cornucopia_result == 0) or np.std(cornucopia_result) < 1e-6 or np.max(cornucopia_result) < 0.01):
@@ -170,7 +173,8 @@ def apply_comprehensive_slice_processing(slice_data,
                                        preprocess_quantized=True,
                                        patch_size=None,
                                        apply_background_noise=True,
-                                       background_noise_intensity=0.5):
+                                       background_noise_intensity=0.5,
+                                       debug=False):
     """
     Apply comprehensive slice processing with all available enhancement methods.
     Now with background-only noise option for dark-field microscopy appearance.
@@ -224,5 +228,6 @@ def apply_comprehensive_slice_processing(slice_data,
         random_state=random_state,
         patch_size=patch_size,
         apply_background_noise=apply_background_noise,
-        background_noise_intensity=background_noise_intensity
+        background_noise_intensity=background_noise_intensity,
+        debug=debug
     ) 

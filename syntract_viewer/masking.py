@@ -11,7 +11,7 @@ from scipy.signal import find_peaks
 def create_fiber_mask(streamlines_voxel, slice_idx, orientation='axial', dims=(256, 256, 256), 
                      thickness=1, dilate=True, density_threshold=0.6, gaussian_sigma=2.0,
                      close_gaps=False, closing_footprint_size=5, label_bundles=False,
-                     min_bundle_size=1, static_streamline_threshold=0.1, white_mask_slice=None):
+                     min_bundle_size=1, static_streamline_threshold=0.1, white_mask_slice=None, debug=False):
     """
     Create a binary mask of fiber bundle outlines in a specific slice.
     
@@ -142,9 +142,11 @@ def create_fiber_mask(streamlines_voxel, slice_idx, orientation='axial', dims=(2
     # Debug: Report mask statistics
     mask_pixels = np.sum(mask > 0)
     if mask_pixels > 0:
-        print(f"  Mask generated: {mask_pixels} pixels, max density: {np.max(density_map):.1f}, threshold: {static_streamline_threshold}")
+        if debug:
+            print(f"  Mask generated: {mask_pixels} pixels, max density: {np.max(density_map):.1f}, threshold: {static_streamline_threshold}")
     else:
-        print(f"  WARNING: Mask is empty after thresholding! Max density: {np.max(density_map):.1f}, threshold: {static_streamline_threshold}")
+        if debug:
+            print(f"  WARNING: Mask is empty after thresholding! Max density: {np.max(density_map):.1f}, threshold: {static_streamline_threshold}")
     
     # SMART DILATION: Label bundles first, then dilate each independently
     if dilate and np.any(mask):

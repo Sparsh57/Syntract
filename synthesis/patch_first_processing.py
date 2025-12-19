@@ -94,7 +94,8 @@ def sample_patch_locations_transformed_space(mri_affine: np.ndarray,
                                            num_patches: int,
                                            min_streamlines: int = 30,
                                            transformed_streamlines: List[np.ndarray] = None,
-                                           random_state: Optional[int] = None) -> List[np.ndarray]:
+                                           random_state: Optional[int] = None,
+                                           debug: bool = False) -> List[np.ndarray]:
     """
     Sample patch locations in transformed (post-ANTs) space.
     
@@ -137,8 +138,9 @@ def sample_patch_locations_transformed_space(mri_affine: np.ndarray,
     attempts = 0
     max_attempts = num_patches * 50  # Allow multiple attempts per patch
     
-    print(f"Sampling {num_patches} patch locations in transformed space...")
-    print(f"Valid center range (voxels): {min_center} to {max_center}")
+    if debug:
+        print(f"Sampling {num_patches} patch locations in transformed space...")
+        print(f"Valid center range (voxels): {min_center} to {max_center}")
     
     while len(patch_locations) < num_patches and attempts < max_attempts:
         # Sample random center in voxel coordinates
@@ -361,7 +363,8 @@ def filter_streamlines_to_patch_ras(streamlines: List[np.ndarray],
 
 def validate_patch_spatial_alignment(patch_nifti: nib.Nifti1Image,
                                    patch_streamlines: List[np.ndarray],
-                                   tolerance: float = 1.0) -> Dict:
+                                   tolerance: float = 1.0,
+                                   debug: bool = False) -> Dict:
     """
     Validate spatial alignment between NIfTI patch and streamlines.
     
@@ -406,7 +409,8 @@ def validate_patch_spatial_alignment(patch_nifti: nib.Nifti1Image,
     validation['metrics']['patch_shape'] = patch_shape
     
     # DEBUG: Add detailed coordinate analysis
-    print(f"    DEBUG VALIDATION: patch_shape={patch_shape}, point_bounds_min={point_bounds['min']}, point_bounds_max={point_bounds['max']}")
+    if debug:
+        print(f"    DEBUG VALIDATION: patch_shape={patch_shape}, point_bounds_min={point_bounds['min']}, point_bounds_max={point_bounds['max']}")
     
     # Check for points outside patch bounds
     outside_mask = (all_points < 0) | (all_points >= np.array(patch_shape))
@@ -461,7 +465,8 @@ def process_patch_first_extraction(
     ants_aff_path: Optional[str] = None,
     random_state: Optional[int] = None,
     use_gpu: bool = True,
-    white_mask_path: Optional[str] = None
+    white_mask_path: Optional[str] = None,
+    debug: bool = False
 ) -> Dict:
     """
     Main patch-first extraction pipeline.
@@ -507,16 +512,17 @@ def process_patch_first_extraction(
     """
     start_time = time.time()
     
-    print("="*60)
-    print("PATCH-FIRST EXTRACTION PIPELINE")
-    print("="*60)
-    print(f"Input NIfTI: {original_nifti_path}")
-    print(f"Input TRK: {original_trk_path}")
-    print(f"Target voxel size: {target_voxel_size}mm")
-    print(f"Target patch size: {target_patch_size}")
-    print(f"Number of patches: {num_patches}")
-    print(f"ANTs enabled: {use_ants}")
-    print(f"White mask: {white_mask_path if white_mask_path else 'None'}")
+    if debug:
+        print("="*60)
+        print("PATCH-FIRST EXTRACTION PIPELINE")
+        print("="*60)
+        print(f"Input NIfTI: {original_nifti_path}")
+        print(f"Input TRK: {original_trk_path}")
+        print(f"Target voxel size: {target_voxel_size}mm")
+        print(f"Target patch size: {target_patch_size}")
+        print(f"Number of patches: {num_patches}")
+        print(f"ANTs enabled: {use_ants}")
+        print(f"White mask: {white_mask_path if white_mask_path else 'None'}")
     
     # Initialize results tracking
     results = {
@@ -543,7 +549,8 @@ def process_patch_first_extraction(
             if not all([ants_warp_path, ants_iwarp_path, ants_aff_path]):
                 raise ValueError("ANTs enabled but transform files not provided")
             
-            print(f"\nStep 1: Applying ANTs transformations...")
+            if debug:
+                print(f"\nStep 1: Applying ANTs transformations...")
             moved_mri, affine_vox2fix, transformed_tractogram, streamlines_voxel = process_with_ants(
                 ants_warp_path, ants_iwarp_path, ants_aff_path, 
                 original_nifti_path, original_trk_path,
@@ -562,10 +569,12 @@ def process_patch_first_extraction(
             original_img = nib.as_closest_canonical(original_img)
             mri_shape = original_img.shape[:3]
             
-            print(f"ANTs transformation complete. {len(streamlines_ras)} streamlines transformed.")
+            if debug:
+                print(f"ANTs transformation complete. {len(streamlines_ras)} streamlines transformed.")
             
         else:
-            print(f"\nStep 1: Loading original data (no ANTs transformation)...")
+            if debug:
+                print(f"\nStep 1: Loading original data (no ANTs transformation)...")
             original_img = nib.load(original_nifti_path)
             original_img = nib.as_closest_canonical(original_img)
             mri_affine = original_img.affine
@@ -575,12 +584,14 @@ def process_patch_first_extraction(
             trk_obj = nib.streamlines.load(original_trk_path)
             streamlines_ras = trk_obj.tractogram.streamlines
             
-            print(f"Original data loaded. {len(streamlines_ras)} streamlines available.")
+            if debug:
+                print(f"Original data loaded. {len(streamlines_ras)} streamlines available.")
         
         # Load and upscale white mask if provided
         upscaled_white_mask = None
         if white_mask_path and os.path.exists(white_mask_path):
-            print(f"\nLoading and upscaling white mask...")
+            if debug:
+                print(f"\nLoading and upscaling white mask...")
             try:
                 white_mask_img = nib.load(white_mask_path)
                 white_mask_img = nib.as_closest_canonical(white_mask_img)
@@ -588,7 +599,8 @@ def process_patch_first_extraction(
                 
                 # Handle 4D masks - take first volume
                 if white_mask_data.ndim == 4:
-                    print(f"  4D mask detected, taking first volume")
+                    if debug:
+                        print(f"  4D mask detected, taking first volume")
                     white_mask_data = white_mask_data[..., 0]
                 elif white_mask_data.ndim != 3:
                     raise ValueError(f"White mask must be 3D or 4D, got {white_mask_data.ndim}D")
@@ -600,17 +612,20 @@ def process_patch_first_extraction(
                 # Calculate zoom factors to match original MRI shape
                 mask_shape_3d = white_mask_data.shape[:3]
                 zoom_factors = np.array(mri_shape) / np.array(mask_shape_3d)
-                print(f"  White mask shape: {mask_shape_3d}")
-                print(f"  Blockface shape: {mri_shape}")
-                print(f"  Zoom factors: {zoom_factors}")
+                if debug:
+                    print(f"  White mask shape: {mask_shape_3d}")
+                    print(f"  Blockface shape: {mri_shape}")
+                    print(f"  Zoom factors: {zoom_factors}")
                 
                 # Upscale using nearest neighbor to preserve binary mask values
                 upscaled_white_mask = zoom(white_mask_data, zoom_factors, order=0)
-                print(f"  Upscaled white mask to shape: {upscaled_white_mask.shape}")
+                if debug:
+                    print(f"  Upscaled white mask to shape: {upscaled_white_mask.shape}")
                 
                 # Ensure binary mask (threshold at 0.5)
                 upscaled_white_mask = (upscaled_white_mask > 0.5).astype(np.uint8)
-                print(f"  White mask successfully upscaled to blockface space")
+                if debug:
+                    print(f"  White mask successfully upscaled to blockface space")
                 
             except Exception as e:
                 print(f"  Warning: Could not load/upscale white mask: {e}")
@@ -618,7 +633,8 @@ def process_patch_first_extraction(
                 upscaled_white_mask = None
         
         # Step 2: Build target coordinate system for validation
-        print(f"\nStep 2: Sampling patch locations...")
+        if debug:
+            print(f"\nStep 2: Sampling patch locations...")
         
         # Import transform function for building target affine
         try:
@@ -651,21 +667,25 @@ def process_patch_first_extraction(
             random_state=random_state
         )
         
-        print(f"Sampled {len(patch_locations)} patch locations")
+        if debug:
+            print(f"Sampled {len(patch_locations)} patch locations")
         
         # Step 3: Process each patch
-        print(f"\nStep 3: Processing patches individually...")
+        if debug:
+            print(f"\nStep 3: Processing patches individually...")
         
         for i, patch_center_ras in enumerate(patch_locations):
             patch_id = i + 1
-            print(f"\nProcessing patch {patch_id}/{len(patch_locations)}...")
+            if debug:
+                print(f"\nProcessing patch {patch_id}/{len(patch_locations)}...")
             
             try:
                 # Calculate bounding box
                 bbox = calculate_patch_bbox_ras(patch_center_ras, patch_size_mm, mri_affine)
                 
                 # Synthesize patch region
-                print(f"  Synthesizing patch region...")
+                if debug:
+                    print(f"  Synthesizing patch region...")
                 patch_nifti = synthesize_patch_region(
                     original_mri_path=original_nifti_path,
                     bbox=bbox,
@@ -675,7 +695,8 @@ def process_patch_first_extraction(
                 )
                 
                 # Filter streamlines to patch
-                print(f"  Filtering streamlines to patch...")
+                if debug:
+                    print(f"  Filtering streamlines to patch...")
                 patch_streamlines = filter_streamlines_to_patch_ras(
                     streamlines=streamlines_ras,
                     bbox=bbox,
@@ -685,7 +706,7 @@ def process_patch_first_extraction(
                 
                 # Validate spatial alignment
                 validation = validate_patch_spatial_alignment(
-                    patch_nifti, patch_streamlines, tolerance=1.0
+                    patch_nifti, patch_streamlines, tolerance=1.0, debug=debug
                 )
                 
                 if not validation['success']:
@@ -736,7 +757,8 @@ def process_patch_first_extraction(
                         white_mask_patch_path = f"{output_prefix}_{patch_id:04d}_white_mask.nii.gz"
                         white_mask_patch_img = nib.Nifti1Image(white_mask_patch_resampled, patch_nifti.affine)
                         nib.save(white_mask_patch_img, white_mask_patch_path)
-                        print(f"  White mask patch saved: {white_mask_patch_path}")
+                        if debug:
+                            print(f"  White mask patch saved: {white_mask_patch_path}")
                         
                     except Exception as e:
                         print(f"  Warning: Could not extract white mask patch: {e}")
@@ -832,13 +854,15 @@ def process_patch_first_extraction(
         results['processing_time'] = time.time() - start_time
         results['success'] = results['patches_extracted'] > 0
         
-        print(f"\n" + "="*60)
-        print("PATCH-FIRST EXTRACTION COMPLETE")
-        print("="*60)
-        print(f"Patches extracted: {results['patches_extracted']}/{results['patches_requested']}")
-        print(f"Failed patches: {results['patches_failed']}")
-        print(f"Total processing time: {results['processing_time']:.2f}s")
-        print(f"Average time per patch: {results['processing_time']/max(1, results['patches_extracted']):.2f}s")
+        if debug:
+            print(f"\n" + "="*60)
+            print("PATCH-FIRST EXTRACTION COMPLETE")
+            print("="*60)
+            print(f"Patches extracted: {results['patches_extracted']}/{results['patches_requested']}")
+            print(f"Failed patches: {results['patches_failed']}")
+            print(f"Total processing time: {results['processing_time']:.2f}s")
+        if debug:
+            print(f"Average time per patch: {results['processing_time']/max(1, results['patches_extracted']):.2f}s")
         
         return results
         

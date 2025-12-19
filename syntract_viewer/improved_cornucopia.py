@@ -1395,7 +1395,8 @@ def augment_fiber_slice(slice_data: np.ndarray,
                        preset: str = 'clean_optical',
                        custom_config: Optional[Dict[str, Any]] = None,
                        random_state: Optional[int] = None,
-                       patch_size: Optional[Tuple[int, ...]] = None) -> np.ndarray:
+                       patch_size: Optional[Tuple[int, ...]] = None,
+                       debug: bool = False) -> np.ndarray:
     """
     Convenient function to augment a single slice with optical imaging effects.
     
@@ -1419,29 +1420,34 @@ def augment_fiber_slice(slice_data: np.ndarray,
         Augmented slice data
     """
     # Print debug information about Cornucopia settings
-    print(f"Applying Cornucopia augmentation:")
-    print(f"    Preset: '{preset}'")
-    print(f"    Cornucopia available: {CORNUCOPIA_AVAILABLE}")
-    if patch_size:
-        print(f"    Patch size: {patch_size}")
-    if custom_config:
-        print(f"Custom config: {custom_config}")
+    if debug:
+        print(f"Applying Cornucopia augmentation:")
+        print(f"    Preset: '{preset}'")
+        print(f"    Cornucopia available: {CORNUCOPIA_AVAILABLE}")
+        if patch_size:
+            print(f"    Patch size: {patch_size}")
+        if custom_config:
+            print(f"Custom config: {custom_config}")
     
     augmenter = ImprovedCornucopiaAugmenter(random_state=random_state)
     
     if custom_config is not None:
         config = custom_config.copy()
-        print(f"    Using custom configuration")
+        if debug:
+            print(f"    Using custom configuration")
     else:
         presets = create_optical_presets()
         if preset in presets:
             config = presets[preset].copy()
-            print(f"    Using preset '{preset}'")
+            if debug:
+                print(f"    Using preset '{preset}'")
         else:
             available_presets = list(presets.keys())
-            print(f"    Unknown preset '{preset}', available: {available_presets}")
+            if debug:
+                print(f"    Unknown preset '{preset}', available: {available_presets}")
             config = presets['clean_optical'].copy()
-            print(f"    Falling back to 'clean_optical'")
+            if debug:
+                print(f"    Falling back to 'clean_optical'")
     
     # Scale noise parameters if patch size is provided
     if patch_size is not None and len(patch_size) >= 2:

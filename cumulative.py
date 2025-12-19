@@ -42,7 +42,7 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
                   orange_blob_probability=0.3, save_masks=True, use_high_density_masks=True,
                   mask_thickness=1, density_threshold=0.6, min_bundle_size=2000,
                   label_bundles=False, disable_patch_processing=False, cleanup_intermediate=True,
-                  white_mask_file=None):
+                  white_mask_file=None, debug=False):
     """
     Process multiple TRK files with a common NIfTI file.
     
@@ -373,7 +373,7 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
     return results
 
 
-def _capture_figure_as_array(fig, target_size=(1024, 1024)):
+def _capture_figure_as_array(fig, target_size=(1024, 1024), debug=False):
     """
     Capture matplotlib figure as numpy array with high quality.
     
@@ -421,15 +421,18 @@ def _capture_figure_as_array(fig, target_size=(1024, 1024)):
     elif pil_image.mode != 'RGB':
         pil_image = pil_image.convert('RGB')
     
-    print(f"  [RENDER] Intermediate size: {pil_image.size}, mode: {pil_image.mode}")
+    if debug:
+        print(f"  [RENDER] Intermediate size: {pil_image.size}, mode: {pil_image.mode}")
     
     # Resize with high-quality LANCZOS if needed
     if pil_image.size != (target_size[1], target_size[0]):  # PIL uses (width, height)
         resized_image = pil_image.resize((target_size[1], target_size[0]), Image.LANCZOS)
-        print(f"  [RENDER] Resized to: {resized_image.size}")
+        if debug:
+            print(f"  [RENDER] Resized to: {resized_image.size}")
     else:
         resized_image = pil_image
-        print(f"  [RENDER] No resize needed")
+        if debug:
+            print(f"  [RENDER] No resize needed")
     
     # Convert to numpy array
     array = np.array(resized_image)
@@ -527,7 +530,7 @@ def _generate_emergency_fallback_patches(input_nifti, trk_files, num_patches_nee
             ax.axis('off')
             
             # Capture as array
-            image_array = _capture_figure_as_array(fig, target_size=output_image_size)
+            image_array = _capture_figure_as_array(fig, target_size=output_image_size, debug=debug)
             plt.close(fig)
             
             # Generate synthetic mask
@@ -602,6 +605,7 @@ def process_patches_inmemory(
     random_state: int = None,
     white_mask_file: str = None,
     output_dir: str = None,  # Added for debug visualization saving
+    debug: bool = False,
     **kwargs
 ) -> Tuple[List[np.ndarray], List[np.ndarray]]:
     """
@@ -677,16 +681,18 @@ def process_patches_inmemory(
     >>> plt.show()
     """
     
-    print("="*60)
-    print("IN-MEMORY PATCH PROCESSING")
-    print("="*60)
-    print(f"Input NIfTI: {input_nifti}")
-    print(f"Input TRK: {trk_file}")
-    print(f"Num patches: {num_patches}")
-    if white_mask_file:
-        print(f"White mask: {white_mask_file}")
-    else:
-        print("White mask: None (no filtering)")
+    if debug:
+        print("="*60)
+        print("IN-MEMORY PATCH PROCESSING")
+        print("="*60)
+        print(f"Input NIfTI: {input_nifti}")
+        print(f"Input TRK: {trk_file}")
+        print(f"Num patches: {num_patches}")
+    if debug:
+        if white_mask_file:
+            print(f"White mask: {white_mask_file}")
+        else:
+            print("White mask: None (no filtering)")
     
     # Import numpy at the beginning
     import numpy as np
@@ -725,7 +731,8 @@ def process_patches_inmemory(
         patch_size = [600, 1, 600]
         print(f"Using default patch size: {patch_size}")
     else:
-        print(f"Using patch size: {patch_size}")
+        if debug:
+            print(f"Using patch size: {patch_size}")
     
     # Auto-calculate dimensions if not provided
     if new_dim is None:
@@ -876,7 +883,8 @@ def process_patches_inmemory(
                         ants_aff_path=ants_aff,
                         random_state=random_state + attempts if random_state else None,
                         use_gpu=True,
-                        white_mask_path=white_mask_file
+                        white_mask_path=white_mask_file,
+                        debug=debug
                     )
                     
                     if patch_result['success'] and patch_result['patches_extracted'] > 0:
@@ -1065,7 +1073,8 @@ def process_patches_inmemory(
                     continue
                 
                 # Generate visualization - if it fails, skip this patch and try another
-                print(f"  Generating visualization...")
+                if debug:
+                    print(f"  Generating visualization...")
                 
                 # Get white mask patch file if available
                 white_mask_patch = None
@@ -1074,7 +1083,8 @@ def process_patches_inmemory(
                     if 'white_mask' in patch_detail.get('files', {}):
                         white_mask_patch = patch_detail['files']['white_mask']
                         if os.path.exists(white_mask_patch):
-                            print(f"  Using white mask patch: {white_mask_patch}")
+                            if debug:
+                                print(f"  Using white mask patch: {white_mask_patch}")
                         else:
                             print(f"  Warning: White mask patch file not found: {white_mask_patch}")
                             white_mask_patch = None
@@ -1089,7 +1099,8 @@ def process_patches_inmemory(
                     
                     # Random fiber percentage for high-density masks (70-100%)
                     max_fiber_pct = np.random.uniform(70, 100) if random_state is None else np.random.RandomState(random_state + i).uniform(70, 100)
-                    print(f"  Using {max_fiber_pct:.1f}% of fibers for both visualization and mask")
+                    if debug:
+                        print(f"  Using {max_fiber_pct:.1f}% of fibers for both visualization and mask")
                     
                     # Randomize cornucopia preset for variation (same as syntract.py)
                     presets = ['clean_optical', 'gamma_speckle', 'optical_with_debris', 
@@ -1101,7 +1112,8 @@ def process_patches_inmemory(
                     weights = [0.01, 0.08, 0.12, 0.04, 0.02, 0.12, 0.08, 0.08, 0.08, 0.08, 0.04, 0.08, 0.08, 0.08, 0.05]
                     rnd.seed(int(time.time() * 1000000) % (2**32))  # Truly random seed
                     actual_cornucopia_preset = rnd.choices(presets, weights=weights, k=1)[0]
-                    print(f"  Using randomized cornucopia preset: {actual_cornucopia_preset}")
+                    if debug:
+                        print(f"  Using randomized cornucopia preset: {actual_cornucopia_preset}")
                     
                     # Generate visualization without saving to disk
                     fig, axes, _ = visualize_nifti_with_trk_coronal(
@@ -1118,7 +1130,8 @@ def process_patches_inmemory(
                         output_image_size=output_image_size,
                         streamline_percentage=max_fiber_pct,  # USE SAME PERCENTAGE AS MASK
                         random_state=random_state + i if random_state else None,
-                        white_mask_file=white_mask_patch
+                        white_mask_file=white_mask_patch,
+                        debug=debug
                     )
                     
                 except Exception as e:
@@ -1139,7 +1152,8 @@ def process_patches_inmemory(
                     apply_blobs = rnd.random() < orange_blob_probability
                     
                     if apply_blobs:
-                        print(f"Adding  orange injection site...")
+                        if debug:
+                            print(f"Adding  orange injection site...")
                         
                         # Get the first (and only) axis
                         ax = axes[0] if isinstance(axes, list) else axes
@@ -1153,7 +1167,8 @@ def process_patches_inmemory(
                         center_y = np.random.randint(margin, height - margin)
                         injection_radius = min(width, height) * 0.05  # Slightly larger injection area
                         
-                        print(f"Adding  orange injection site at ({center_x:.0f}, {center_y:.0f}), radius: {injection_radius:.0f}")
+                        if debug:
+                            print(f"Adding  orange injection site at ({center_x:.0f}, {center_y:.0f}), radius: {injection_radius:.0f}")
                         
                         # Add more orange streamlines for better visibility
                         num_orange_streamlines = 400  # More streamlines for better visibility
@@ -1223,12 +1238,14 @@ def process_patches_inmemory(
                         ax.scatter([center_x], [center_y], c='#CC5500', s=80, alpha=0.7, zorder=30, marker='o')  # Subtle orange center
                         ax.scatter([center_x], [center_y], c='#AA3300', s=25, alpha=0.8, zorder=31, marker='o')   # Darker orange center
                         
-                        print(f"ADDED  INJECTION SITE with {num_orange_streamlines} orange streamlines")
+                        if debug:
+                            print(f"ADDED  INJECTION SITE with {num_orange_streamlines} orange streamlines")
                 
                 # Capture figure as numpy array
                 if fig is not None:
-                    image_array = _capture_figure_as_array(fig, target_size=output_image_size)
-                    print(f"  Image captured: shape={image_array.shape}, target={output_image_size}")
+                    image_array = _capture_figure_as_array(fig, target_size=output_image_size, debug=debug)
+                    if debug:
+                        print(f"  Image captured: shape={image_array.shape}, target={output_image_size}")
                     
                     # Close the main figure
                     plt.close(fig)
@@ -1237,7 +1254,8 @@ def process_patches_inmemory(
                     continue
                 
                 # Generate High-Density Mask - if it fails, skip this patch and try another
-                print(f"  Generating high-density mask (fiber pct: {max_fiber_pct:.1f}%)...")
+                if debug:
+                    print(f"  Generating high-density mask (fiber pct: {max_fiber_pct:.1f}%)...")
                 
                 try:
                     # Create a temporary output file path for the mask
@@ -1252,8 +1270,9 @@ def process_patches_inmemory(
                     patch_dims = patch_img.shape
                     slice_idx = patch_dims[1] // 2
                     
-                    print(f"  Patch NIfTI dimensions: {patch_dims}")
-                    print(f"  Target output_image_size: {output_image_size}")
+                    if debug:
+                        print(f"  Patch NIfTI dimensions: {patch_dims}")
+                        print(f"  Target output_image_size: {output_image_size}")
                     
                     # Generate mask (this saves to disk)
                     _generate_and_apply_high_density_mask_coronal(
@@ -1272,7 +1291,8 @@ def process_patches_inmemory(
                         min_bundle_size=10,  # Very low to keep all visible bundles separate
                         output_image_size=output_image_size,
                         static_streamline_threshold=0.05,  # Lower threshold to detect sparser streamlines
-                        white_mask_file=white_mask_patch  # Pass white mask for filtering
+                        white_mask_file=white_mask_patch,  # Pass white mask for filtering
+                        debug=debug
                     )
                     
                     # Load the generated mask
@@ -1283,7 +1303,8 @@ def process_patches_inmemory(
                     if os.path.exists(mask_file):
                         mask_array = _load_and_resize_mask(mask_file, target_size=output_image_size)
                         mask_nonzero = np.sum(mask_array > 0)
-                        print(f"  Mask loaded: shape={mask_array.shape}, target={output_image_size}, nonzero={mask_nonzero}")
+                        if debug:
+                            print(f"  Mask loaded: shape={mask_array.shape}, target={output_image_size}, nonzero={mask_nonzero}")
                         
                         # CRITICAL VALIDATION: Ensure mask matches image dimensions
                         if mask_array.shape[:2] != image_array.shape[:2]:
@@ -1298,7 +1319,8 @@ def process_patches_inmemory(
                         
                         # DON'T clean up mask files - keep them for reference
                         # User can clean up manually if needed
-                        print(f"  Mask saved to: {mask_file}")
+                        if debug:
+                            print(f"  Mask saved to: {mask_file}")
                     else:
                         print(f"   MASK GENERATION FAILED: Mask file not created")
                         print(f"   SKIPPING this patch - will try another patch to reach target count")
@@ -1321,13 +1343,13 @@ def process_patches_inmemory(
                 masks.append(mask_array)
                 patches_processed += 1
                 
-                print(f"   Successfully processed patch {patch_id} ({patches_processed}/{num_patches})")
-                
-                print(f"   Successfully processed patch {patch_id} ({patches_processed}/{num_patches})")
+                if debug:
+                    print(f"   Successfully processed patch {patch_id} ({patches_processed}/{num_patches})")
                 
                 # GUARANTEE: Stop immediately when we reach exact count
                 if patches_processed >= num_patches:
-                    print(f" PERFECT! Processed exactly {num_patches} patches!")
+                    if debug:
+                        print(f" PERFECT! Processed exactly {num_patches} patches!")
                     break
                 
                 # Periodic garbage collection
