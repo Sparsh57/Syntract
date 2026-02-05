@@ -67,6 +67,13 @@ python syntract.py --input brain.nii.gz --trk fibers.trk \
   --total_patches 50 --patch_size 1024 1 1024
 ```
 
+### 3D Volume Output
+```bash
+# Generate 3D NIfTI volumes with streamlines rendered on tissue
+python syntract.py --input brain.nii.gz --trk fibers.trk \
+  --3d_output --white_mask wm_mask.nii.gz --total_patches 10 --patch_size 1024 40 1024
+```
+
 ### Batch Processing
 ```bash
 python cumulative.py  # Edit paths in script
@@ -115,6 +122,7 @@ python cumulative.py  # Edit paths in script
 | `--viz_prefix` | str | "synthetic_" | Prefix for visualization files |
 | `--enable_orange_blobs` | flag | | Enable orange blob injection site artifacts |
 | `--orange_blob_probability` | float | 0.3 | Probability of applying orange blobs (0.0-1.0) |
+| `--3d_output` | flag | | Generate 3D NIfTI volumes with rendered streamlines |
 
 ### Mask & Bundle Parameters
 | Parameter | Type | Default | Description |
@@ -167,6 +175,10 @@ python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \
 # For thin slice data (optimized settings)
 python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \
   --patch-size 256 8 256 --total-patches 30 --n-examples 200
+
+# With 3D volume output and white matter filtering
+python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \
+  --3d-output --white-mask wm_mask.nii.gz
 ```
 
 #### Python API

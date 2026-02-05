@@ -42,7 +42,8 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
                   orange_blob_probability=0.3, save_masks=True, use_high_density_masks=True,
                   mask_thickness=1, density_threshold=0.6, min_bundle_size=2000,
                   label_bundles=False, disable_patch_processing=False, cleanup_intermediate=True,
-                  white_mask_file=None, debug=False):
+                  white_mask_file=None, threed_output=False, contrast_method='clahe',
+                  debug=False):
     """
     Process multiple TRK files with a common NIfTI file.
     
@@ -296,6 +297,48 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
             
             print(f"Successfully saved {saved_count} images to: {images_dir}")
             print(f"Successfully saved {saved_count} masks to: {masks_dir}")
+        
+        # Generate 3D volumes if requested
+        if threed_output and images:
+            print(f"\nGenerating 3D volume outputs for {len(images)} patches...")
+            
+            try:
+                from syntract_viewer.volume_renderer import create_3d_volume_with_streamlines
+                
+                # Get patch details from the directory
+                patch_dir = os.path.join(output_dir, "patches", trk_directory_name)
+                if os.path.exists(patch_dir):
+                    patch_files = sorted([f for f in os.listdir(patch_dir) if f.endswith('.nii.gz') and not f.endswith('_3d.nii.gz')])
+                    
+                    for i, nifti_file in enumerate(patch_files):
+                        patch_nifti = os.path.join(patch_dir, nifti_file)
+                        patch_trk = patch_nifti.replace('.nii.gz', '.trk')
+                        patch_white_mask = patch_nifti.replace('.nii.gz', '_white_mask.nii.gz')
+                        
+                        if os.path.exists(patch_nifti) and os.path.exists(patch_trk):
+                            output_3d = patch_nifti.replace('.nii.gz', '_3d.nii.gz')
+                            
+                            # Use white mask if it exists
+                            white_mask_to_use = patch_white_mask if os.path.exists(patch_white_mask) else None
+                            
+                            create_3d_volume_with_streamlines(
+                                nifti_file=patch_nifti,
+                                trk_file=patch_trk,
+                                output_file=output_3d,
+                                orientation='coronal',
+                                save_2d_images=False,
+                                white_mask_path=white_mask_to_use,
+                                contrast_method=contrast_method,
+                                min_bundle_size=min_bundle_size,
+                                density_threshold=density_threshold
+                            )
+                    
+                    print(f"3D volume generation complete!")
+                    print(f"   Output location: {patch_dir}")
+                    
+            except ImportError as e:
+                print(f"Warning: Could not import 3D visualization module: {e}")
+                print("3D output skipped.")
         
         # Create result object in same format as process_syntract
         result = {
@@ -1512,6 +1555,11 @@ Examples:
                           help="Enable orange blob generation to simulate injection site artifacts")
     viz_group.add_argument("--orange-blob-probability", type=float, default=0.3,
                           help="Probability of applying orange blobs (0.0-1.0, default: 0.3)")
+    viz_group.add_argument("--3d-output", action="store_true",
+                          help="Generate 3D NIfTI volumes with streamlines rendered on tissue")
+    viz_group.add_argument("--contrast-method", type=str, default="clahe",
+                          choices=["clahe", "histogram", "none"],
+                          help="Contrast enhancement method for 3D volumes (default: clahe)")
     
     # Mask and Bundle parameters (unified defaults)
     mask_group = parser.add_argument_group("Mask & Bundle Detection")
@@ -1582,7 +1630,9 @@ Examples:
             label_bundles=args.label_bundles,
             disable_patch_processing=args.disable_patch_processing,
             cleanup_intermediate=cleanup_intermediate,
-            white_mask_file=getattr(args, 'white_mask_file', None)
+            white_mask_file=getattr(args, 'white_mask_file', None),
+            threed_output=getattr(args, '3d_output', False),
+            contrast_method=getattr(args, 'contrast_method', 'clahe')
         )
         
         if results['failed']:

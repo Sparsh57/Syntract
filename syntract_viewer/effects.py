@@ -185,8 +185,8 @@ def apply_blockface_preserving_dark_field_effect(slice_clahe, intensity_params=N
     
     if intensity_params is None:
         intensity_params = {
-            'gamma': 1.8,  # Higher gamma for more dramatic contrast variation (was 1.4)
-            'threshold': 0.04,  # Slightly higher threshold (was 0.03)
+            'gamma': 2.5,  # HIGHER gamma to darken tissue (darkens bright areas more)
+            'threshold': 0.06,  # Higher threshold for more aggressive background removal
             'color_scheme': random.choice(['bw', 'blue']),
             'blue_tint': random.uniform(0.1, 0.4)
         }
@@ -197,33 +197,32 @@ def apply_blockface_preserving_dark_field_effect(slice_clahe, intensity_params=N
     brain_mask = morphology.binary_closing(brain_mask, morphology.disk(2))
     brain_mask = morphology.remove_small_objects(brain_mask, min_size=100)
     
-    # Dark field with MORE DIVERSITY: Higher gamma creates more dramatic variation
-    # Brighter areas stay bright, darker areas become very dark
-    dark_field = np.power(slice_clahe, intensity_params['gamma']) * 0.5  # More gamma + scaling
+    # Dark field: Use gamma to darken - higher gamma makes bright areas darker
+    # Apply power then scale down significantly for very dark tissue
+    dark_field = np.power(slice_clahe, intensity_params['gamma']) * 0.3  # More gamma + aggressive scaling
     
-    # Very light smoothing to reduce any noise
-    dark_field = filters.gaussian(dark_field, sigma=0.4)
+    # Minimal smoothing to preserve edges and keep background darker
+    dark_field = filters.gaussian(dark_field, sigma=0.2)
     
     # Moderate threshold - creates dark spaces without removing too much
     threshold = intensity_params['threshold']
     below_threshold = dark_field < threshold
     dark_field[below_threshold] = 0
     
-    # Gentle edge softening
+    # Minimal edge softening - keep background darker
     edge_distance = ndimage.distance_transform_edt(~brain_mask)
     brain_distance = ndimage.distance_transform_edt(brain_mask)
     
-    transition_zone = (edge_distance <= 2) & (brain_distance <= 2)
+    transition_zone = (edge_distance <= 1) & (brain_distance <= 1)
     if np.any(transition_zone):
-        edge_factor = np.minimum(brain_distance[transition_zone] / 2.0, 1.0)
+        edge_factor = brain_distance[transition_zone]
         dark_field[transition_zone] *= edge_factor
     
-    # Force background black
+    # Force background black - more aggressive
     if force_background_black:
-        clear_background = edge_distance > 2
+        clear_background = edge_distance > 1
         dark_field[clear_background] = 0.0
     
-    # Very light final smoothing
-    dark_field = filters.gaussian(dark_field, sigma=0.2)
+    # No final smoothing - keeps background pure black
     
     return dark_field 

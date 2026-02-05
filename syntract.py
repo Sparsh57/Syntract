@@ -133,7 +133,7 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                     enable_orange_blobs=False, orange_blob_probability=0.3,
                     save_masks=True, use_high_density_masks=True, mask_thickness=1,
                     density_threshold=0.6, min_bundle_size=2000, label_bundles=False,
-                    output_image_size=None, cleanup_intermediate=True, white_mask_path=None):
+                    output_image_size=None, cleanup_intermediate=True, white_mask_path=None, threed_output=False):
     """Main processing function"""
     import signal
     import sys
@@ -169,20 +169,37 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
         # Determine output image size based on patch processing mode and user preference
         if output_image_size is None:
             if disable_patch_processing:
-                # Default to 1024x1024 when patch processing is disabled
-                output_image_size = (1024, 1024)
-                print(f"Output image size (patch processing disabled): {output_image_size}")
-            else:
-                # Use patch size to determine output image size when patch processing is enabled
-                if isinstance(patch_size, list) and len(patch_size) >= 2:
-                    # For 3D patch_size like [600, 1, 600], use the first and last dimensions for 2D output
-                    if len(patch_size) == 3:
-                        output_image_size = (patch_size[0], patch_size[2])
-                    else:
-                        output_image_size = (patch_size[0], patch_size[1])
+            # Default size when patch processing is disabled
+                if threed_output:
+                    output_image_size = (1024, 1024, 1024)
                 else:
-                    # Fallback if patch_size format is unexpected
                     output_image_size = (1024, 1024)
+
+                print(f"Output image size (patch processing disabled): {output_image_size}")
+
+            else:
+                # Use patch size when patch processing is enabled
+                if isinstance(patch_size, list):
+                    if threed_output:
+                        # Expect full 3D patch size
+                        if len(patch_size) == 3:
+                            output_image_size = tuple(patch_size)
+                        else:
+                            # Fallback for unexpected format
+                            output_image_size = (1024, 1024, 1024)
+                    else:
+                        # 2D output
+                        if len(patch_size) == 3:
+                            # e.g. [600, 1, 600] → (600, 600)
+                            output_image_size = (patch_size[0], patch_size[2])
+                        elif len(patch_size) >= 2:
+                            output_image_size = (patch_size[0], patch_size[1])
+                        else:
+                            output_image_size = (1024, 1024)
+                else:
+                    # Fallback if patch_size is unexpected
+                    output_image_size = (1024, 1024, 1024) if threed_output else (1024, 1024)
+
                 print(f"Output image size (from patch size): {output_image_size}")
         else:
             print(f"Output image size (user specified): {output_image_size}")
@@ -226,53 +243,89 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
             
             # Add visualization generation for patches if successful
             if patch_result['success'] and patch_result['patches_extracted'] > 0:
-                print(f"\nGenerating visualizations for {patch_result['patches_extracted']} patches...")
-                
-                try:
-                    from syntract_viewer.patch_extraction import _generate_patch_visualization
+                if threed_output:
+                    print(f"\nGenerating 3D volume outputs for {patch_result['patches_extracted']} patches...")
                     
-                    for patch_detail in patch_result['patch_details']:
-                        patch_id = patch_detail['patch_id']
-                        nifti_file = patch_detail['files']['nifti']
-                        trk_file = patch_detail['files']['trk']
+                    try:
+                        from syntract_viewer.volume_renderer import create_3d_volume_with_streamlines
                         
-                        if os.path.exists(nifti_file) and os.path.exists(trk_file):
-                            patch_viz_prefix = f"patch_{patch_id:04d}"
-                            # Get the corresponding white mask patch if available
-                            white_mask_patch_file = None
-                            if 'white_mask' in patch_detail['files']:
-                                white_mask_patch_file = patch_detail['files']['white_mask']
+                        for patch_detail in patch_result['patch_details']:
+                            patch_id = patch_detail['patch_id']
+                            nifti_file = patch_detail['files']['nifti']
+                            trk_file = patch_detail['files']['trk']
                             
-                            _generate_patch_visualization(
-                                nifti_file, trk_file, 
-                                patch_output_path, 
-                                patch_viz_prefix,
-                                save_masks=save_masks,
-                                contrast_method='clahe',
-                                background_enhancement='preserve_edges',
-                                cornucopia_preset='clean_optical',
-                                tract_linewidth=1.0,
-                                mask_thickness=mask_thickness,
-                                density_threshold=density_threshold,
-                                gaussian_sigma=2.0,
-                                close_gaps=False,
-                                closing_footprint_size=3,
-                                label_bundles=label_bundles,
-                                min_bundle_size=min_bundle_size,
-                                enable_orange_blobs=enable_orange_blobs,
-                                orange_blob_probability=orange_blob_probability,
-                                output_image_size=output_image_size,
-                                white_mask_path=white_mask_patch_file
-                            )
+                            if os.path.exists(nifti_file) and os.path.exists(trk_file):
+                                output_3d = os.path.join(patch_output_path, f"patch_{patch_id:04d}_3d.nii.gz")
+                                
+                                create_3d_volume_with_streamlines(
+                                    nifti_file=nifti_file,
+                                    trk_file=trk_file,
+                                    output_file=output_3d,
+                                    orientation='coronal',
+                                    save_2d_images=False,
+                                    output_dir=os.path.join(patch_output_path, f"patch_{patch_id:04d}_slices"),
+                                    white_mask_path=patch_detail['files'].get('white_mask'),
+                                    contrast_method='clahe',
+                                    background_enhancement='preserve_edges',
+                                    cornucopia_preset='clean_optical',
+                                    min_bundle_size=min_bundle_size,
+                                    density_threshold=density_threshold
+                                )
+                        
+                        print(f"3D volume generation complete!")
+                        print(f"   Output location: {patch_output_path}")
+                        
+                    except ImportError as e:
+                        print(f"Warning: Could not import 3D visualization module: {e}")
+                        print("3D output skipped.")
+                else:
+                    print(f"\nGenerating 2D visualizations for {patch_result['patches_extracted']} patches...")
                     
-                    print(f"Patch-first optimization complete!")
-                    print(f"   Processing time: {patch_result['processing_time']:.2f}s")
-                    print(f"   Memory usage: Dramatically reduced vs. traditional method")
-                    print(f"   Output location: {patch_output_path}")
-                    
-                except ImportError as e:
-                    print(f"Warning: Could not import visualization module for patches: {e}")
-                    print("Patches extracted successfully but visualization skipped.")
+                    try:
+                        from syntract_viewer.patch_extraction import _generate_patch_visualization
+                        
+                        for patch_detail in patch_result['patch_details']:
+                            patch_id = patch_detail['patch_id']
+                            nifti_file = patch_detail['files']['nifti']
+                            trk_file = patch_detail['files']['trk']
+                            
+                            if os.path.exists(nifti_file) and os.path.exists(trk_file):
+                                patch_viz_prefix = f"patch_{patch_id:04d}"
+                                # Get the corresponding white mask patch if available
+                                white_mask_patch_file = None
+                                if 'white_mask' in patch_detail['files']:
+                                    white_mask_patch_file = patch_detail['files']['white_mask']
+                                
+                                _generate_patch_visualization(
+                                    nifti_file, trk_file, 
+                                    patch_output_path, 
+                                    patch_viz_prefix,
+                                    save_masks=save_masks,
+                                    contrast_method='clahe',
+                                    background_enhancement='preserve_edges',
+                                    cornucopia_preset='clean_optical',
+                                    tract_linewidth=1.0,
+                                    mask_thickness=mask_thickness,
+                                    density_threshold=density_threshold,
+                                    gaussian_sigma=2.0,
+                                    close_gaps=False,
+                                    closing_footprint_size=3,
+                                    label_bundles=label_bundles,
+                                    min_bundle_size=min_bundle_size,
+                                    enable_orange_blobs=enable_orange_blobs,
+                                    orange_blob_probability=orange_blob_probability,
+                                    output_image_size=output_image_size,
+                                    white_mask_path=white_mask_patch_file
+                                )
+                        
+                        print(f"Patch-first optimization complete!")
+                        print(f"   Processing time: {patch_result['processing_time']:.2f}s")
+                        print(f"   Memory usage: Dramatically reduced vs. traditional method")
+                        print(f"   Output location: {patch_output_path}")
+                        
+                    except ImportError as e:
+                        print(f"Warning: Could not import visualization module for patches: {e}")
+                        print("Patches extracted successfully but visualization skipped.")
             
             # Cleanup patch files if requested
             if cleanup_intermediate and patch_result['success'] and patch_result['patches_extracted'] > 0:
@@ -488,7 +541,13 @@ Examples:
     mask_group.add_argument("--label_bundles", action="store_true",
                            help="Label individual fiber bundles with distinct colors (default: False)")
     
+    #3d Parameters
+    mask_group = parser.add_argument_group("3d Output Parameters")
+    mask_group.add_argument("--3d_output", action="store_true", default=False, 
+                           help="Generate 3D visualizations instead of 2D images (default: False)")
     
+
+
     args = parser.parse_args()
     
     # Validate ANTs parameters
@@ -551,7 +610,8 @@ Examples:
         label_bundles=args.label_bundles,
         output_image_size=None,  # Let process_syntract determine it automatically
         cleanup_intermediate=cleanup_intermediate,
-        white_mask_path=args.white_mask
+        white_mask_path=args.white_mask,
+        threed_output=getattr(args, '3d_output', False)
     )
     
     if not result['success']:
