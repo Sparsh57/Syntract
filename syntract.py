@@ -262,14 +262,16 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                                     trk_file=trk_file,
                                     output_file=output_3d,
                                     orientation='coronal',
-                                    save_2d_images=False,
-                                    output_dir=os.path.join(patch_output_path, f"patch_{patch_id:04d}_slices"),
                                     white_mask_path=patch_detail['files'].get('white_mask'),
                                     contrast_method='clahe',
-                                    background_enhancement='preserve_edges',
-                                    cornucopia_preset='clean_optical',
-                                    min_bundle_size=min_bundle_size,
-                                    density_threshold=density_threshold
+                                    fiber_intensity_min=15.0,
+                                    fiber_intensity_max=25.0,
+                                    use_cornucopia_3d=True,
+                                    cornucopia_allowed_presets=['extreme_noise', 'random_shapes_background', 
+                                                                'comprehensive_aggressive', 'ultra_heavy_speckle'],
+                                    cornucopia_prob=0.9,
+                                    save_mask=True,
+                                    min_bundle_size=min_bundle_size
                                 )
                         
                         print(f"3D volume generation complete!")

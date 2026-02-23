@@ -8,36 +8,57 @@ import numpy as np
 import nibabel as nib
 from nibabel.streamlines import load as load_trk
 from dipy.tracking.streamline import transform_streamlines
+from scipy.ndimage import zoom
 from tqdm import tqdm
 import os
 import sys
-import random
-import time
+import gc
+
+# GPU support with fallback
+try:
+    from synthesis.gpu_utils import try_gpu_import
+    gpu_result = try_gpu_import()
+    xp = gpu_result['xp']
+    use_gpu = gpu_result['cupy_available']
+    if use_gpu:
+        import cupyx.scipy.ndimage as gpu_ndimage
+        print(f"GPU acceleration enabled for 3D rendering ({gpu_result['gpu_name']})")
+    else:
+        from scipy.ndimage import gaussian_filter
+        print("GPU not available, using CPU for 3D rendering")
+except ImportError:
+    xp = np
+    use_gpu = False
+    from scipy.ndimage import gaussian_filter
+    print("GPU utils not found, using CPU for 3D rendering")
 
 # Add parent directory for imports
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 try:
-    from syntract_viewer.core import visualize_nifti_with_trk_coronal
-    from syntract_viewer.contrast import apply_comprehensive_slice_processing
-    from syntract_viewer.effects import apply_blockface_preserving_dark_field_effect
+    from syntract_viewer.volumetric_3d import process_volume_full_3d
 except ImportError:
-    from core import visualize_nifti_with_trk_coronal
-    from contrast import apply_comprehensive_slice_processing
-    from effects import apply_blockface_preserving_dark_field_effect
+    from volumetric_3d import process_volume_full_3d
 
 
 def create_3d_volume_with_streamlines(nifti_file, trk_file, output_file,
                                        slice_range=None, orientation='coronal',
-                                       save_2d_images=False, output_dir='output_slices',
                                        white_mask_path=None, contrast_method='clahe',
-                                       background_enhancement=None, cornucopia_preset=None,
-                                       gamma=2.2, scaling_factor=25.0,
-                                       fiber_intensity_min=3.0, fiber_intensity_max=8.0,
-                                       distance_threshold=1.5, tissue_threshold=2.0,
-                                       min_bundle_size=None, density_threshold=None):
+                                       gamma=2.2, scaling_factor=40.0,
+                                       fiber_intensity_min=15.0, fiber_intensity_max=25.0,
+                                       tissue_threshold=2.0,
+                                       min_bundle_size=None,
+                                       use_cornucopia_3d=False,
+                                       cornucopia_allowed_presets=None,
+                                       cornucopia_prob=0.9,
+                                       random_state=None,
+                                       save_mask=True):
     """
     Create 3D NIfTI volume with streamlines rendered as subtle fibers on dark tissue.
+    
+    Uses TRUE 3D CLAHE - processes entire volume as single unit, no tiling artifacts.
+    Mask generation creates THIN, ACCURATE streamline representations (ground truth),
+    not thick segmentation training masks like the 2D pipeline.
     
     Parameters
     ----------
@@ -51,47 +72,42 @@ def create_3d_volume_with_streamlines(nifti_file, trk_file, output_file,
         Slice indices to process (default: all slices)
     orientation : str
         Orientation: 'coronal', 'axial', or 'sagittal'
-    save_2d_images : bool
-        If True, also generate 2D reference images using core.py
-    output_dir : str
-        Directory for 2D reference images
     white_mask_path : str, optional
         Path to white matter mask for filtering streamlines
     contrast_method : str
-        Contrast enhancement method: 'clahe', 'histogram_equalization', 'none' (default: 'clahe')
-    background_enhancement : str, optional
-        Background enhancement style: 'preserve_edges', 'smooth', etc. (default: None)
-    cornucopia_preset : str, optional
-        Cornucopia augmentation preset for background artifacts/noise patterns
-        Options: 'clean_optical', 'gamma_speckle', 'heavy_speckle', etc. (default: None)
+        Contrast enhancement: 'clahe' or 'none'
     gamma : float
-        Gamma correction for darkening bright tissues (default: 2.2, range: 1.0-3.0)
+        Gamma correction for dark field appearance (default: 2.2)
     scaling_factor : float
-        Output brightness scaling (default: 25.0, range: 10.0-100.0)
+        Output intensity scaling (default: 40.0 for dark field appearance - dark tissue, bright fibers)
     fiber_intensity_min : float
-        Minimum fiber intensity (default: 3.0)
+        Minimum streamline intensity (default: 15.0 for bright white fibers)
     fiber_intensity_max : float
-        Maximum fiber intensity (default: 8.0)
-    distance_threshold : float
-        Maximum distance for fiber rendering (default: 1.5, affects thickness)
+        Maximum streamline intensity (default: 25.0 for bright white fibers)
     tissue_threshold : float
-        Minimum tissue intensity for fiber rendering (default: 2.0)
+        Minimum tissue intensity for streamline rendering (default: 2.0)
     min_bundle_size : int, optional
-        Minimum streamlines per bundle (filters small bundles)
-    density_threshold : float, optional
-        Density threshold for filtering sparse regions
+        Minimum bundle size for filtering
+    use_cornucopia_3d : bool
+        Enable cornucopia 3D augmentation with aggressive presets (default: False)
+    cornucopia_allowed_presets : list, optional
+        List of allowed presets (default: 4 aggressive presets)
+    cornucopia_prob : float
+        Probability of applying cornucopia (default: 0.9)
+    random_state : int, optional
+        Random seed for reproducibility
+    save_mask : bool
+        If True, save fiber mask as separate NIfTI file (default: True)
+        Mask uses 3D Gaussian smoothing (sigma=2.0) and binary threshold (0.05)
     
-    Notes
-    -----
-    Processing pipeline:
-    - Applies configurable contrast enhancement to tissue
-    - Renders streamlines as discrete points (no densification)
-    - Uses z-flip transformation for correct alignment (z_plot = dims[2] - z - 1)
-    - Fibers only drawn on tissue regions above tissue_threshold
-    - Optional white matter mask filtering
+    Returns
+    -------
+    str
+        Path to saved 3D NIfTI volume file
     """
-    # Load NIfTI
-    nii_img = nib.load(nifti_file)
+    # Load NIfTI with memory-mapped mode for large files
+    # This prevents loading entire volume into memory at once
+    nii_img = nib.load(nifti_file, mmap=True)
     nii_img = nib.as_closest_canonical(nii_img)
     nii_data = nii_img.get_fdata()
     dims = nii_data.shape
@@ -103,7 +119,7 @@ def create_3d_volume_with_streamlines(nifti_file, trk_file, output_file,
     if white_mask_path and os.path.exists(white_mask_path):
         try:
             print(f"Loading white matter mask: {white_mask_path}")
-            white_mask_img = nib.load(white_mask_path)
+            white_mask_img = nib.load(white_mask_path, mmap=True)
             white_mask_img = nib.as_closest_canonical(white_mask_img)
             white_mask_orig = white_mask_img.get_fdata()
             
@@ -178,11 +194,6 @@ def create_3d_volume_with_streamlines(nifti_file, trk_file, output_file,
     num_slices = len(slice_range)
     print(f"Processing {num_slices} {orientation} slices from {min(slice_range)} to {max(slice_range)}")
     
-    # Create output directory for 2D images if needed
-    if save_2d_images:
-        os.makedirs(output_dir, exist_ok=True)
-        print(f"Will save 2D images to: {output_dir}")
-    
     # Create output volume
     if orientation == 'coronal':
         volume_shape = (dims[0], num_slices, dims[2])
@@ -191,148 +202,221 @@ def create_3d_volume_with_streamlines(nifti_file, trk_file, output_file,
     else:  # sagittal
         volume_shape = (num_slices, dims[1], dims[2])
     
-    output_volume = np.zeros(volume_shape, dtype=np.float32)
+    # ==================================================================
+    # PHASE 1: TRUE 3D VOLUMETRIC TISSUE PROCESSING
+    # ==================================================================
+    # Process the ENTIRE 3D volume at once to eliminate slice boundaries
+    print(f"\nPhase 1: Processing full 3D tissue volume (no slice artifacts)...")
     
-    # Select ONE random cornucopia preset for entire volume (consistency)
-    if cornucopia_preset is not None:
-        presets = ['extreme_noise', 'random_shapes_background', 
-                  'comprehensive_aggressive', 'ultra_heavy_speckle']
-        # Equal weights for selected presets
-        weights = [0.25] * 4
-        random.seed(int(time.time() * 1000000) % (2**32))
-        selected_preset = random.choices(presets, weights=weights, k=1)[0]
-        print(f"Cornucopia enabled: Using '{selected_preset}' for all slices (consistent volume appearance)")
-    else:
-        selected_preset = None
+    # Extract the relevant portion of the 3D volume
+    if orientation == 'coronal':
+        volume_data = nii_data[:, list(slice_range), :].copy()
+    elif orientation == 'axial':
+        volume_data = nii_data[:, :, list(slice_range)].copy()
+    else:  # sagittal
+        volume_data = nii_data[list(slice_range), :, :].copy()
     
-    # Process each slice
-    for slice_offset, slice_idx in enumerate(tqdm(list(slice_range), desc="Processing slices")):
-        # Save 2D visualization image if requested
-        if save_2d_images and orientation == 'coronal':
-            image_output = os.path.join(output_dir, f'slice_{slice_idx:04d}.png')
-            visualize_nifti_with_trk_coronal(
-                nifti_file=nifti_file,
-                trk_file=trk_file,
-                output_file=image_output,
-                n_slices=1,
-                slice_idx=slice_idx,
-                output_image_size=(1024, 1024),
-                save_masks=False
-            )
+    print(f"  Extracted {orientation} volume: {volume_data.shape}")
+    
+    # Apply TRUE 3D CLAHE - processes ENTIRE volume as single unit
+    # Uses GLOBAL mode (single histogram) for maximum smoothness
+    use_clahe = (contrast_method == 'clahe' or contrast_method is None)
+    
+    # Set default cornucopia presets (only the 4 aggressive ones)
+    if cornucopia_allowed_presets is None and use_cornucopia_3d:
+        cornucopia_allowed_presets = [
+            'extreme_noise',
+            'random_shapes_background',
+            'comprehensive_aggressive',
+            'ultra_heavy_speckle'
+        ]
+    
+    output_volume = process_volume_full_3d(
+        volume_data,
+        use_clahe=use_clahe,                  # TRUE 3D CLAHE
+        clahe_adaptive=False,                 # GLOBAL: entire volume = single tile (no boundaries!)
+        clahe_clip_limit=0.01,                # Standard CLAHE clip limit
+        add_texture=use_cornucopia_3d,         # Ultra-smooth 3D texture
+        texture_intensity=0.02,               # Subtle texture
+        texture_sigma=8.0,                    # Heavy smoothing = no patterns
+        gamma=gamma,
+        scaling_factor=scaling_factor,
+        use_cornucopia=use_cornucopia_3d,
+        cornucopia_preset=None,               # Random selection from allowed list
+        cornucopia_allowed_presets=cornucopia_allowed_presets,
+        cornucopia_prob=cornucopia_prob,
+        random_state=random_state
+    )
+    
+    # ==================================================================
+    # PHASE 2: RENDER STREAMLINES IN TRUE 3D SPACE
+    # ==================================================================
+    print(f"\nPhase 2: Rendering streamlines in 3D space...")
+    
+    # Calculate slice offset for coordinate mapping
+    slice_start = min(slice_range)
+    
+    # Helper: 3D line drawing between two 3D points
+    def draw_line_3d(p0, p1, intensity, volume, tissue_threshold, mask_volume=None):
+        """Draw 3D line between two points using 3D Bresenham"""
+        x0, y0, z0 = int(np.round(p0[0])), int(np.round(p0[1])), int(np.round(p0[2]))
+        x1, y1, z1 = int(np.round(p1[0])), int(np.round(p1[1])), int(np.round(p1[2]))
         
-        # Extract slice from original NIfTI
+        dx = abs(x1 - x0)
+        dy = abs(y1 - y0)
+        dz = abs(z1 - z0)
+        
+        xs = 1 if x1 > x0 else -1
+        ys = 1 if y1 > y0 else -1
+        zs = 1 if z1 > z0 else -1
+        
+        # Helper to update voxel
+        def update_voxel(vx, vy, vz):
+            if 0 <= vx < volume.shape[0] and 0 <= vy < volume.shape[1] and 0 <= vz < volume.shape[2]:
+                if volume[vx, vy, vz] >= tissue_threshold:
+                    volume[vx, vy, vz] = min(255.0, volume[vx, vy, vz] + intensity)
+                if mask_volume is not None:
+                    mask_volume[vx, vy, vz] += 1.0
+
+        # Driving axis
+        if dx >= dy and dx >= dz:  # X-axis is driving
+            p1_d, p2_d = dy, dz
+            p1_inc, p2_inc = ys, zs
+            d_axis = dx
+            
+            p1_err, p2_err = d_axis // 2, d_axis // 2
+            x, y, z = x0, y0, z0
+            
+            for _ in range(d_axis + 1):
+                update_voxel(x, y, z)
+                
+                p1_err += p1_d
+                if p1_err >= d_axis:
+                    y += p1_inc
+                    p1_err -= d_axis
+                
+                p2_err += p2_d
+                if p2_err >= d_axis:
+                    z += p2_inc
+                    p2_err -= d_axis
+                
+                x += xs
+                
+        elif dy >= dx and dy >= dz:  # Y-axis is driving
+            p1_d, p2_d = dx, dz
+            p1_inc, p2_inc = xs, zs
+            d_axis = dy
+            
+            p1_err, p2_err = d_axis // 2, d_axis // 2
+            x, y, z = x0, y0, z0
+            
+            for _ in range(d_axis + 1):
+                update_voxel(x, y, z)
+                
+                p1_err += p1_d
+                if p1_err >= d_axis:
+                    x += p1_inc
+                    p1_err -= d_axis
+                
+                p2_err += p2_d
+                if p2_err >= d_axis:
+                    z += p2_inc
+                    p2_err -= d_axis
+                
+                y += ys
+                
+        else:  # Z-axis is driving
+            p1_d, p2_d = dx, dy
+            p1_inc, p2_inc = xs, ys
+            d_axis = dz
+            
+            p1_err, p2_err = d_axis // 2, d_axis // 2
+            x, y, z = x0, y0, z0
+            
+            for _ in range(d_axis + 1):
+                update_voxel(x, y, z)
+                
+                p1_err += p1_d
+                if p1_err >= d_axis:
+                    x += p1_inc
+                    p1_err -= d_axis
+                
+                p2_err += p2_d
+                if p2_err >= d_axis:
+                    y += p2_inc
+                    p2_err -= d_axis
+                
+                z += zs
+    
+    # Render all streamlines in 3D
+    fiber_intensity = (fiber_intensity_max + fiber_intensity_min) / 2.0
+    streamlines_rendered = 0
+    
+    # Initialize mask accumulator if needed
+    mask_accumulator = xp.zeros(output_volume.shape, dtype=xp.float32) if save_mask else None
+    
+    # Transfer to GPU if available
+    if use_gpu:
+        output_volume_gpu = xp.asarray(output_volume)
+        if white_mask_data is not None:
+            white_mask_gpu = xp.asarray(white_mask_data)
+        else:
+            white_mask_gpu = None
+    
+    for sl in tqdm(streamlines_voxel, desc="Rendering streamlines"):
+        # Map streamlines to output volume coordinates
+        sl_mapped = sl.copy()
+        
+        # Adjust coordinates based on orientation and slice offset
         if orientation == 'coronal':
-            slice_data = nii_data[:, slice_idx, :]
-            vol_slice = output_volume[:, slice_offset, :]
+            # Y dimension is sliced, adjust Y coordinates
+            sl_mapped[:, 1] = sl[:, 1] - slice_start
         elif orientation == 'axial':
-            slice_data = nii_data[:, :, slice_idx]
-            vol_slice = output_volume[:, :, slice_offset]
+            # Z dimension is sliced, adjust Z coordinates  
+            sl_mapped[:, 2] = sl[:, 2] - slice_start
         else:  # sagittal
-            slice_data = nii_data[slice_idx, :, :]
-            vol_slice = output_volume[slice_offset, :, :]
+            # X dimension is sliced, adjust X coordinates
+            sl_mapped[:, 0] = sl[:, 0] - slice_start
         
-        # Apply contrast enhancement with consistent cornucopia preset but varied granules per slice
-        slice_random_state = slice_offset if selected_preset is not None else None
-        slice_enhanced = apply_comprehensive_slice_processing(
-            slice_data,
-            background_preset=background_enhancement,
-            cornucopia_preset=selected_preset,
-            contrast_method=contrast_method,
-            random_state=slice_random_state,
-            debug=False
-        )
+        # Apply z-flip for correct alignment
+        sl_mapped[:, 2] = (dims[2] if orientation != 'axial' else num_slices) - sl_mapped[:, 2] - 1
         
-        # Dark field effect with configurable gamma for tissue darkening
-        intensity_params = {
-            'gamma': gamma,
-            'threshold': 0.04,
-            'color_scheme': 'bw',
-            'blue_tint': 0.2
-        }
-        dark_field_slice = apply_blockface_preserving_dark_field_effect(
-            slice_enhanced,
-            intensity_params=intensity_params,
-            random_state=None,
-            force_background_black=True
-        )
-        
-        # Scale with configurable brightness
-        dark_field_slice = dark_field_slice * scaling_factor
-        vol_slice[:] = dark_field_slice
-        
-        # Render streamlines with distance-based intensity
-        for sl in streamlines_voxel:
+        # Draw lines between consecutive points in 3D
+        for i in range(len(sl_mapped) - 1):
+            p0 = sl_mapped[i]
+            p1 = sl_mapped[i + 1]
             
-            if orientation == 'coronal':
-                x, y, z = sl[:, 0], sl[:, 1], sl[:, 2]
-                
-                # Apply z-flip transformation for correct alignment
-                for i in range(len(x)):
-                    xi = int(np.round(np.clip(x[i], 0, vol_slice.shape[0]-1)))
-                    z_plot = dims[2] - z[i] - 1  # Critical: matches core.py line 642
-                    zi = int(np.round(np.clip(z_plot, 0, vol_slice.shape[1]-1)))
-                    
-                    # White matter mask filtering
-                    if white_mask_data is not None:
-                        xi_orig = int(np.round(np.clip(x[i], 0, dims[0]-1)))
-                        yi_orig = int(np.round(np.clip(y[i], 0, dims[1]-1)))
-                        zi_orig = int(np.round(np.clip(z[i], 0, dims[2]-1)))
-                        if white_mask_data[xi_orig, yi_orig, zi_orig] < 0.5:
-                            continue
-                    
-                    # Only draw on tissue (not background)
-                    if vol_slice[xi, zi] < tissue_threshold:
-                        continue
-                    
-                    # Constant fiber intensity (no distance-based variation)
-                    fiber_intensity = (fiber_intensity_max + fiber_intensity_min) / 2.0
-                    
-                    # Additive blending
-                    vol_slice[xi, zi] = min(255.0, vol_slice[xi, zi] + fiber_intensity)
+            # White matter mask check for both endpoints (use original coordinates)
+            if white_mask_data is not None:
+                x0, y0, z0 = int(np.round(np.clip(sl[i, 0], 0, dims[0]-1))), \
+                             int(np.round(np.clip(sl[i, 1], 0, dims[1]-1))), \
+                             int(np.round(np.clip(sl[i, 2], 0, dims[2]-1)))
+                x1, y1, z1 = int(np.round(np.clip(sl[i+1, 0], 0, dims[0]-1))), \
+                             int(np.round(np.clip(sl[i+1, 1], 0, dims[1]-1))), \
+                             int(np.round(np.clip(sl[i+1, 2], 0, dims[2]-1)))
+                if (white_mask_data[x0, y0, z0] < 0.5 or white_mask_data[x1, y1, z1] < 0.5):
+                    continue
             
-            elif orientation == 'axial':
-                x, y, z = sl[:, 0], sl[:, 1], sl[:, 2]
-                
-                for i in range(len(x)):
-                    xi = int(np.round(np.clip(x[i], 0, vol_slice.shape[0]-1)))
-                    yi = int(np.round(np.clip(y[i], 0, vol_slice.shape[1]-1)))
-                    
-                    # White matter mask filtering
-                    if white_mask_data is not None:
-                        xi_orig = int(np.round(np.clip(x[i], 0, dims[0]-1)))
-                        yi_orig = int(np.round(np.clip(y[i], 0, dims[1]-1)))
-                        zi_orig = int(np.round(np.clip(z[i], 0, dims[2]-1)))
-                        if white_mask_data[xi_orig, yi_orig, zi_orig] < 0.5:
-                            continue
-                    
-                    if vol_slice[xi, yi] < tissue_threshold:
-                        continue
-                    
-                    # Constant fiber intensity (no distance-based variation)
-                    fiber_intensity = (fiber_intensity_max + fiber_intensity_min) / 2.0
-                    vol_slice[xi, yi] = min(255.0, vol_slice[xi, yi] + fiber_intensity)
+            # Clip to output volume bounds
+            p0_clipped = np.clip(p0, [0, 0, 0], [output_volume.shape[0]-1, output_volume.shape[1]-1, output_volume.shape[2]-1])
+            p1_clipped = np.clip(p1, [0, 0, 0], [output_volume.shape[0]-1, output_volume.shape[1]-1, output_volume.shape[2]-1])
             
-            else:  # sagittal
-                x, y, z = sl[:, 0], sl[:, 1], sl[:, 2]
-                
-                for i in range(len(y)):
-                    yi = int(np.round(np.clip(y[i], 0, vol_slice.shape[0]-1)))
-                    zi = int(np.round(np.clip(z[i], 0, vol_slice.shape[1]-1)))
-                    
-                    # White matter mask filtering
-                    if white_mask_data is not None:
-                        xi_orig = int(np.round(np.clip(x[i], 0, dims[0]-1)))
-                        yi_orig = int(np.round(np.clip(y[i], 0, dims[1]-1)))
-                        zi_orig = int(np.round(np.clip(z[i], 0, dims[2]-1)))
-                        if white_mask_data[xi_orig, yi_orig, zi_orig] < 0.5:
-                            continue
-                    
-                    if vol_slice[yi, zi] < tissue_threshold:
-                        continue
-                    
-                    # Constant fiber intensity (no distance-based variation)
-                    fiber_intensity = (fiber_intensity_max + fiber_intensity_min) / 2.0
-                    vol_slice[yi, zi] = min(255.0, vol_slice[yi, zi] + fiber_intensity)
+            # Draw 3D line (use GPU volume if available)
+            if use_gpu:
+                draw_line_3d(p0_clipped, p1_clipped, fiber_intensity, output_volume_gpu, tissue_threshold, mask_accumulator)
+            else:
+                draw_line_3d(p0_clipped, p1_clipped, fiber_intensity, output_volume, tissue_threshold, mask_accumulator)
+        
+        streamlines_rendered += 1
+    
+    print(f"Rendered {streamlines_rendered} streamlines in 3D volume")
+    
+    # Transfer back from GPU if used
+    if use_gpu:
+        output_volume = xp.asnumpy(output_volume_gpu)
+    
+    # No post-processing needed - artifacts eliminated in Phase 1 tissue processing
+    # Streamlines remain perfectly sharp
     
     # Save output
     output_nii = nib.Nifti1Image(output_volume, affine=nii_img.affine)
@@ -340,6 +424,56 @@ def create_3d_volume_with_streamlines(nifti_file, trk_file, output_file,
     print(f"\nSaved 3D volume: {output_file}")
     print(f"  Shape: {output_volume.shape}")
     print(f"  Value range: [{output_volume.min():.2f}, {output_volume.max():.2f}]")
+    
+    # ==================================================================
+    # GENERATE AND SAVE FIBER MASK (TRUE 3D GENERATION)
+    # ==================================================================
+    if save_mask and mask_accumulator is not None:
+        print(f"\nPhase 3: Generating TRUE 3D fiber mask (isotropic consistency)...")
+        
+        # Apply 3D Gaussian smoothing to create flowing structures
+        # sigma=2.0 matches the user-approved "flowing" look, but applied isotropically
+        print("  Applying 3D Gaussian smoothing (sigma=2.0) for flowing connectivity...")
+        if use_gpu:
+            mask_density_smooth = gpu_ndimage.gaussian_filter(mask_accumulator, sigma=2.0)
+            mask_density_smooth = xp.asnumpy(mask_density_smooth)
+        else:
+            mask_density_smooth = gaussian_filter(mask_accumulator, sigma=2.0)
+        
+        # Normalize for consistent thresholding (0.0 to 1.0)
+        # This handles varying bundle densities gracefully
+        max_val = mask_density_smooth.max()
+        if max_val > 0:
+            mask_density_smooth /= max_val
+            
+        # Threshold to create binary mask
+        # 0.05 is the calibrated threshold for "thin but connected" flow
+        binary_threshold = 0.05
+        print(f"  Thresholding normalized density map at {binary_threshold}...")
+        
+        mask_volume = (mask_density_smooth > binary_threshold).astype(np.uint8)
+        
+        # Save mask
+        mask_file = output_file.replace('.nii.gz', '_mask.nii.gz')
+        mask_nii = nib.Nifti1Image(mask_volume, affine=nii_img.affine)
+        nib.save(mask_nii, mask_file)
+        
+        mask_voxels = np.count_nonzero(mask_volume)
+        mask_percentage = 100 * mask_voxels / mask_volume.size
+        print(f"\nSaved fiber mask: {mask_file}")
+        print(f"  Shape: {mask_volume.shape}")
+        print(f"  Mask coverage: {mask_voxels} voxels ({mask_percentage:.2f}%)")
+    
+    # Explicit memory cleanup to ensure resources are released
+    if use_gpu:
+        # Free GPU memory
+        del mask_accumulator
+        if 'output_volume_gpu' in locals():
+            del output_volume_gpu
+        if 'white_mask_gpu' in locals():
+            del white_mask_gpu
+        xp.get_default_memory_pool().free_all_blocks()
+    gc.collect()
     
     return output_file
 
@@ -354,8 +488,6 @@ if __name__ == '__main__':
     parser.add_argument('--start', type=int, default=0)
     parser.add_argument('--end', type=int, default=None)
     parser.add_argument('--orientation', default='coronal', choices=['coronal', 'axial', 'sagittal'])
-    parser.add_argument('--save-2d', action='store_true', help='Save 2D visualization images for each slice')
-    parser.add_argument('--output-dir', default='output_slices', help='Directory for 2D images')
     
     args = parser.parse_args()
     
@@ -378,7 +510,5 @@ if __name__ == '__main__':
         trk_file=args.trk,
         output_file=args.output,
         slice_range=slice_range,
-        orientation=args.orientation,
-        save_2d_images=args.save_2d,
-        output_dir=args.output_dir
+        orientation=args.orientation
     )

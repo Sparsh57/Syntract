@@ -30,9 +30,6 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
-# Import the syntract function
-from syntract import process_syntract
-
 
 def process_batch(nifti_file, trk_directory, output_dir="results", patches=30, 
                   patch_size=None, min_streamlines_per_patch=20, patch_prefix="patch",
@@ -257,11 +254,14 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
             output_image_size=output_image_size,
             random_state=None,
             white_mask_file=white_mask_file,
-            output_dir=None  # Don't save in process_patches_inmemory, we'll save here
+            output_dir=None,  # Don't save in process_patches_inmemory, we'll save here
+            patches_output_dir=os.path.join(output_dir, "patches", trk_directory_name) if threed_output else None,
+            skip_2d_viz=threed_output,  # Skip 2D rendering when only 3D output is needed
+            debug=debug
         )
         
-        # Save the images and masks to disk
-        if images and masks:
+        # Save the images and masks to disk (skip when 3D output is requested)
+        if images and masks and not threed_output:
             print(f"\nSaving {len(images)} images and {len(masks)} masks to disk...")
             
             # Create output subdirectories
@@ -299,55 +299,79 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
             print(f"Successfully saved {saved_count} masks to: {masks_dir}")
         
         # Generate 3D volumes if requested
-        if threed_output and images:
-            print(f"\nGenerating 3D volume outputs for {len(images)} patches...")
+        patch_dir = os.path.join(output_dir, "patches", trk_directory_name)
+        if threed_output and os.path.exists(patch_dir):
+            print(f"\nGenerating 3D volume outputs...")
             
             try:
                 from syntract_viewer.volume_renderer import create_3d_volume_with_streamlines
                 
-                # Get patch details from the directory
-                patch_dir = os.path.join(output_dir, "patches", trk_directory_name)
-                if os.path.exists(patch_dir):
-                    patch_files = sorted([f for f in os.listdir(patch_dir) if f.endswith('.nii.gz') and not f.endswith('_3d.nii.gz')])
+                # Only count raw patch NIfTIs (exclude white_mask and already-generated 3D outputs)
+                patch_files = sorted([
+                    f for f in os.listdir(patch_dir)
+                    if f.endswith('.nii.gz')
+                    and not f.endswith('_3d.nii.gz')
+                    and not f.endswith('_white_mask.nii.gz')
+                ])
+                valid_count = sum(1 for f in patch_files
+                                  if os.path.exists(os.path.join(patch_dir, f.replace('.nii.gz', '.trk'))))
+                rendered = 0
+
+                for i, nifti_file in enumerate(patch_files):
+                    patch_nifti = os.path.join(patch_dir, nifti_file)
+                    patch_trk = patch_nifti.replace('.nii.gz', '.trk')
+                    patch_white_mask = patch_nifti.replace('.nii.gz', '_white_mask.nii.gz')
                     
-                    for i, nifti_file in enumerate(patch_files):
-                        patch_nifti = os.path.join(patch_dir, nifti_file)
-                        patch_trk = patch_nifti.replace('.nii.gz', '.trk')
-                        patch_white_mask = patch_nifti.replace('.nii.gz', '_white_mask.nii.gz')
+                    if os.path.exists(patch_nifti) and os.path.exists(patch_trk):
+                        output_3d = patch_nifti.replace('.nii.gz', '_3d.nii.gz')
+                        white_mask_to_use = patch_white_mask if os.path.exists(patch_white_mask) else None
                         
-                        if os.path.exists(patch_nifti) and os.path.exists(patch_trk):
-                            output_3d = patch_nifti.replace('.nii.gz', '_3d.nii.gz')
-                            
-                            # Use white mask if it exists
-                            white_mask_to_use = patch_white_mask if os.path.exists(patch_white_mask) else None
-                            
-                            create_3d_volume_with_streamlines(
-                                nifti_file=patch_nifti,
-                                trk_file=patch_trk,
-                                output_file=output_3d,
-                                orientation='coronal',
-                                save_2d_images=False,
-                                white_mask_path=white_mask_to_use,
-                                contrast_method=contrast_method,
-                                min_bundle_size=min_bundle_size,
-                                density_threshold=density_threshold
-                            )
-                    
-                    print(f"3D volume generation complete!")
-                    print(f"   Output location: {patch_dir}")
+                        rendered += 1
+                        print(f"\n  Processing patch {rendered}/{valid_count}: {os.path.basename(nifti_file)}")
+                        
+                        create_3d_volume_with_streamlines(
+                            nifti_file=patch_nifti,
+                            trk_file=patch_trk,
+                            output_file=output_3d,
+                            orientation='coronal',
+                            white_mask_path=white_mask_to_use,
+                            contrast_method='clahe',
+                            fiber_intensity_min=15.0,
+                            fiber_intensity_max=25.0,
+                            use_cornucopia_3d=True,
+                            cornucopia_allowed_presets=['extreme_noise', 'random_shapes_background',
+                                                        'comprehensive_aggressive', 'ultra_heavy_speckle'],
+                            cornucopia_prob=0.9,
+                            save_mask=True,
+                            min_bundle_size=min_bundle_size
+                        )
+
+                        # Remove intermediate files — keep only _3d.nii.gz and _3d_mask.nii.gz
+                        for intermediate in [patch_nifti, patch_trk, patch_white_mask]:
+                            try:
+                                if os.path.exists(intermediate):
+                                    os.remove(intermediate)
+                            except Exception:
+                                pass
+                        
+                        gc.collect()
+                        time.sleep(0.1)
+                
+                print(f"3D volume generation complete!")
+                print(f"   Output location: {patch_dir}")
                     
             except ImportError as e:
                 print(f"Warning: Could not import 3D visualization module: {e}")
                 print("3D output skipped.")
         
-        # Create result object in same format as process_syntract
+        # Create result object
         result = {
             'success': len(images) > 0,
             'stage': 'patch_extraction_optimized',
             'result': {
                 'patches_extracted': len(images),
-                'images_generated': len(images),
-                'masks_generated': len(masks)
+                'images_generated': 0 if threed_output else len(images),
+                'masks_generated': 0 if threed_output else len(masks)
             }
         }
         
@@ -361,6 +385,8 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
             
             if patches_extracted == 0:
                 print(f"SUCCESS ({file_time:.1f}s) - No patches extracted (sparse data)")
+            elif threed_output:
+                print(f"SUCCESS ({file_time:.1f}s) - {patches_extracted} patches → {patches_extracted} NIfTI volumes + masks")
             else:
                 print(f"SUCCESS ({file_time:.1f}s) - {patches_extracted} patches, {images_generated} images, {masks_generated} masks")
             
@@ -648,6 +674,8 @@ def process_patches_inmemory(
     random_state: int = None,
     white_mask_file: str = None,
     output_dir: str = None,  # Added for debug visualization saving
+    patches_output_dir: str = None,  # If set, copy raw patch NIfTI/TRK files here before cleanup
+    skip_2d_viz: bool = False,  # Skip 2D rendering entirely (faster when only 3D output needed)
     debug: bool = False,
     **kwargs
 ) -> Tuple[List[np.ndarray], List[np.ndarray]]:
@@ -1067,6 +1095,13 @@ def process_patches_inmemory(
         
         print(f"\nSuccessfully extracted {patch_result['patches_extracted']} patches")
         
+        # Skip 2D visualization when only 3D output is needed (fast path)
+        if skip_2d_viz:
+            count = patch_result['patches_extracted']
+            print(f"Skipping 2D visualization (3D-only mode) - {count} patches ready for 3D rendering")
+            # Return sentinel lists so len() checks still work correctly
+            return ([None] * count, [None] * count)
+        
         # Step 3 & 4: Generate Visualizations and Masks In-Memory
         print("\nGenerating visualizations and masks...")
         
@@ -1456,6 +1491,19 @@ def process_patches_inmemory(
             print(f"Mask shape: N/A")
         
     finally:
+        # Step 7: Persist patch files if requested (for 3D rendering)
+        if patches_output_dir:
+            try:
+                os.makedirs(patches_output_dir, exist_ok=True)
+                copied = 0
+                for fname in os.listdir(temp_dir):
+                    if fname.endswith('.nii.gz') or fname.endswith('.trk'):
+                        shutil.copy2(os.path.join(temp_dir, fname), os.path.join(patches_output_dir, fname))
+                        copied += 1
+                print(f"Saved {copied} patch files to: {patches_output_dir}")
+            except Exception as e:
+                print(f"Warning: Could not copy patches to output dir: {e}")
+
         # Step 7: Cleanup
         print(f"\nCleaning up temporary directory...")
         try:
@@ -1584,6 +1632,9 @@ Examples:
                               help="Remove intermediate NIfTI and TRK files after processing to save disk space (default: True)")
     cleanup_group.add_argument("--no-cleanup-intermediate", action="store_true",
                               help="Keep intermediate NIfTI and TRK files after processing")
+
+    parser.add_argument("--debug", action="store_true",
+                        help="Enable verbose debug output")
     
     args = parser.parse_args()
     
@@ -1632,7 +1683,8 @@ Examples:
             cleanup_intermediate=cleanup_intermediate,
             white_mask_file=getattr(args, 'white_mask_file', None),
             threed_output=getattr(args, '3d_output', False),
-            contrast_method=getattr(args, 'contrast_method', 'clahe')
+            contrast_method=getattr(args, 'contrast_method', 'clahe'),
+            debug=getattr(args, 'debug', False)
         )
         
         if results['failed']:

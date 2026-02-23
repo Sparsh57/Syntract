@@ -27,7 +27,6 @@ from .ants_transform_updated import (
     apply_ants_transform_to_streamlines,
     process_with_ants
 )
-from .compare_interpolation import compare_interpolations
 from .slice_simplified import (
     extract_coronal_slices_simple,
     extract_patches_simple,
@@ -68,9 +67,6 @@ __all__ = [
     'apply_ants_transform_to_mri',
     'apply_ants_transform_to_streamlines',
     'process_with_ants',
-    
-    # Comparison tools
-    'compare_interpolations',
     
     # Slice selection
     'extract_coronal_slices_simple',
