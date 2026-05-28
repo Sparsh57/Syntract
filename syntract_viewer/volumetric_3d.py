@@ -24,7 +24,7 @@ except ImportError:
         print("Warning: TRUE 3D Cornucopia augmentation not available")
 
 
-def normalize_blockface_slices(volume_3d, axis=1):
+def normalize_blockface_slices(volume_3d, axis=1, verbose=True):
     """
     EXPERT: Normalize blockface slice intensities BEFORE any processing.
     
@@ -44,21 +44,22 @@ def normalize_blockface_slices(volume_3d, axis=1):
     np.ndarray
         Slice-normalized volume with eliminated intensity discontinuities
     """
-    print(f"    Pre-processing blockface slices (axis={axis})...")
+    if verbose:
+        print(f"    Pre-processing blockface slices (axis={axis})...")
     
-    volume_normalized = volume_3d.copy()
-    num_slices = volume_3d.shape[axis]
+    volume_arr = np.asarray(volume_3d, dtype=np.float32)
+    num_slices = volume_arr.shape[axis]
     
     # Compute target histogram from middle slices (usually best quality)
     mid_start = num_slices // 3
     mid_end = 2 * num_slices // 3
     
     if axis == 0:
-        reference_volume = volume_3d[mid_start:mid_end, :, :]
+        reference_volume = volume_arr[mid_start:mid_end, :, :]
     elif axis == 1:
-        reference_volume = volume_3d[:, mid_start:mid_end, :]
+        reference_volume = volume_arr[:, mid_start:mid_end, :]
     else:
-        reference_volume = volume_3d[:, :, mid_start:mid_end]
+        reference_volume = volume_arr[:, :, mid_start:mid_end]
     
     # Compute reference statistics
     ref_mean = np.mean(reference_volume)
@@ -66,44 +67,26 @@ def normalize_blockface_slices(volume_3d, axis=1):
     ref_min = np.percentile(reference_volume, 1)
     ref_max = np.percentile(reference_volume, 99)
     
-    print(f"      Normalizing {num_slices} slices to reference (mean={ref_mean:.1f}, std={ref_std:.1f})...")
-    
-    # Normalize each slice individually
-    for i in range(num_slices):
-        # Extract slice
-        if axis == 0:
-            slice_data = volume_3d[i, :, :]
-        elif axis == 1:
-            slice_data = volume_3d[:, i, :]
-        else:
-            slice_data = volume_3d[:, :, i]
-        
-        # Compute slice statistics
-        slice_mean = np.mean(slice_data)
-        slice_std = np.std(slice_data)
-        
-        if slice_std > 1e-6:  # Avoid division by zero
-            # Z-score normalization then rescale to reference
-            slice_normalized = (slice_data - slice_mean) / slice_std
-            slice_normalized = slice_normalized * ref_std + ref_mean
-            
-            # Clip to reference range
-            slice_normalized = np.clip(slice_normalized, ref_min, ref_max)
-            
-            # Put back
-            if axis == 0:
-                volume_normalized[i, :, :] = slice_normalized
-            elif axis == 1:
-                volume_normalized[:, i, :] = slice_normalized
-            else:
-                volume_normalized[:, :, i] = slice_normalized
-    
-    print(f"      ✓ Slice normalization complete - eliminated source intensity variations")
+    if verbose:
+        print(f"      Normalizing {num_slices} slices to reference (mean={ref_mean:.1f}, std={ref_std:.1f})...")
+
+    # Vectorized per-slice normalization in chosen axis
+    vol_moved = np.moveaxis(volume_arr, axis, 0)  # (S, H, W)
+    slice_mean = vol_moved.mean(axis=(1, 2), keepdims=True)
+    slice_std = vol_moved.std(axis=(1, 2), keepdims=True)
+    slice_std = np.where(slice_std > 1e-6, slice_std, 1.0)
+    vol_norm = (vol_moved - slice_mean) / slice_std
+    vol_norm = vol_norm * ref_std + ref_mean
+    vol_norm = np.clip(vol_norm, ref_min, ref_max)
+    volume_normalized = np.moveaxis(vol_norm, 0, axis)
+
+    if verbose:
+        print(f"      ✓ Slice normalization complete - eliminated source intensity variations")
     
     return volume_normalized
 
 
-def apply_interslice_smoothing(volume_3d, axis=1, sigma=1.5):
+def apply_interslice_smoothing(volume_3d, axis=1, sigma=1.5, verbose=True):
     """
     Apply smoothing ONLY between adjacent slices, not within slices.
     
@@ -125,7 +108,8 @@ def apply_interslice_smoothing(volume_3d, axis=1, sigma=1.5):
     """
     from scipy.ndimage import gaussian_filter1d
     
-    print(f"      Smoothing inter-slice boundaries (axis={axis}, sigma={sigma})...")
+    if verbose:
+        print(f"      Smoothing inter-slice boundaries (axis={axis}, sigma={sigma})...")
     
     # Apply 1D gaussian ONLY along the stacking axis
     volume_smooth = gaussian_filter1d(volume_3d.astype(np.float32), sigma=sigma, axis=axis)
@@ -133,7 +117,7 @@ def apply_interslice_smoothing(volume_3d, axis=1, sigma=1.5):
     return volume_smooth
 
 
-def apply_true_3d_clahe(volume_3d, clip_limit=0.01, adaptive=False):
+def apply_true_3d_clahe(volume_3d, clip_limit=0.01, adaptive=False, verbose=True):
     """
     Apply CLAHE to ENTIRE 3D volume with adaptive kernel sizing.
     
@@ -159,10 +143,10 @@ def apply_true_3d_clahe(volume_3d, clip_limit=0.01, adaptive=False):
     """
     # CRITICAL: Normalize blockface slices FIRST - this is the root cause fix
     # Blockface = stacked photos with different lighting per slice
-    volume_normalized = normalize_blockface_slices(volume_3d, axis=1)  # axis=1 for coronal stacks
+    volume_normalized = normalize_blockface_slices(volume_3d, axis=1, verbose=verbose)  # axis=1 for coronal stacks
     
     # Apply inter-slice smoothing to any remaining boundaries
-    volume_normalized = apply_interslice_smoothing(volume_normalized, axis=1, sigma=1.2)
+    volume_normalized = apply_interslice_smoothing(volume_normalized, axis=1, sigma=1.2, verbose=verbose)
     
     # Now normalize to [0, 1] for CLAHE
     vol_min = np.percentile(volume_normalized, 1)
@@ -178,11 +162,13 @@ def apply_true_3d_clahe(volume_3d, clip_limit=0.01, adaptive=False):
             max(shape[1] // 2, 64),
             max(shape[2] // 2, 64)
         )
-        print(f"    Applying adaptive 3D CLAHE (volume={shape}, kernel={kernel_size}, clip={clip_limit})...")
+        if verbose:
+            print(f"    Applying adaptive 3D CLAHE (volume={shape}, kernel={kernel_size}, clip={clip_limit})...")
     else:
         # Global: kernel = entire volume (single tile = no boundaries)
         kernel_size = volume_norm.shape
-        print(f"    Applying GLOBAL 3D CLAHE (single histogram for entire volume, clip={clip_limit})...")
+        if verbose:
+            print(f"    Applying GLOBAL 3D CLAHE (single histogram for entire volume, clip={clip_limit})...")
     
     # Apply 3D CLAHE with computed kernel size
     with warnings.catch_warnings():
@@ -196,7 +182,8 @@ def apply_true_3d_clahe(volume_3d, clip_limit=0.01, adaptive=False):
     
     # Post-CLAHE: Final targeted smoothing at any residual boundaries
     # Much gentler now that source normalization is done
-    print("    Final inter-slice boundary smoothing...")
+    if verbose:
+        print("    Final inter-slice boundary smoothing...")
     
     # Detect and smooth only remaining high-frequency discontinuities
     from scipy.ndimage import gaussian_filter1d
@@ -221,7 +208,7 @@ def apply_true_3d_clahe(volume_3d, clip_limit=0.01, adaptive=False):
     return volume_smooth
 
 
-def enhance_multiscale_3d(volume_3d, sigmas=[5.0, 10.0, 20.0], weights=[0.5, 0.3, 0.2]):
+def enhance_multiscale_3d(volume_3d, sigmas=[5.0, 10.0, 20.0], weights=[0.5, 0.3, 0.2], verbose=True):
     """
     Multi-scale smooth contrast enhancement - captures details at different scales.
     
@@ -242,7 +229,8 @@ def enhance_multiscale_3d(volume_3d, sigmas=[5.0, 10.0, 20.0], weights=[0.5, 0.3
     np.ndarray
         Multi-scale enhanced volume
     """
-    print(f"    Multi-scale enhancement (scales: {sigmas})...")
+    if verbose:
+        print(f"    Multi-scale enhancement (scales: {sigmas})...")
     
     enhanced = np.zeros_like(volume_3d)
     
@@ -264,7 +252,7 @@ def enhance_multiscale_3d(volume_3d, sigmas=[5.0, 10.0, 20.0], weights=[0.5, 0.3
     return enhanced
 
 
-def enhance_unsharp_mask_3d(volume_3d, sigma=10.0, amount=1.5):
+def enhance_unsharp_mask_3d(volume_3d, sigma=10.0, amount=1.5, verbose=True):
     """
     3D Unsharp masking - classic sharpening technique without artifacts.
     
@@ -284,7 +272,8 @@ def enhance_unsharp_mask_3d(volume_3d, sigma=10.0, amount=1.5):
     np.ndarray
         Sharpened volume
     """
-    print(f"    Unsharp mask enhancement (sigma={sigma}, amount={amount})...")
+    if verbose:
+        print(f"    Unsharp mask enhancement (sigma={sigma}, amount={amount})...")
     
     # Create blurred version
     blurred = gaussian_filter(volume_3d, sigma=sigma)
@@ -302,7 +291,7 @@ def enhance_unsharp_mask_3d(volume_3d, sigma=10.0, amount=1.5):
     return enhanced
 
 
-def enhance_adaptive_local_3d(volume_3d, sigma_small=8.0, sigma_large=20.0, strength=0.8):
+def enhance_adaptive_local_3d(volume_3d, sigma_small=8.0, sigma_large=20.0, strength=0.8, verbose=True):
     """
     Adaptive local enhancement - enhances based on local content.
     
@@ -325,7 +314,8 @@ def enhance_adaptive_local_3d(volume_3d, sigma_small=8.0, sigma_large=20.0, stre
     np.ndarray
         Adaptively enhanced volume
     """
-    print(f"    Adaptive local enhancement (dual-scale: {sigma_small}/{sigma_large})...")
+    if verbose:
+        print(f"    Adaptive local enhancement (dual-scale: {sigma_small}/{sigma_large})...")
     
     # Compute local statistics at two scales
     local_mean_small = gaussian_filter(volume_3d, sigma=sigma_small)
@@ -348,7 +338,7 @@ def enhance_adaptive_local_3d(volume_3d, sigma_small=8.0, sigma_large=20.0, stre
     return enhanced
 
 
-def enhance_bilateral_inspired_3d(volume_3d, sigma_spatial=12.0, intensity_range=0.15):
+def enhance_bilateral_inspired_3d(volume_3d, sigma_spatial=12.0, intensity_range=0.15, verbose=True):
     """
     Bilateral filter-inspired enhancement - edge-preserving smoothing.
     
@@ -369,7 +359,8 @@ def enhance_bilateral_inspired_3d(volume_3d, sigma_spatial=12.0, intensity_range
     np.ndarray
         Edge-preserved enhanced volume
     """
-    print(f"    Bilateral-inspired enhancement (sigma={sigma_spatial})...")
+    if verbose:
+        print(f"    Bilateral-inspired enhancement (sigma={sigma_spatial})...")
     
     # Compute intensity-weighted local mean
     smoothed = gaussian_filter(volume_3d, sigma=sigma_spatial)
@@ -392,7 +383,7 @@ def enhance_bilateral_inspired_3d(volume_3d, sigma_spatial=12.0, intensity_range
     return enhanced
 
 
-def add_3d_texture_field(volume_3d, intensity=0.02, sigma=8.0):
+def add_3d_texture_field(volume_3d, intensity=0.02, sigma=8.0, verbose=True):
     """
     Add ultra-smooth 3D texture/noise field to volume.
     Creates realistic tissue variation WITHOUT any visible boundaries.
@@ -412,21 +403,24 @@ def add_3d_texture_field(volume_3d, intensity=0.02, sigma=8.0):
     np.ndarray
         Volume with added 3D texture
     """
-    print(f"    Adding ultra-smooth 3D texture field (sigma={sigma}, intensity={intensity})...")
-    
-    # Generate 3D noise field
-    noise_3d = np.random.randn(*volume_3d.shape) * intensity
-    
-    # Apply HEAVY smoothing in 3D space - ensures no visible patterns
-    noise_3d_smooth = gaussian_filter(noise_3d, sigma=sigma)
-    
-    # Add to volume and clip
-    volume_textured = np.clip(volume_3d + noise_3d_smooth, 0, 1)
+    if verbose:
+        print(f"    Adding ultra-smooth 3D texture field (sigma={sigma}, intensity={intensity})...")
+
+    if intensity <= 0:
+        return np.asarray(volume_3d, dtype=np.float32)
+
+    volume_base = np.asarray(volume_3d, dtype=np.float32)
+    noise_3d = np.random.standard_normal(volume_base.shape).astype(np.float32)
+    noise_3d *= np.float32(intensity)
+
+    # Keep processing in float32 to reduce CPU time without changing the augmentation type.
+    noise_3d_smooth = gaussian_filter(noise_3d, sigma=sigma).astype(np.float32, copy=False)
+    volume_textured = np.clip(volume_base + noise_3d_smooth, 0, 1)
     
     return volume_textured
 
 
-def apply_3d_gamma_darkfield(volume_3d, gamma=2.2):
+def apply_3d_gamma_darkfield(volume_3d, gamma=2.2, verbose=True):
     """
     Apply gamma correction to entire 3D volume for dark field microscopy appearance.
     
@@ -443,11 +437,12 @@ def apply_3d_gamma_darkfield(volume_3d, gamma=2.2):
     np.ndarray
         Gamma-corrected volume
     """
-    print(f"    Applying 3D gamma correction (gamma={gamma})...")
+    if verbose:
+        print(f"    Applying 3D gamma correction (gamma={gamma})...")
     return np.power(volume_3d, gamma)
 
 
-def apply_bilateral_smoothing_3d(volume_3d, sigma_spatial=0.8, sigma_intensity=0.25, iterations=1):
+def apply_bilateral_smoothing_3d(volume_3d, sigma_spatial=0.8, sigma_intensity=0.25, iterations=1, verbose=True):
     """
     Apply gentle edge-preserving bilateral-style filtering to reduce discontinuities.
     
@@ -471,7 +466,8 @@ def apply_bilateral_smoothing_3d(volume_3d, sigma_spatial=0.8, sigma_intensity=0
     np.ndarray
         Smoothed volume with preserved edges
     """
-    print(f"    Applying gentle bilateral smoothing (spatial={sigma_spatial}, intensity={sigma_intensity})...")
+    if verbose:
+        print(f"    Applying gentle bilateral smoothing (spatial={sigma_spatial}, intensity={sigma_intensity})...")
     
     filtered = volume_3d.copy()
     
@@ -503,7 +499,8 @@ def process_volume_full_3d(volume_3d,
                            cornucopia_preset=None,
                            cornucopia_allowed_presets=None,
                            cornucopia_prob=0.9,
-                           random_state=None):
+                           random_state=None,
+                           verbose=True):
     """
     Complete 3D volumetric processing with PROPER 3D CLAHE.
     CLAHE is applied to the ENTIRE volume as a single unit - no tiling artifacts.
@@ -549,10 +546,13 @@ def process_volume_full_3d(volume_3d,
     np.ndarray
         Processed 3D volume, ready for streamline rendering
     """
-    print(f"  TRUE 3D CLAHE PROCESSING (entire volume, no tiling):")
+    volume_3d = np.asarray(volume_3d, dtype=np.float32)
+    if verbose:
+        print(f"  TRUE 3D CLAHE PROCESSING (entire volume, no tiling):")
     
     # Step 0: Initial normalization to [0, 1] range
-    print("    Initial normalization...")
+    if verbose:
+        print("    Initial normalization...")
     vol_min = np.percentile(volume_3d, 1)
     vol_max = np.percentile(volume_3d, 99)
     volume_normalized = np.clip((volume_3d - vol_min) / (vol_max - vol_min + 1e-8), 0, 1)
@@ -569,7 +569,8 @@ def process_volume_full_3d(volume_3d,
             preset=cornucopia_preset,
             allowed_presets=cornucopia_allowed_presets,
             apply_prob=cornucopia_prob,
-            random_state=random_state
+            random_state=random_state,
+            verbose=verbose,
         )
         
         # Normalize back to [0, 1]
@@ -584,7 +585,8 @@ def process_volume_full_3d(volume_3d,
         volume_processed = apply_true_3d_clahe(
             volume_normalized,
             clip_limit=clahe_clip_limit,
-            adaptive=clahe_adaptive
+            adaptive=clahe_adaptive,
+            verbose=verbose,
         )
         
         # Apply gentle bilateral smoothing for edge-preserving discontinuity reduction
@@ -593,7 +595,8 @@ def process_volume_full_3d(volume_3d,
                 volume_processed,
                 sigma_spatial=0.8,
                 sigma_intensity=0.25,
-                iterations=1
+                iterations=1,
+                verbose=verbose,
             )
     else:
         # Use normalized volume directly
@@ -604,17 +607,20 @@ def process_volume_full_3d(volume_3d,
         volume_processed = add_3d_texture_field(
             volume_processed,
             intensity=texture_intensity,
-            sigma=texture_sigma
+            sigma=texture_sigma,
+            verbose=verbose,
         )
     
     # Step 4: Gamma correction for dark field appearance
-    volume_processed = apply_3d_gamma_darkfield(volume_processed, gamma=gamma)
+    volume_processed = apply_3d_gamma_darkfield(volume_processed, gamma=gamma, verbose=verbose)
     
     # Step 5: Scale to output range
-    print(f"    Scaling to output range (factor={scaling_factor})...")
+    if verbose:
+        print(f"    Scaling to output range (factor={scaling_factor})...")
     volume_output = (volume_processed * scaling_factor).astype(np.float32)
     
-    print(f"    ✓ 3D processing complete - shape: {volume_output.shape}, " + 
-          f"range: [{volume_output.min():.2f}, {volume_output.max():.2f}]")
+    if verbose:
+        print(f"    ✓ 3D processing complete - shape: {volume_output.shape}, " +
+              f"range: [{volume_output.min():.2f}, {volume_output.max():.2f}]")
     
     return volume_output

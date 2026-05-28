@@ -238,7 +238,7 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                 ants_aff_path=ants_aff_path,
                 random_state=None,  # Could be parameterized
                 use_gpu=True,
-                white_mask_path=white_mask_path
+                white_mask_path=white_mask_path,
             )
             
             # Add visualization generation for patches if successful
@@ -262,16 +262,50 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                                     trk_file=trk_file,
                                     output_file=output_3d,
                                     orientation='coronal',
-                                    white_mask_path=patch_detail['files'].get('white_mask'),
+                                    # White mask filtering already applied during patch extraction;
+                                    # passing it here causes coordinate-space mismatches for
+                                    # TRKs saved with identity affine_to_rasmm.
+                                    white_mask_path=None,
                                     contrast_method='clahe',
+                                    gamma=1.0,
                                     fiber_intensity_min=15.0,
                                     fiber_intensity_max=25.0,
                                     use_cornucopia_3d=True,
-                                    cornucopia_allowed_presets=['extreme_noise', 'random_shapes_background', 
-                                                                'comprehensive_aggressive', 'ultra_heavy_speckle'],
+                                    cornucopia_allowed_presets=['granular_realistic'],
                                     cornucopia_prob=0.9,
                                     save_mask=True,
-                                    min_bundle_size=min_bundle_size
+                                    min_bundle_size=min_bundle_size,
+                                    # Gritty blockface look: skip smoothing, add fine high-frequency
+                                    # texture, lower CLAHE clip so cornucopia noise survives.
+                                    # texture_sigma<1 makes near-voxel-scale grain (matches the
+                                    # grainy real light-sheet) and helps mask the directional
+                                    # smear from sampling coarse blockface at 0.001mm.
+                                    use_bilateral_smoothing=False,
+                                    texture_intensity=0.45,
+                                    texture_sigma=0.8,
+                                    clahe_clip_limit=0.003,
+                                    # Cell-body blob distractors in the tissue (image only,
+                                    # not the mask) so the model must learn fiber-vs-cell
+                                    # rather than firing on any bright structure.
+                                    enable_cell_blobs=True,
+                                    cell_blob_count=140,
+                                    cell_blob_intensity=0.35,
+                                    cell_blob_radius_range=(1.2, 4.0),
+                                    # Softer, intensity-varying fibers instead of hard uniform lines.
+                                    # fiber_smoothing_sigma gives the fiber a few-voxel soft
+                                    # Gaussian falloff so its edges aren't pixelated/stair-stepped
+                                    # (a 1-voxel line on a discrete grid always aliases).
+                                    fiber_antialias=True,
+                                    fiber_smoothing_sigma=1.0,
+                                    fiber_brightness_variation=0.5,
+                                    fiber_segment_brightness_variation=0.4,
+                                    # Soft partial-volume tube: smooth, continuous, zero
+                                    # stair-stepping (a binary diagonal always steps; only a
+                                    # float mask doesn't). mask_smoothing_sigma rounds the
+                                    # cross-section into a soft tube; values stay in [0,1] as
+                                    # BCE soft targets (no thresholding).
+                                    soft_mask=True,
+                                    mask_smoothing_sigma=1.0,
                                 )
                         
                         print(f"3D volume generation complete!")

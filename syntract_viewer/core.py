@@ -115,7 +115,9 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
                              close_gaps=False, closing_footprint_size=5, label_bundles=False,
                              min_bundle_size=20, contrast_method='clahe', contrast_params=None,
                              background_enhancement=None, cornucopia_augmentation=None,
-                             truly_random=False):
+                             truly_random=False, output_image_size=(1024, 1024, 1024),
+                             use_high_density_masks=False, max_fiber_percentage=100.0,
+                             min_fiber_percentage=10.0, white_mask_file=None, debug=False):
     """
     Visualize multiple axial slices of a nifti file with tractography overlaid.
 
@@ -344,19 +346,6 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
         else:
             return fig, axes, fiber_masks if save_masks else None
 
-def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1, cmap='gray',
-                             clahe_clip_limit=0.01, clahe_tile_grid_size=32, intensity_params=None,
-                             tract_color_base=(1.0, 0.8, 0.1), tract_color_variation=0.2,
-                             slice_idx=None, streamline_percentage=100.0, roi_sphere=None,
-                             tract_linewidth=1.0, save_masks=False, mask_thickness=1,
-                             density_threshold=0.15, gaussian_sigma=2.0, random_state=None,
-                             close_gaps=False, closing_footprint_size=5, label_bundles=False,
-                             min_bundle_size=20, contrast_method='clahe', contrast_params=None,
-                             background_enhancement=None, cornucopia_augmentation=None,
-                             truly_random=False, output_image_size=(1024, 1024, 1024),
-                             use_high_density_masks=False, max_fiber_percentage=100.0,
-                             min_fiber_percentage=10.0, white_mask_file=None, debug=False):
-    pass
 def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_slices=1, cmap='gray',
                              clahe_clip_limit=0.01, clahe_tile_grid_size=32, intensity_params=None,
                              tract_color_base=(1.0, 0.8, 0.1), tract_color_variation=0.2,

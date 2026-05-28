@@ -296,97 +296,100 @@ def resample_nifti_patch(patch_img, target_affine, target_shape, use_gpu=False):
     np.ndarray
         Resampled patch data
     """
-    try:
-        # Import GPU utilities if requested
-        if use_gpu:
-            try:
-                from .gpu_utils import try_gpu_import
-                gpu_result = try_gpu_import()
-                xp = gpu_result['xp']
-                use_gpu = gpu_result['cupy_available']
-            except ImportError:
-                import numpy as xp
-                use_gpu = False
-        else:
-            import numpy as xp
-    except ImportError:
-        import numpy as xp
-        use_gpu = False
-    
-    # Get input data and affine
+    import numpy as np
     data_in = patch_img.get_fdata().astype(np.float32)
     old_affine_inv = np.linalg.inv(patch_img.affine)
-    
-    # Initialize output array
+
+    # GPU-accelerated path via torch grid_sample when available
     if use_gpu:
-        new_data = xp.zeros(target_shape, dtype=xp.float32)
-    else:
-        new_data = np.zeros(target_shape, dtype=np.float32)
-    
-    # Perform resampling with trilinear interpolation for smooth results
+        try:
+            import torch
+            import torch.nn.functional as F
+            if torch.cuda.is_available():
+                device = torch.device("cuda")
+                data_t = torch.from_numpy(data_in).unsqueeze(0).unsqueeze(0).to(device)
+
+                target_shape = tuple(int(x) for x in target_shape)
+                xs = torch.arange(target_shape[0], device=device, dtype=torch.float32)
+                ys = torch.arange(target_shape[1], device=device, dtype=torch.float32)
+                zs = torch.arange(target_shape[2], device=device, dtype=torch.float32)
+                gx, gy, gz = torch.meshgrid(xs, ys, zs, indexing='ij')
+
+                coords_flat = torch.stack([gx, gy, gz, torch.ones_like(gx)], dim=-1).reshape(-1, 4).T
+                target_affine_t = torch.as_tensor(target_affine, device=device, dtype=torch.float32)
+                old_affine_inv_t = torch.as_tensor(old_affine_inv, device=device, dtype=torch.float32)
+
+                world = target_affine_t @ coords_flat
+                old_vox = old_affine_inv_t @ world
+
+                i = old_vox[0].reshape(target_shape)
+                j = old_vox[1].reshape(target_shape)
+                k = old_vox[2].reshape(target_shape)
+
+                grid = torch.stack([
+                    (k / max(data_in.shape[2] - 1, 1)) * 2 - 1,
+                    (j / max(data_in.shape[1] - 1, 1)) * 2 - 1,
+                    (i / max(data_in.shape[0] - 1, 1)) * 2 - 1,
+                ], dim=-1).unsqueeze(0)  # (1, D, H, W, 3)
+
+                sampled = F.grid_sample(
+                    data_t,
+                    grid,
+                    mode="bilinear",
+                    padding_mode="zeros",
+                    align_corners=True,
+                )
+                return sampled.squeeze(0).squeeze(0).cpu().numpy().astype(np.float32)
+        except Exception as e:
+            print(f"GPU resample fallback to CPU due to: {e}")
+            # fall through to CPU
+
+    # CPU fallback (original trilinear interpolation)
+    new_data = np.zeros(target_shape, dtype=np.float32)
+
     x_coords, y_coords, z_coords = np.mgrid[0:target_shape[0], 0:target_shape[1], 0:target_shape[2]]
     coords_flat = np.vstack([x_coords.ravel(), y_coords.ravel(), z_coords.ravel(), np.ones(x_coords.size)])
-    
-    # Transform to world coordinates then to source voxel coordinates
+
     world_coords = target_affine @ coords_flat
     old_vox_coords = old_affine_inv @ world_coords
-    
-    # Extract floating point coordinates for interpolation
+
     i_coords = old_vox_coords[0, :]
-    j_coords = old_vox_coords[1, :] 
+    j_coords = old_vox_coords[1, :]
     k_coords = old_vox_coords[2, :]
-    
-    # Get integer floor coordinates and interpolation weights
+
     i0 = np.floor(i_coords).astype(int)
     j0 = np.floor(j_coords).astype(int)
     k0 = np.floor(k_coords).astype(int)
-    
-    i1 = i0 + 1
-    j1 = j0 + 1
-    k1 = k0 + 1
-    
-    # Compute interpolation weights
+
     wi = i_coords - i0
     wj = j_coords - j0
     wk = k_coords - k0
-    
-    # Create validity masks for all 8 corners
+
     def is_valid(i, j, k):
         return ((i >= 0) & (i < data_in.shape[0]) &
                 (j >= 0) & (j < data_in.shape[1]) &
                 (k >= 0) & (k < data_in.shape[2]))
-    
-    # Trilinear interpolation
+
     output_flat = np.zeros(x_coords.size, dtype=np.float32)
-    
-    # For each valid point, interpolate from 8 neighbors
-    valid_center = is_valid(i0, j0, k0)
-    
+
     for di in [0, 1]:
         for dj in [0, 1]:
             for dk in [0, 1]:
                 i_curr = i0 + di
                 j_curr = j0 + dj
                 k_curr = k0 + dk
-                
+
                 valid_curr = is_valid(i_curr, j_curr, k_curr)
                 valid_indices = np.where(valid_curr)[0]
-                
+
                 if len(valid_indices) > 0:
-                    # Calculate weight for this corner
                     weight_i = (1 - wi) if di == 0 else wi
                     weight_j = (1 - wj) if dj == 0 else wj
                     weight_k = (1 - wk) if dk == 0 else wk
                     weights = weight_i * weight_j * weight_k
-                    
-                    # Sample values at valid locations
+
                     sampled = data_in[i_curr[valid_indices], j_curr[valid_indices], k_curr[valid_indices]]
                     output_flat[valid_indices] += sampled * weights[valid_indices]
-    
+
     new_data = output_flat.reshape(target_shape)
-    
-    # Convert back to numpy if on GPU
-    if use_gpu and hasattr(new_data, 'get'):
-        new_data = new_data.get()
-    
     return new_data

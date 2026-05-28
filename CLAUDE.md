@@ -1,0 +1,85 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+Two longer agent-oriented docs already exist: [AI_CONTEXT.md](AI_CONTEXT.md) (read first for orientation) and [.github/copilot-instructions.md](.github/copilot-instructions.md). Keep all three in sync when changing project-wide rules.
+
+## Commands
+
+```bash
+pip install -r requirements.txt          # install deps
+pytest                                    # full unit suite
+pytest tests/test_nifti_preprocessing.py  # narrow run while editing
+python run_comprehensive_tests.py         # custom integration runner
+```
+
+`tests/conftest.py` adds `synthesis/` to `sys.path` so tests can import either via the package or as standalone scripts (see "Import patterns" below). Many tests need real NIfTI/TRK/OME-Zarr data and are expensive — prefer the narrowest useful test and state what was skipped.
+
+Single-file pipeline (the orchestrator is `syntract.py`):
+
+```bash
+python syntract.py --input brain.nii.gz --trk fibers.trk --output result
+python syntract.py ... --use_ants --ants_warp warp.nii.gz --ants_iwarp iwarp.nii.gz --ants_aff affine.mat
+python syntract.py ... --3d_output --white_mask wm_mask.nii.gz --total_patches 10 --patch_size 1024 40 1024
+python syntract.py ... --disable_patch_processing --new_dim 116 140 96   # traditional full-volume path
+```
+
+Batch over a directory of TRK files sharing one NIfTI: `python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/`.
+
+3D synthetic training entry point: `python synthetic-training/train_on_synthetic_data_3d.py --on_the_fly --trk_dir ... --input_nifti ... --checkpoint_dir ... --no_wandb`.
+
+## Architecture
+
+Two production packages plus a training tree:
+
+- [synthesis/](synthesis/) — core MRI/tractography processing. [main.py](synthesis/main.py) (`process_and_save`) is the traditional full-volume path; [patch_first_processing.py](synthesis/patch_first_processing.py) is the default patch-first path; [nifti_preprocessing.py](synthesis/nifti_preprocessing.py), [streamline_processing.py](synthesis/streamline_processing.py), [densify.py](synthesis/densify.py), [ants_transform_updated.py](synthesis/ants_transform_updated.py), [gpu_utils.py](synthesis/gpu_utils.py).
+- [syntract_viewer/](syntract_viewer/) — rendering. [generation.py](syntract_viewer/generation.py) builds 2D synthetic examples; [core.py](syntract_viewer/core.py) saves NIfTI/TRK visualizations and masks; [volume_renderer.py](syntract_viewer/volume_renderer.py) does 3D rendering with streamlines; [improved_cornucopia.py](syntract_viewer/improved_cornucopia.py) drives the weighted preset selection (clean 30% / subtle 30% / moderate 20% / heavy 20%); [synthetic_image_augmentations.py](syntract_viewer/synthetic_image_augmentations.py) is image-only 3D realism for training.
+- [synthetic-training/](synthetic-training/) — PyTorch Lightning 2D/3D training, OME-Zarr loading, prediction, preview. Notable: [unet3d.py](synthetic-training/unet3d.py), [loss_functions.py](synthetic-training/loss_functions.py), [datamodules/datasets.py](synthetic-training/datamodules/datasets.py), [datamodules/omezarr.py](synthetic-training/datamodules/omezarr.py) (physical-scale patch extraction → fixed output tensor shapes), [precompute_patches_3d.py](synthetic-training/precompute_patches_3d.py).
+
+The main data flow: load NIfTI+TRK → optional ANTs transform → auto-calculate target dims from physical size and `voxel_size` (`syntract.py::calculate_target_dimensions`, constrained to 32–4000 voxels/dim, aspect ratio preserved) → sample valid patch locations with a streamline-count threshold → resample only those patches → clip streamlines to the patch FOV → render 2D/3D → save masks/summaries.
+
+[cumulative.py](cumulative.py) wraps `process_batch` (CLI + Python API) and `process_patches_inmemory` (no file I/O — returns `images, masks` arrays). It auto-tunes patch counts per file: >100k streamlines → more patches, <10 → minimal patches.
+
+## Project-specific conventions
+
+- **Patch-first is the default and the right answer.** Don't add `--disable_patch_processing` or remove the patch path unless the task explicitly asks for full-volume synthesis. Full-volume is much slower and memory-heavy.
+- **CPU fallback is mandatory.** All GPU code goes through [synthesis/gpu_utils.py](synthesis/gpu_utils.py) (`try_gpu_import` → `xp = numpy or cupy`). Don't hard-import `cupy`, CUDA, or MPS.
+- **Dual import pattern.** Modules are used both as a package and as standalone scripts, so most imports look like:
+  ```python
+  try:
+      from .module import function
+  except ImportError:
+      from module import function
+  ```
+  Preserve this shape when adding new modules.
+- **Coordinate systems are easy to break.** Streamlines, RAS, voxel coords, NIfTI affines, and ANTs transforms (warp + inverse warp + affine, converted to RAS+ for TrackVis) all interact in `synthesis/`. Be careful around `ants_transform_updated.py` and `streamline_processing.py`.
+- **Mask defaults are intentionally aggressive in current main paths:** `mask_thickness=1` (auto-scales by image size), `density_threshold=0.6`, `min_bundle_size=2000`, `use_high_density_masks=True`. The README lists older lighter defaults (`0.15` / `20`) for documented args — the unified internal defaults are the aggressive ones. Don't mix old and new defaults in the same code path.
+- **Memory discipline.** Use `nib.load(..., mmap=True)`, batch + `gc.collect()` between batches, close matplotlib figures (`plt.ioff()`, low `figure.max_open_warning`). Generated NIfTI/TRK/PNG outputs can be huge — don't delete or overwrite user outputs unless explicitly asked.
+- **Output naming.** Patches: `{prefix}_{NNNN}.nii.gz` / `.trk`. Visualizations: `{viz_prefix}_{n}_*.png`. Masks: `*_mask_slice{n}.png`.
+
+## Fine-resolution 3D synthesis (sub-micron voxels, e.g. 0.001mm / 64³ patches)
+
+Generating training data to match high-resolution light-sheet (SPIM/OME-Zarr) inference at ~1µm. At these scales the patch FOV (`patch_size * voxel_size`) is far smaller than the source NIfTI voxels and the native streamline spacing, which exposed several issues — all now handled in [synthesis/patch_first_processing.py](synthesis/patch_first_processing.py) and [syntract_viewer/volume_renderer.py](syntract_viewer/volume_renderer.py):
+
+- **Patch FOV must anchor to the requested RAS window, not the voxel-snapped corner.** `calculate_patch_bbox_ras` floors/ceils onto the source voxel grid; at fine target voxels that snap is hundreds of target voxels, which put streamlines on the patch border. `synthesize_patch_region` now sets the target affine origin to `bbox['ras_min']`. Don't revert this.
+- **Patch sampling is streamline-anchored.** Uniform random centers almost never hit a streamline when the FOV is sub-millimetre, so `sample_patch_locations_transformed_space` anchors candidate centers on actual streamline points (jittered), falling back to uniform when no streamlines. When the target FOV is smaller than the streamline extent, the target affine is re-centered on the streamline centroid.
+- **Densification is lazy and per-patch.** Streamlines are resampled to `voxel_size * 0.5` inside `filter_streamlines_to_patch_ras` (only segments touching the patch), not upstream — densifying a thickened TRK upstream blows up to >1B points. Don't use `densify_streamlines_parallel` for this; it overrides sub-voxel `step_size` with a curvature-adaptive one.
+- **Train/inference normalization MUST match.** OME-Zarr inference ([datamodules/omezarr.py](synthetic-training/datamodules/omezarr.py)) uses 1–99 percentile → [0,1]. Both synthetic 3D paths in [datamodules/datasets.py](synthetic-training/datamodules/datasets.py) now do the same. Never reintroduce min-max normalization (outlier-sensitive — one bright fiber sets the scale).
+- **Soft (partial-volume) masks.** A binary voxel mask of a 1µm-thin diagonal fiber always stair-steps; `soft_mask=True` in `create_3d_volume_with_streamlines` keeps fractional sub-voxel coverage (smooth, accurate, continuous). The mask rasterizer accumulates trilinear weights (not nearest-voxel). The datamodule preserves soft labels (`np.clip(mask, 0, 1)`, not `mask > 0`); BCE accepts soft targets. For a clean *binary* tube instead, set `soft_mask=False` + `mask_smoothing_sigma≈1.0` + `mask_binary_threshold≈0.2`.
+- **Cell-body blob distractors.** `enable_cell_blobs=True` scatters Gaussian blobs into the tissue *image only* (never the mask) so the model learns fiber-vs-cell. See `add_cell_body_blobs`.
+- **[thicken_trk.py](thicken_trk.py)** turns a sparse TRK into a denser bundle (parallel offset siblings) and/or adds organic micro-curvature (`--wave_amplitude_um`). Needed because at small FOV a single tractography streamline is straight and sparse; real fiber fields have many curved fibers. Use `--copies 1 --wave_amplitude_um N` to curve without thickening.
+
+## Things to avoid
+
+- Disabling patch processing by default, hard-coding GPU, mixing mask defaults, leaving matplotlib figures open in batch loops, assuming dimensions instead of using auto-calculation, rewriting large modules for style.
+- Reverting the fine-resolution fixes above (FOV anchoring, streamline-anchored sampling, percentile normalization, soft masks) — they fix real bugs exposed at sub-micron voxel sizes, not cosmetic preferences.
+
+## graphify
+
+This project has a knowledge graph at graphify-out/ with god nodes, community structure, and cross-file relationships.
+
+Rules:
+- For codebase questions, first run `graphify query "<question>"` when graphify-out/graph.json exists. Use `graphify path "<A>" "<B>"` for relationships and `graphify explain "<concept>"` for focused concepts. These return a scoped subgraph, usually much smaller than GRAPH_REPORT.md or raw grep output.
+- If graphify-out/wiki/index.md exists, use it for broad navigation instead of raw source browsing.
+- Read graphify-out/GRAPH_REPORT.md only for broad architecture review or when query/path/explain do not surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).

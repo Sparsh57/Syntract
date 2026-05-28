@@ -21,9 +21,9 @@ from typing import Tuple, List, Dict, Optional
 
 # Import curvature analysis functions from densify module
 try:
-    from .densify import calculate_streamline_curvature, calculate_optimal_step_size
+    from .densify import calculate_streamline_curvature, calculate_optimal_step_size, densify_streamlines_parallel
 except ImportError:
-    from densify import calculate_streamline_curvature, calculate_optimal_step_size
+    from densify import calculate_streamline_curvature, calculate_optimal_step_size, densify_streamlines_parallel
 import time
 import gc
 from pathlib import Path
@@ -94,7 +94,9 @@ def sample_patch_locations_transformed_space(mri_affine: np.ndarray,
                                            num_patches: int,
                                            min_streamlines: int = 30,
                                            transformed_streamlines: List[np.ndarray] = None,
+                                           streamline_bounds: Optional[Dict[str, np.ndarray]] = None,
                                            random_state: Optional[int] = None,
+                                           streamline_margin_fraction: float = 0.0,
                                            debug: bool = False) -> List[np.ndarray]:
     """
     Sample patch locations in transformed (post-ANTs) space.
@@ -124,7 +126,8 @@ def sample_patch_locations_transformed_space(mri_affine: np.ndarray,
     rng = np.random.default_rng(random_state)
     
     # Calculate valid sampling region in voxel coordinates
-    patch_size_vox = np.array(patch_size_mm) / np.diag(mri_affine[:3, :3])
+    voxel_sizes = np.array([np.linalg.norm(mri_affine[:3, i]) for i in range(3)])
+    patch_size_vox = np.array(patch_size_mm) / voxel_sizes
     half_patch_vox = patch_size_vox / 2.0
     
     # Valid sampling bounds (ensure patches fit within volume)
@@ -136,23 +139,69 @@ def sample_patch_locations_transformed_space(mri_affine: np.ndarray,
     
     patch_locations = []
     attempts = 0
-    max_attempts = num_patches * 50  # Allow multiple attempts per patch
-    
+    margin_fraction = max(0.0, min(0.45, float(streamline_margin_fraction)))
+    max_attempts = num_patches * (1000 if margin_fraction > 0.0 else 50)
+
+    # When the patch FOV is small relative to the volume, uniform random sampling
+    # almost never lands inside a streamline. Anchor patch centers at random points
+    # along the streamlines so each candidate is guaranteed to overlap at least one
+    # streamline point. Only anchors that fall inside the valid sampling region
+    # (target FOV minus half-patch on each side) are kept -- otherwise clipping to
+    # the FOV edge moves the anchor away from any streamline and the bbox check fails.
+    affine_inv = np.linalg.inv(mri_affine)
+    min_center_arr = np.asarray(min_center, dtype=np.float64)
+    max_center_arr = np.asarray(max_center, dtype=np.float64)
+    jitter_mm = np.asarray(patch_size_mm, dtype=np.float64) * 0.25
+
+    anchor_pool = None
+    if transformed_streamlines is not None and len(transformed_streamlines) > 0:
+        try:
+            all_pts = np.concatenate(
+                [np.asarray(s, dtype=np.float32) for s in transformed_streamlines if len(s) > 0],
+                axis=0,
+            )
+            if len(all_pts) > 0:
+                vox = nib.affines.apply_affine(affine_inv, all_pts.astype(np.float64))
+                inside = np.all(
+                    (vox >= min_center_arr) & (vox <= max_center_arr),
+                    axis=1,
+                )
+                if np.any(inside):
+                    anchor_pool = all_pts[inside]
+        except ValueError:
+            anchor_pool = None
+
     if debug:
         print(f"Sampling {num_patches} patch locations in transformed space...")
         print(f"Valid center range (voxels): {min_center} to {max_center}")
-    
+        print(f"Anchoring on streamline points: {anchor_pool is not None}")
+
     while len(patch_locations) < num_patches and attempts < max_attempts:
-        # Sample random center in voxel coordinates
-        center_vox = rng.uniform(min_center, max_center)
-        
-        # Convert to RAS coordinates
-        center_ras = nib.affines.apply_affine(mri_affine, center_vox)
+        if anchor_pool is not None:
+            # Pick a random streamline point and jitter by up to 25% of the patch size
+            anchor = anchor_pool[rng.integers(0, len(anchor_pool))]
+            jitter = rng.uniform(-jitter_mm, jitter_mm)
+            center_ras = anchor.astype(np.float64) + jitter
+            center_vox = nib.affines.apply_affine(affine_inv, center_ras)
+            center_vox = np.clip(center_vox, min_center_arr, max_center_arr)
+            center_ras = nib.affines.apply_affine(mri_affine, center_vox)
+        else:
+            center_vox = rng.uniform(min_center_arr, max_center_arr)
+            center_ras = nib.affines.apply_affine(mri_affine, center_vox)
         
         # Validate patch location if streamlines are provided
         if transformed_streamlines is not None:
             bbox = calculate_patch_bbox_ras(center_ras, patch_size_mm, mri_affine)
-            streamlines_in_patch = count_streamlines_in_bbox(transformed_streamlines, bbox)
+            if margin_fraction > 0.0:
+                margin_mm = np.asarray(patch_size_mm, dtype=np.float64) * margin_fraction
+                bbox = dict(bbox)
+                bbox['ras_min'] = bbox['ras_min'] + margin_mm
+                bbox['ras_max'] = bbox['ras_max'] - margin_mm
+            streamlines_in_patch = count_streamlines_in_bbox(
+                transformed_streamlines,
+                bbox,
+                streamline_bounds=streamline_bounds,
+            )
             
             if streamlines_in_patch < min_streamlines:
                 attempts += 1
@@ -170,12 +219,26 @@ def sample_patch_locations_transformed_space(mri_affine: np.ndarray,
     return patch_locations
 
 
-def count_streamlines_in_bbox(streamlines: List[np.ndarray], bbox: Dict) -> int:
+def _build_streamline_bounds(streamlines: List[np.ndarray]) -> Dict[str, np.ndarray]:
+    mins = np.array([np.min(sl, axis=0) for sl in streamlines], dtype=np.float32)
+    maxs = np.array([np.max(sl, axis=0) for sl in streamlines], dtype=np.float32)
+    return {"mins": mins, "maxs": maxs}
+
+
+def count_streamlines_in_bbox(streamlines: List[np.ndarray], bbox: Dict, streamline_bounds: Optional[Dict[str, np.ndarray]] = None) -> int:
     """Count number of streamlines that pass through the bounding box."""
     count = 0
     ras_min, ras_max = bbox['ras_min'], bbox['ras_max']
-    
-    for streamline in streamlines:
+
+    candidate_indices = range(len(streamlines))
+    if streamline_bounds is not None and len(streamlines) > 0:
+        mins = streamline_bounds["mins"]
+        maxs = streamline_bounds["maxs"]
+        overlaps = np.all(maxs >= ras_min, axis=1) & np.all(mins <= ras_max, axis=1)
+        candidate_indices = np.where(overlaps)[0]
+
+    for idx in candidate_indices:
+        streamline = streamlines[idx]
         # Check if any point in streamline is within bbox
         within_bbox = np.all((streamline >= ras_min) & (streamline <= ras_max), axis=1)
         if np.any(within_bbox):
@@ -188,7 +251,9 @@ def synthesize_patch_region(original_mri_path: str,
                           bbox: Dict,
                           target_voxel_size: float,
                           target_patch_size: Tuple[int, int, int],
-                          use_gpu: bool = True) -> nib.Nifti1Image:
+                          use_gpu: bool = True,
+                          original_img: Optional[nib.Nifti1Image] = None,
+                          original_data=None) -> nib.Nifti1Image:
     """
     Synthesize a specific patch region to target resolution.
     
@@ -210,10 +275,12 @@ def synthesize_patch_region(original_mri_path: str,
     nibabel.Nifti1Image
         Synthesized patch at target resolution
     """
-    # Load original MRI with memory mapping
-    original_img = nib.load(original_mri_path, mmap=True)
-    original_img = nib.as_closest_canonical(original_img)
-    original_data = original_img.get_fdata()
+    # Reuse loaded MRI/proxy data when available to avoid repeated full-volume reloads.
+    if original_img is None:
+        original_img = nib.load(original_mri_path, mmap=True)
+        original_img = nib.as_closest_canonical(original_img)
+    if original_data is None:
+        original_data = original_img.dataobj
     original_affine = original_img.affine
     
     # Extract patch from original data
@@ -224,11 +291,11 @@ def synthesize_patch_region(original_mri_path: str,
     vox_max = np.minimum(vox_max, original_data.shape[:3])
     
     # Extract patch data
-    patch_data = original_data[
+    patch_data = np.asanyarray(original_data[
         vox_min[0]:vox_max[0],
         vox_min[1]:vox_max[1], 
         vox_min[2]:vox_max[2]
-    ].copy()
+    ], dtype=np.float32).copy()
     
     # Create patch affine (translate origin to patch center)
     patch_affine = original_affine.copy()
@@ -244,14 +311,23 @@ def synthesize_patch_region(original_mri_path: str,
     except ImportError:
         from nifti_preprocessing import resample_nifti_patch
     
-    # Build target affine for patch
+    # Build target affine for patch.
+    # CRITICAL: anchor the patch FOV origin to the *requested* RAS window
+    # (bbox['ras_min']), NOT the voxel-snapped extract corner. calculate_patch_bbox_ras
+    # floors/ceils the window onto the original voxel grid, which at fine target
+    # voxel sizes (e.g. 0.001 mm vs 0.546 mm source) can be off by hundreds of
+    # target voxels. If the patch FOV started at the snapped corner, streamlines
+    # (filtered to the requested window) would land on the patch border instead
+    # of inside it. resample_nifti_patch maps target voxels -> RAS -> source
+    # voxels, so any RAS origin inside the extracted region resamples correctly.
     target_affine = patch_affine.copy()
     target_affine[:3, :3] = np.diag([target_voxel_size, target_voxel_size, target_voxel_size])
-    
+    target_affine[:3, 3] = np.asarray(bbox['ras_min'], dtype=target_affine.dtype)
+
     # Use optimized patch resampling
     resampled_data = resample_nifti_patch(
-        patch_img, 
-        target_affine, 
+        patch_img,
+        target_affine,
         target_patch_size,
         use_gpu=use_gpu
     )
@@ -263,13 +339,52 @@ def synthesize_patch_region(original_mri_path: str,
     return nib.Nifti1Image(resampled_data, target_affine)
 
 
+def _densify_segment_for_patch(streamline: np.ndarray, ras_min: np.ndarray,
+                               ras_max: np.ndarray, step_mm: float) -> np.ndarray:
+    """Resample only the streamline segments that intersect (or border) the patch
+    at `step_mm` arc-length spacing.
+
+    Returns the resampled points. If the streamline barely grazes the patch the
+    output may be empty; callers should fall back to keeping native in-bbox
+    points.
+    """
+    if len(streamline) < 2:
+        return streamline
+    # Compute which segments touch the bbox: a segment touches if either endpoint
+    # is inside OR the segment's axis-aligned bbox overlaps the patch bbox.
+    p0 = streamline[:-1]
+    p1 = streamline[1:]
+    seg_min = np.minimum(p0, p1)
+    seg_max = np.maximum(p0, p1)
+    touch = np.all(seg_max >= ras_min, axis=1) & np.all(seg_min <= ras_max, axis=1)
+    if not np.any(touch):
+        return np.empty((0, 3), dtype=np.float32)
+    seg_idx = np.where(touch)[0]
+
+    new_pts = []
+    for i in seg_idx:
+        a, b = streamline[i], streamline[i + 1]
+        seg_len = float(np.linalg.norm(b - a))
+        if seg_len < 1e-12:
+            new_pts.append(a[None, :])
+            continue
+        n_sub = max(2, int(np.ceil(seg_len / step_mm)) + 1)
+        t = np.linspace(0.0, 1.0, n_sub, dtype=np.float32)[:, None]
+        new_pts.append(a[None, :] * (1.0 - t) + b[None, :] * t)
+    if not new_pts:
+        return np.empty((0, 3), dtype=np.float32)
+    return np.concatenate(new_pts, axis=0).astype(np.float32)
+
+
 def filter_streamlines_to_patch_ras(streamlines: List[np.ndarray],
                                    bbox: Dict,
                                    target_patch_affine: np.ndarray,
-                                   target_patch_size: Tuple[int, int, int]) -> List[np.ndarray]:
+                                   target_patch_size: Tuple[int, int, int],
+                                   streamline_bounds: Optional[Dict[str, np.ndarray]] = None,
+                                   densify_step_mm: Optional[float] = None) -> List[np.ndarray]:
     """
     Filter and transform streamlines to patch coordinate system.
-    
+
     Parameters
     ----------
     streamlines : list
@@ -280,7 +395,12 @@ def filter_streamlines_to_patch_ras(streamlines: List[np.ndarray],
         Affine matrix of target patch
     target_patch_size : tuple
         Target patch size in voxels
-        
+    densify_step_mm : float, optional
+        If provided, resample each candidate streamline at this arc-length step
+        (mm) before clipping to the patch FOV. This is essential when the patch
+        FOV is smaller than the native streamline step -- without it, in-patch
+        points are sparse single dots rather than continuous lines.
+
     Returns
     -------
     list
@@ -288,39 +408,50 @@ def filter_streamlines_to_patch_ras(streamlines: List[np.ndarray],
     """
     patch_streamlines = []
     ras_min, ras_max = bbox['ras_min'], bbox['ras_max']
-    
+
     # Add small safety margin to RAS bbox to prevent boundary floating-point errors
     # This ensures transformed streamlines stay within voxel bounds
     voxel_size = np.abs(np.diag(target_patch_affine[:3, :3]))
     safety_margin = voxel_size * 0.01  # 1% of voxel size in RAS space
     ras_min = ras_min + safety_margin
     ras_max = ras_max - safety_margin
-    
+
     # Inverse of target patch affine for coordinate conversion
     patch_affine_inv = np.linalg.inv(target_patch_affine)
-    
-    for streamline in streamlines:
+
+    candidate_indices = range(len(streamlines))
+    if streamline_bounds is not None and len(streamlines) > 0:
+        mins = streamline_bounds["mins"]
+        maxs = streamline_bounds["maxs"]
+        overlaps = np.all(maxs >= ras_min, axis=1) & np.all(mins <= ras_max, axis=1)
+        candidate_indices = np.where(overlaps)[0]
+
+    for idx in candidate_indices:
+        streamline = streamlines[idx]
+        # Lazy per-streamline densification: only resample the segments that
+        # actually touch this patch's RAS bbox. Cheap because only ~tens of
+        # streamlines clear the bounds check per patch.
+        if densify_step_mm is not None and densify_step_mm > 0 and len(streamline) >= 2:
+            streamline = _densify_segment_for_patch(streamline, ras_min, ras_max, densify_step_mm)
+            if len(streamline) < 2:
+                continue
         # Check if streamline intersects patch
         within_bbox = np.all((streamline >= ras_min) & (streamline <= ras_max), axis=1)
         
         if not np.any(within_bbox):
             continue
         
-        # === ACCURATE STREAMLINE CLIPPING (No Extra Context) ===
-        # Find segments that actually intersect the patch
+        # Keep only points genuinely inside the patch. Do not include outside
+        # context points and clip them onto the patch boundary: that creates
+        # artificial border-aligned fiber blocks in rendered patches.
         intersect_indices = np.where(within_bbox)[0]
         if len(intersect_indices) == 0:
             continue
         
-        # For accurate clipping, only include segments within patch plus minimal boundary context
         if np.all(within_bbox):
-            # Entire streamline within patch - keep all
             clipped_streamline = streamline
         else:
-            # Only keep the portion that intersects plus minimal context at boundaries
-            start_idx = max(0, intersect_indices[0] - 1)  # Just 1 point before
-            end_idx = min(len(streamline), intersect_indices[-1] + 2)  # Just 1 point after
-            clipped_streamline = streamline[start_idx:end_idx]
+            clipped_streamline = streamline[intersect_indices]
         
         # Convert to patch voxel coordinates
         streamline_vox = nib.affines.apply_affine(patch_affine_inv, clipped_streamline)
@@ -466,6 +597,8 @@ def process_patch_first_extraction(
     random_state: Optional[int] = None,
     use_gpu: bool = True,
     white_mask_path: Optional[str] = None,
+    use_compressed_nifti: bool = True,
+    streamline_margin_fraction: float = 0.0,
     debug: bool = False
 ) -> Dict:
     """
@@ -511,6 +644,7 @@ def process_patch_first_extraction(
         Results dictionary with extraction metadata
     """
     start_time = time.time()
+    nifti_ext = ".nii.gz" if use_compressed_nifti else ".nii"
     
     if debug:
         print("="*60)
@@ -565,7 +699,7 @@ def process_patch_first_extraction(
             
             # Use original MRI path but with transformed affine
             mri_affine = affine_vox2fix
-            original_img = nib.load(original_nifti_path)
+            original_img = nib.load(original_nifti_path, mmap=True)
             original_img = nib.as_closest_canonical(original_img)
             mri_shape = original_img.shape[:3]
             
@@ -575,7 +709,7 @@ def process_patch_first_extraction(
         else:
             if debug:
                 print(f"\nStep 1: Loading original data (no ANTs transformation)...")
-            original_img = nib.load(original_nifti_path)
+            original_img = nib.load(original_nifti_path, mmap=True)
             original_img = nib.as_closest_canonical(original_img)
             mri_affine = original_img.affine
             mri_shape = original_img.shape[:3]
@@ -586,6 +720,18 @@ def process_patch_first_extraction(
             
             if debug:
                 print(f"Original data loaded. {len(streamlines_ras)} streamlines available.")
+
+        # Note: per-streamline densification (sub-voxel point spacing) happens
+        # lazily inside filter_streamlines_to_patch_ras for the streamlines that
+        # actually intersect each patch. Densifying upstream would blow up to
+        # >1B points for already-thickened TRKs and OOM the process.
+        densify_step = float(target_voxel_size) * 0.5
+        if debug:
+            print(f"  Lazy densification step: {densify_step:.4f} mm "
+                  f"(applied per-patch in filter_streamlines_to_patch_ras)")
+
+        original_data_proxy = original_img.dataobj
+        streamline_bounds = _build_streamline_bounds(streamlines_ras)
         
         # Load and upscale white mask if provided
         upscaled_white_mask = None
@@ -644,13 +790,33 @@ def process_patch_first_extraction(
             sys.path.append(os.path.dirname(__file__))
             from transform import build_new_affine
         
-        # Build target affine and shape for proper validation
+        # Build target affine and shape for proper validation.
+        # When target_dimensions are capped (e.g. 4000^3 at 0.001 mm voxel = 4 mm FOV)
+        # the default geometric center is the ORIGINAL volume center, which may not
+        # overlap the streamlines at all -> patch sampling finds 0 valid patches.
+        # If streamlines are available and the target FOV is smaller than the
+        # streamline extent, center the target FOV on the streamline centroid so
+        # patches can be placed where the data actually lives.
+        target_extent_mm = np.array(target_dimensions, dtype=np.float64) * float(target_voxel_size)
+        sl_extent_mm = streamline_bounds["maxs"].max(axis=0) - streamline_bounds["mins"].min(axis=0)
+        if np.any(target_extent_mm < sl_extent_mm):
+            sl_centroid_mm = 0.5 * (
+                streamline_bounds["maxs"].max(axis=0)
+                + streamline_bounds["mins"].min(axis=0)
+            )
+            patch_center_mm = tuple(float(c) for c in sl_centroid_mm)
+            if debug:
+                print(f"  Target FOV {target_extent_mm} mm < streamline extent {sl_extent_mm} mm; "
+                      f"centering target on streamline centroid {patch_center_mm}")
+        else:
+            patch_center_mm = None
+
         target_affine = build_new_affine(
             old_affine=mri_affine,
             old_shape=mri_shape,
             new_voxel_size=target_voxel_size,
             new_shape=target_dimensions,
-            patch_center_mm=None,
+            patch_center_mm=patch_center_mm,
             use_gpu=False
         )
         
@@ -664,7 +830,9 @@ def process_patch_first_extraction(
             num_patches=num_patches,
             min_streamlines=min_streamlines_per_patch,
             transformed_streamlines=streamlines_ras,
-            random_state=random_state
+            streamline_bounds=streamline_bounds,
+            random_state=random_state,
+            streamline_margin_fraction=streamline_margin_fraction,
         )
         
         if debug:
@@ -691,7 +859,9 @@ def process_patch_first_extraction(
                     bbox=bbox,
                     target_voxel_size=target_voxel_size,
                     target_patch_size=target_patch_size,
-                    use_gpu=use_gpu
+                    use_gpu=use_gpu,
+                    original_img=original_img,
+                    original_data=original_data_proxy,
                 )
                 
                 # Filter streamlines to patch
@@ -701,7 +871,9 @@ def process_patch_first_extraction(
                     streamlines=streamlines_ras,
                     bbox=bbox,
                     target_patch_affine=patch_nifti.affine,
-                    target_patch_size=target_patch_size
+                    target_patch_size=target_patch_size,
+                    streamline_bounds=streamline_bounds,
+                    densify_step_mm=densify_step,
                 )
                 
                 # Validate spatial alignment
@@ -754,7 +926,7 @@ def process_patch_first_extraction(
                             white_mask_patch_resampled = final_mask
                         
                         # Save white mask patch
-                        white_mask_patch_path = f"{output_prefix}_{patch_id:04d}_white_mask.nii.gz"
+                        white_mask_patch_path = f"{output_prefix}_{patch_id:04d}_white_mask{nifti_ext}"
                         white_mask_patch_img = nib.Nifti1Image(white_mask_patch_resampled, patch_nifti.affine)
                         nib.save(white_mask_patch_img, white_mask_patch_path)
                         if debug:
@@ -768,8 +940,9 @@ def process_patch_first_extraction(
                 patch_prefix = f"{output_prefix}_{patch_id:04d}"
                 
                 # Save NIfTI
-                nifti_path = f"{patch_prefix}.nii.gz"
-                nib.save(patch_nifti, nifti_path)
+                nifti_path = f"{patch_prefix}{nifti_ext}"
+                patch_data_f32 = np.asarray(patch_nifti.dataobj, dtype=np.float32)
+                nib.save(nib.Nifti1Image(patch_data_f32, patch_nifti.affine), nifti_path)
                 
                 # Save TRK (always, even if empty)
                 from nibabel.streamlines import Tractogram, TrkFile
@@ -808,7 +981,8 @@ def process_patch_first_extraction(
                     # Update results to reflect the actual number of bounded streamlines
                     patch_streamlines = bounded_streamlines
                 else:
-                    print(f"  WARNING: No streamlines in patch {patch_id}")
+                    if debug:
+                        print(f"  WARNING: No streamlines in patch {patch_id}")
                     # Create empty streamline list
                     ras_streamlines = []
                 
@@ -841,10 +1015,12 @@ def process_patch_first_extraction(
                     'files': patch_files
                 })
                 
-                print(f"  Patch {patch_id} completed: {len(patch_streamlines)} streamlines")
+                if debug:
+                    print(f"  Patch {patch_id} completed: {len(patch_streamlines)} streamlines")
                 
                 # Force garbage collection to prevent memory accumulation
-                gc.collect()
+                if patch_id % 10 == 0:
+                    gc.collect()
                 
             except Exception as e:
                 print(f"  ERROR: Patch {patch_id} failed: {e}")

@@ -1,17 +1,42 @@
 -e .
-importlib_resources==6.5.2
-joblib==1.4.2
-nibabel==5.3.2
-numpy==2.0.2
-packaging==24.2
-scipy==1.13.1
-typing_extensions==4.12.2
-matplotlib==3.9.4
-dipy
-psutil>=5.0.0
-opencv-python>=4.5.0
 
-# Cornucopia integration dependencies
-torch>=1.9.0
-cornucopia
+# Core scientific stack
+numpy==1.26.4
+scipy==1.14.1
+matplotlib==3.9.0
+pandas==2.2.3
 scikit-image>=0.19.0
+
+# NIfTI / tractography
+nibabel==5.3.2
+dipy==1.10.0
+
+# PyTorch
+torch>=2.3.0
+torchvision>=0.18.0
+torchaudio>=0.12.1
+
+# Training framework
+pytorch-lightning==2.6.1
+torchmetrics==1.9.0
+transformers>=4.41.0
+
+# Data / augmentation
+albumentations==2.0.8
+Pillow==10.3.0
+opencv-python>=4.5.0
+zarr==2.18.3
+
+# Logging
+wandb>=0.25.0
+tqdm==4.66.4
+
+# Utilities
+psutil>=5.0.0
+joblib==1.2.0
+importlib_resources==6.4.0
+packaging==24.2
+typing_extensions>=4.12.2
+
+# Cornucopia integration
+cornucopia==0.3.0

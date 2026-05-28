@@ -516,7 +516,7 @@ def _capture_figure_as_array(fig, target_size=(1024, 1024), debug=False):
     return array
 
 
-def _generate_emergency_fallback_patches(input_nifti, trk_files, num_patches_needed, output_image_size):
+def _generate_emergency_fallback_patches(input_nifti, trk_files, num_patches_needed, output_image_size, debug=False):
     """
     Generate synthetic patches when normal extraction fails completely.
     This is a last resort to guarantee exact count.
@@ -677,6 +677,9 @@ def process_patches_inmemory(
     patches_output_dir: str = None,  # If set, copy raw patch NIfTI/TRK files here before cleanup
     skip_2d_viz: bool = False,  # Skip 2D rendering entirely (faster when only 3D output needed)
     debug: bool = False,
+    temp_dir_base: str = None,  # Prefer fast storage (e.g., /dev/shm) when available
+    patch_use_gpu: bool = True,  # Use GPU for patch resampling/extraction internals
+    streamline_margin_fraction: float = 0.0,  # Require streamlines inside this central patch fraction
     **kwargs
 ) -> Tuple[List[np.ndarray], List[np.ndarray]]:
     """
@@ -854,8 +857,11 @@ def process_patches_inmemory(
     else:
         raise ValueError(f"Invalid patch_size: {patch_size}")
     
-    # Create temporary directory
-    temp_dir = tempfile.mkdtemp(prefix="inmemory_patches_")
+    # Create temporary directory (use fast storage if provided)
+    temp_dir = tempfile.mkdtemp(
+        prefix="inmemory_patches_",
+        dir=temp_dir_base if temp_dir_base and os.path.exists(temp_dir_base) else None,
+    )
     print(f"Created temporary directory: {temp_dir}")
     
     images = []
@@ -953,8 +959,10 @@ def process_patches_inmemory(
                         ants_iwarp_path=ants_iwarp,
                         ants_aff_path=ants_aff,
                         random_state=random_state + attempts if random_state else None,
-                        use_gpu=True,
+                        use_gpu=patch_use_gpu,
                         white_mask_path=white_mask_file,
+                        use_compressed_nifti=not skip_2d_viz,
+                        streamline_margin_fraction=streamline_margin_fraction,
                         debug=debug
                     )
                     
@@ -1085,8 +1093,10 @@ def process_patches_inmemory(
                 ants_iwarp_path=ants_iwarp,
                 ants_aff_path=ants_aff,
                 random_state=random_state,
-                use_gpu=True,
-                white_mask_path=white_mask_file
+                use_gpu=patch_use_gpu,
+                white_mask_path=white_mask_file,
+                use_compressed_nifti=not skip_2d_viz,
+                streamline_margin_fraction=streamline_margin_fraction,
             )
         
         if not patch_result['success'] or patch_result['patches_extracted'] == 0:
@@ -1497,7 +1507,7 @@ def process_patches_inmemory(
                 os.makedirs(patches_output_dir, exist_ok=True)
                 copied = 0
                 for fname in os.listdir(temp_dir):
-                    if fname.endswith('.nii.gz') or fname.endswith('.trk'):
+                    if fname.endswith('.nii') or fname.endswith('.nii.gz') or fname.endswith('.trk'):
                         shutil.copy2(os.path.join(temp_dir, fname), os.path.join(patches_output_dir, fname))
                         copied += 1
                 print(f"Saved {copied} patch files to: {patches_output_dir}")

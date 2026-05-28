@@ -6,3 +6,19 @@ __pycache__/
 *.nii.gz
 *.trk
 synthesis/MRISynth.egg-info/*
+
+# OS
+.DS_Store
+
+# Generated patch + visualization outputs
+/patches/
+patches_*/
+/viz_preview/
+*.png
+*.npy
+
+# Training artifacts
+checkpoints/
+wandb/
+*.ckpt
+logs/

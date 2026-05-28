@@ -11,7 +11,7 @@ import random
 from typing import Optional, List
 
 
-def apply_3d_gaussian_mixture_noise(volume_3d, sigma_range=(0.3, 1.0), prob=0.98, random_state=None):
+def apply_3d_gaussian_mixture_noise(volume_3d, sigma_range=(0.3, 1.0), prob=0.98, random_state=None, verbose=True):
     """
     Apply Gaussian mixture noise to ENTIRE 3D volume.
     
@@ -39,7 +39,8 @@ def apply_3d_gaussian_mixture_noise(volume_3d, sigma_range=(0.3, 1.0), prob=0.98
     if random.random() > prob:
         return volume_3d
     
-    print(f"      Applying 3D Gaussian mixture noise (sigma={sigma_range})...")
+    if verbose:
+        print(f"      Applying 3D Gaussian mixture noise (sigma={sigma_range})...")
     
     sigma = random.uniform(*sigma_range)
     
@@ -58,8 +59,8 @@ def apply_3d_gaussian_mixture_noise(volume_3d, sigma_range=(0.3, 1.0), prob=0.98
     return result
 
 
-def apply_3d_noncentral_chi_noise(volume_3d, df_range=(1, 6), nc_range=(1.0, 4.0), 
-                                   prob=0.98, random_state=None):
+def apply_3d_noncentral_chi_noise(volume_3d, df_range=(1, 6), nc_range=(1.0, 4.0),
+                                  prob=0.98, random_state=None, verbose=True):
     """
     Apply noncentral chi noise to ENTIRE 3D volume (speckle-like pattern).
     
@@ -89,7 +90,8 @@ def apply_3d_noncentral_chi_noise(volume_3d, df_range=(1, 6), nc_range=(1.0, 4.0
     if random.random() > prob:
         return volume_3d
     
-    print(f"      Applying 3D noncentral chi noise (df={df_range}, nc={nc_range})...")
+    if verbose:
+        print(f"      Applying 3D noncentral chi noise (df={df_range}, nc={nc_range})...")
     
     df = random.uniform(*df_range)
     nc = random.uniform(*nc_range)
@@ -107,7 +109,7 @@ def apply_3d_noncentral_chi_noise(volume_3d, df_range=(1, 6), nc_range=(1.0, 4.0
     return result
 
 
-def apply_3d_aggressive_gamma(volume_3d, gamma_range=(0.1, 4.0), prob=0.98, random_state=None):
+def apply_3d_aggressive_gamma(volume_3d, gamma_range=(0.1, 4.0), prob=0.98, random_state=None, verbose=True):
     """
     Apply aggressive gamma correction to ENTIRE 3D volume.
     
@@ -137,7 +139,8 @@ def apply_3d_aggressive_gamma(volume_3d, gamma_range=(0.1, 4.0), prob=0.98, rand
         return volume_3d
     
     gamma = random.uniform(*gamma_range)
-    print(f"      Applying 3D aggressive gamma (gamma={gamma:.3f})...")
+    if verbose:
+        print(f"      Applying 3D aggressive gamma (gamma={gamma:.3f})...")
     
     # Normalize to [0, 1] if needed
     v_min, v_max = volume_3d.min(), volume_3d.max()
@@ -156,8 +159,8 @@ def apply_3d_aggressive_gamma(volume_3d, gamma_range=(0.1, 4.0), prob=0.98, rand
     return result
 
 
-def apply_3d_bias_field(volume_3d, strength_range=(0.5, 1.5), prob=0.98, 
-                        smoothing_sigma=None, random_state=None):
+def apply_3d_bias_field(volume_3d, strength_range=(0.5, 1.5), prob=0.98,
+                        smoothing_sigma=None, random_state=None, verbose=True):
     """
     Apply smooth 3D bias field (multiplicative intensity variation).
     
@@ -189,7 +192,8 @@ def apply_3d_bias_field(volume_3d, strength_range=(0.5, 1.5), prob=0.98,
         return volume_3d
     
     strength = random.uniform(*strength_range)
-    print(f"      Applying 3D bias field (strength={strength:.3f})...")
+    if verbose:
+        print(f"      Applying 3D bias field (strength={strength:.3f})...")
     
     # Get volume dimensions
     d, h, w = volume_3d.shape
@@ -227,7 +231,8 @@ def apply_cornucopia_true_3d(volume_3d,
                              preset='comprehensive_aggressive',
                              allowed_presets=None,
                              apply_prob=0.9,
-                             random_state=None):
+                             random_state=None,
+                             verbose=True):
     """
     Apply cornucopia augmentation using TRUE 3D operations.
     
@@ -266,28 +271,32 @@ def apply_cornucopia_true_3d(volume_3d,
     # Define allowed presets
     if allowed_presets is None:
         allowed_presets = [
+            'granular_realistic',
             'extreme_noise',
             'random_shapes_background',
             'comprehensive_aggressive',
             'ultra_heavy_speckle'
         ]
-    
+
     # Select preset
     if preset is None:
         preset = random.choice(allowed_presets)
     elif preset not in allowed_presets:
-        print(f"    Warning: Preset '{preset}' not in allowed list, using 'comprehensive_aggressive'")
+        if verbose:
+            print(f"    Warning: Preset '{preset}' not in allowed list, using 'comprehensive_aggressive'")
         preset = 'comprehensive_aggressive'
     
     # Check if we should apply augmentation
     if random.random() > apply_prob:
-        print(f"    Skipping cornucopia augmentation (apply_prob={apply_prob})")
+        if verbose:
+            print(f"    Skipping cornucopia augmentation (apply_prob={apply_prob})")
         return volume_3d
     
-    print(f"    Applying TRUE 3D cornucopia augmentation:")
-    print(f"      Preset: '{preset}'")
-    print(f"      Volume shape: {volume_3d.shape}")
-    print(f"      Method: ENTIRE volume at once (NO slice iteration)")
+    if verbose:
+        print(f"    Applying TRUE 3D cornucopia augmentation:")
+        print(f"      Preset: '{preset}'")
+        print(f"      Volume shape: {volume_3d.shape}")
+        print(f"      Method: ENTIRE volume at once (NO slice iteration)")
     
     # Apply augmentation based on preset
     volume_augmented = volume_3d.copy()
@@ -298,13 +307,15 @@ def apply_cornucopia_true_3d(volume_3d,
             volume_augmented,
             sigma_range=(0.6, 2.2),
             prob=0.98,
-            random_state=random_state
+            random_state=random_state,
+            verbose=verbose,
         )
         volume_augmented = apply_3d_aggressive_gamma(
             volume_augmented,
             gamma_range=(0.05, 8.0),
             prob=0.98,
-            random_state=random_state + 1 if random_state else None
+            random_state=random_state + 1 if random_state else None,
+            verbose=verbose,
         )
     
     elif preset == 'random_shapes_background':
@@ -313,13 +324,15 @@ def apply_cornucopia_true_3d(volume_3d,
             volume_augmented,
             sigma_range=(0.5, 2.0),
             prob=0.98,
-            random_state=random_state
+            random_state=random_state,
+            verbose=verbose,
         )
         volume_augmented = apply_3d_aggressive_gamma(
             volume_augmented,
             gamma_range=(0.1, 4.0),
             prob=0.95,
-            random_state=random_state + 1 if random_state else None
+            random_state=random_state + 1 if random_state else None,
+            verbose=verbose,
         )
     
     elif preset == 'comprehensive_aggressive':
@@ -329,13 +342,15 @@ def apply_cornucopia_true_3d(volume_3d,
             df_range=(0.5, 4),
             nc_range=(2.0, 7.0),
             prob=0.98,
-            random_state=random_state
+            random_state=random_state,
+            verbose=verbose,
         )
         volume_augmented = apply_3d_bias_field(
             volume_augmented,
             strength_range=(0.8, 2.2),
             prob=0.98,
-            random_state=random_state + 1 if random_state else None
+            random_state=random_state + 1 if random_state else None,
+            verbose=verbose,
         )
     
     elif preset == 'ultra_heavy_speckle':
@@ -345,17 +360,47 @@ def apply_cornucopia_true_3d(volume_3d,
             df_range=(0.3, 4),
             nc_range=(1.5, 6.0),
             prob=0.98,
-            random_state=random_state
+            random_state=random_state,
+            verbose=verbose,
         )
         volume_augmented = apply_3d_bias_field(
             volume_augmented,
             strength_range=(0.6, 1.8),
             prob=0.98,
-            random_state=random_state + 1 if random_state else None
+            random_state=random_state + 1 if random_state else None,
+            verbose=verbose,
         )
-    
-    print(f"      ✓ TRUE 3D cornucopia augmentation complete")
-    print(f"        Output range: [{volume_augmented.min():.2f}, {volume_augmented.max():.2f}]")
-    print(f"        NO inter-slice discontinuities (all operations were 3D)")
+
+    elif preset == 'granular_realistic':
+        # Dense granular texture (Gaussian mixture) + speckle-like chi noise + mild bias field.
+        # Keeps fiber signal intact while burying it in realistic tissue clutter so the model
+        # must learn to identify structure rather than memorise clean signal.
+        volume_augmented = apply_3d_gaussian_mixture_noise(
+            volume_augmented,
+            sigma_range=(0.2, 0.8),
+            prob=0.98,
+            random_state=random_state,
+            verbose=verbose,
+        )
+        volume_augmented = apply_3d_noncentral_chi_noise(
+            volume_augmented,
+            df_range=(1, 4),
+            nc_range=(0.5, 2.5),
+            prob=0.95,
+            random_state=random_state + 1 if random_state else None,
+            verbose=verbose,
+        )
+        volume_augmented = apply_3d_bias_field(
+            volume_augmented,
+            strength_range=(0.92, 1.12),
+            prob=0.90,
+            random_state=random_state + 2 if random_state else None,
+            verbose=verbose,
+        )
+
+    if verbose:
+        print(f"      ✓ TRUE 3D cornucopia augmentation complete")
+        print(f"        Output range: [{volume_augmented.min():.2f}, {volume_augmented.max():.2f}]")
+        print(f"        NO inter-slice discontinuities (all operations were 3D)")
     
     return volume_augmented
