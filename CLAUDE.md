@@ -69,6 +69,25 @@ Generating training data to match high-resolution light-sheet (SPIM/OME-Zarr) in
 - **Cell-body blob distractors.** `enable_cell_blobs=True` scatters Gaussian blobs into the tissue *image only* (never the mask) so the model learns fiber-vs-cell. See `add_cell_body_blobs`.
 - **[thicken_trk.py](thicken_trk.py)** turns a sparse TRK into a denser bundle (parallel offset siblings) and/or adds organic micro-curvature (`--wave_amplitude_um`). Needed because at small FOV a single tractography streamline is straight and sparse; real fiber fields have many curved fibers. Use `--copies 1 --wave_amplitude_um N` to curve without thickening.
 
+## Visualising a 3D training patch
+
+`visualize_one_patch.py` generates one 128³ patch at 0.001mm voxels, renders it, and saves sagittal/coronal/axial slice + matching binary mask to `patch_preview.png`.
+
+```bash
+python visualize_one_patch.py                 # seed=42
+python visualize_one_patch.py --seed 123      # different patch
+python visualize_one_patch.py --out foo.png
+```
+
+Key design decisions baked into the script:
+
+- **Uses `registered_trk/aligned_wavy.trk` only.** The plain ANTs-registered TRKs have native step ~0.25mm — 4× the 0.064mm patch FOV — so only 1 streamline survives `filter_streamlines_to_patch_ras` per patch. `aligned_wavy.trk` has step ~0.004mm (7k–16k pts/streamline), giving multiple curved streamlines per patch.
+- **`min_streamlines_per_patch=2`** ensures at least 2 streamlines per patch.
+- **`tissue_threshold=0.0`** — fibers render in all voxels. At 0.001mm voxels many voxels sit near zero after CLAHE; the default `tissue_threshold=2.0` silently skips most fiber voxels.
+- **`fiber_render_mode="additive"`** with `fiber_intensity_min/max` scaled to the tissue range (~6–9 on a 0–40 scale). Using 60–100 (the training defaults) pushes fibers to the 99th percentile of the volume and they get crushed during 1–99 normalisation when cell blobs also contribute.
+- **Image slice = mask slice.** The plot picks the slice index with maximum mask signal per axis and shows the same index for both image and mask — not MIP for one and slice for the other.
+- **Cornucopia presets** restricted to `["ultra_heavy_speckle", "extreme_noise", "granular_realistic"]`. Presets `random_shapes_background` and `comprehensive_aggressive` produce structured vertical-line patterns that look artificial.
+
 ## Things to avoid
 
 - Disabling patch processing by default, hard-coding GPU, mixing mask defaults, leaving matplotlib figures open in batch loops, assuming dimensions instead of using auto-calculation, rewriting large modules for style.

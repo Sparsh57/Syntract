@@ -22,3 +22,42 @@ checkpoints/
 wandb/
 *.ckpt
 logs/
+
+# Generated graphify knowledge graph
+graphify-out/
+
+# Generated previews and reports
+training_input_preview/
+reports/
+
+# Large test/output data
+synthetic-training/new_test_thinslab_e2e/
+
+# Local tooling / agent config
+.claude/
+skills-lock.json
+.github/copilot-instructions.md
+
+# Scratch / ad-hoc helper scripts (not part of the package)
+Untitled.ipynb
+run_3d_pad_test.sh
+extra.py
+zar_to_nii.py
+Visualize_npy.py
+visualize_one_patch.py
+visualize_patch_with_mask.py
+visualize_training_inputs.py
+validate_dataset.py
+syntract_slide.html
+densify_all_trks.sh
+compare.sh
+compare_predictions.py
+test_specific_region.py
+synthetic-training/view_prediction_3d.py
+synthetic-training/view_prediction_npy_gui.py
+
+# Scratch docs (kept on disk, not version-controlled)
+AI_CONTEXT.md
+HANDOFF.md
+OUTPUT_FORMAT.md
+BRIGHTNESS_AND_COORDINATES.md
