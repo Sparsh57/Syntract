@@ -260,6 +260,24 @@ def get_args_parser():
     parser.add_argument('--mask_smoothing_sigma', type=float, default=0.0)
     parser.add_argument('--mask_binary_threshold', type=float, default=0.01)
 
+    # Fine-resolution rendering knobs (match visualize_one_patch.py at sub-micron voxels).
+    # At voxel_size ~0.001mm the renderer default tissue_threshold=2.0 silently skips most
+    # fiber voxels, so it must be lowered (~0.0) for fibers to render at all.
+    parser.add_argument('--tissue_threshold', type=float, default=2.0,
+                        help='Min volume intensity for a voxel to receive fiber paint. '
+                             'Set ~0.0 at sub-micron voxel_size or fibers barely render.')
+    parser.add_argument('--enable_cell_blobs', dest='enable_cell_blobs', action='store_true', default=False,
+                        help='Scatter Gaussian cell-body blob distractors into the image only '
+                             '(never the mask) so the model learns fiber-vs-cell.')
+    parser.add_argument('--cell_blob_count', type=int, default=60)
+    parser.add_argument('--cell_blob_intensity', type=float, default=0.3)
+    parser.add_argument('--cell_blob_radius_min', type=float, default=1.5)
+    parser.add_argument('--cell_blob_radius_max', type=float, default=4.0)
+    parser.add_argument('--cornucopia_presets', nargs='+', default=None,
+                        help='Restrict cornucopia 3D presets (e.g. ultra_heavy_speckle '
+                             'extreme_noise granular_realistic). Default: renderer chooses, '
+                             'which includes structured presets that look artificial at fine res.')
+
     # Inference-shape augmentations (close the train/inference shape gap)
     parser.add_argument('--thinslab_prob', type=float, default=0.3,
                         help='Probability of zero-padding a contiguous Z slab to simulate '
@@ -448,6 +466,12 @@ def main(args):
         fiber_min_visibility=args.fiber_min_visibility,
         fiber_target_intensity=args.fiber_target_intensity,
         background_max_intensity=None if args.background_max_intensity < 0 else args.background_max_intensity,
+        tissue_threshold=args.tissue_threshold,
+        enable_cell_blobs=args.enable_cell_blobs,
+        cell_blob_count=args.cell_blob_count,
+        cell_blob_intensity=args.cell_blob_intensity,
+        cell_blob_radius_range=(args.cell_blob_radius_min, args.cell_blob_radius_max),
+        cornucopia_allowed_presets=args.cornucopia_presets,
         mask_smoothing_sigma=args.mask_smoothing_sigma,
         mask_binary_threshold=args.mask_binary_threshold,
         prefetch_batches=args.prefetch_batches,

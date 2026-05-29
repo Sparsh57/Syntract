@@ -458,6 +458,12 @@ class OnTheFlySyntheticData3D(IterableDataset):
         fiber_min_visibility: float = 0.0,
         fiber_target_intensity: float = 25.0,
         background_max_intensity: Optional[float] = None,
+        tissue_threshold: float = 2.0,
+        enable_cell_blobs: bool = False,
+        cell_blob_count: int = 60,
+        cell_blob_intensity: float = 0.3,
+        cell_blob_radius_range: Sequence[float] = (1.5, 4.0),
+        cornucopia_allowed_presets: Optional[Sequence[str]] = None,
         mask_smoothing_sigma: float = 0.0,
         mask_binary_threshold: float = 0.01,
         move_to_gpu: bool = False,
@@ -525,6 +531,14 @@ class OnTheFlySyntheticData3D(IterableDataset):
         self.fiber_target_intensity = float(fiber_target_intensity)
         self.background_max_intensity = (
             None if background_max_intensity is None else float(background_max_intensity)
+        )
+        self.tissue_threshold = float(tissue_threshold)
+        self.enable_cell_blobs = bool(enable_cell_blobs)
+        self.cell_blob_count = int(cell_blob_count)
+        self.cell_blob_intensity = float(cell_blob_intensity)
+        self.cell_blob_radius_range = tuple(float(r) for r in cell_blob_radius_range)
+        self.cornucopia_allowed_presets = (
+            None if cornucopia_allowed_presets is None else list(cornucopia_allowed_presets)
         )
         self.mask_smoothing_sigma = float(mask_smoothing_sigma)
         self.mask_binary_threshold = float(mask_binary_threshold)
@@ -733,6 +747,12 @@ class OnTheFlySyntheticData3D(IterableDataset):
                         white_mask_path=white_mask_path,
                         save_mask=True,
                         use_cornucopia_3d=self.use_cornucopia_3d,
+                        cornucopia_allowed_presets=self.cornucopia_allowed_presets,
+                        tissue_threshold=self.tissue_threshold,
+                        enable_cell_blobs=self.enable_cell_blobs,
+                        cell_blob_count=self.cell_blob_count,
+                        cell_blob_intensity=self.cell_blob_intensity,
+                        cell_blob_radius_range=self.cell_blob_radius_range,
                         fiber_intensity_min=self.fiber_intensity_min,
                         fiber_intensity_max=self.fiber_intensity_max,
                         fiber_max_boost=self.fiber_max_boost,

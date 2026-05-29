@@ -192,6 +192,12 @@ class OnTheFlyDataModule3D(pl.LightningDataModule):
         fiber_min_visibility: float = 0.0,
         fiber_target_intensity: float = 25.0,
         background_max_intensity: Optional[float] = None,
+        tissue_threshold: float = 2.0,
+        enable_cell_blobs: bool = False,
+        cell_blob_count: int = 60,
+        cell_blob_intensity: float = 0.3,
+        cell_blob_radius_range: Sequence[float] = (1.5, 4.0),
+        cornucopia_allowed_presets: Optional[Sequence[str]] = None,
         mask_smoothing_sigma: float = 0.0,
         mask_binary_threshold: float = 0.01,
         voxel_size: float = 0.05,
@@ -254,6 +260,14 @@ class OnTheFlyDataModule3D(pl.LightningDataModule):
         self.fiber_target_intensity = float(fiber_target_intensity)
         self.background_max_intensity = (
             None if background_max_intensity is None else float(background_max_intensity)
+        )
+        self.tissue_threshold = float(tissue_threshold)
+        self.enable_cell_blobs = bool(enable_cell_blobs)
+        self.cell_blob_count = int(cell_blob_count)
+        self.cell_blob_intensity = float(cell_blob_intensity)
+        self.cell_blob_radius_range = tuple(float(r) for r in cell_blob_radius_range)
+        self.cornucopia_allowed_presets = (
+            None if cornucopia_allowed_presets is None else list(cornucopia_allowed_presets)
         )
         self.mask_smoothing_sigma = float(mask_smoothing_sigma)
         self.mask_binary_threshold = float(mask_binary_threshold)
@@ -318,6 +332,12 @@ class OnTheFlyDataModule3D(pl.LightningDataModule):
                 fiber_min_visibility=self.fiber_min_visibility,
                 fiber_target_intensity=self.fiber_target_intensity,
                 background_max_intensity=self.background_max_intensity,
+                tissue_threshold=self.tissue_threshold,
+                enable_cell_blobs=self.enable_cell_blobs,
+                cell_blob_count=self.cell_blob_count,
+                cell_blob_intensity=self.cell_blob_intensity,
+                cell_blob_radius_range=self.cell_blob_radius_range,
+                cornucopia_allowed_presets=self.cornucopia_allowed_presets,
                 mask_smoothing_sigma=self.mask_smoothing_sigma,
                 mask_binary_threshold=self.mask_binary_threshold,
                 voxel_size=self.voxel_size,
@@ -379,6 +399,12 @@ class OnTheFlyDataModule3D(pl.LightningDataModule):
                 fiber_min_visibility=self.fiber_min_visibility,
                 fiber_target_intensity=self.fiber_target_intensity,
                 background_max_intensity=self.background_max_intensity,
+                tissue_threshold=self.tissue_threshold,
+                enable_cell_blobs=self.enable_cell_blobs,
+                cell_blob_count=self.cell_blob_count,
+                cell_blob_intensity=self.cell_blob_intensity,
+                cell_blob_radius_range=self.cell_blob_radius_range,
+                cornucopia_allowed_presets=self.cornucopia_allowed_presets,
                 mask_smoothing_sigma=self.mask_smoothing_sigma,
                 mask_binary_threshold=self.mask_binary_threshold,
                 voxel_size=self.voxel_size,
