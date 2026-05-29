@@ -517,14 +517,21 @@ def main(args):
         import wandb
         wandb_mode = "offline" if args.wandb_offline else "online"
         os.environ.setdefault("WANDB_MODE", wandb_mode)
+        # Honor WANDB_PROJECT / WANDB_NAME from the environment (e.g. set in the
+        # SLURM script) so runs land in the intended project; fall back to the
+        # historical defaults otherwise.
+        wandb_project = os.environ.get("WANDB_PROJECT") or "unet3d-training-on-synthetic"
+        wandb_run_name = os.environ.get("WANDB_NAME") or f"{args.wandb_name}_{args.loss}"
+        # Lightning's WandbLogger only calls wandb.init() on global rank 0, so a
+        # multi-GPU (DDP) launch produces a single run rather than one per rank.
         logger = WandbLogger(
-            project="unet3d-training-on-synthetic",
-            name=f"{args.wandb_name}_{args.loss}",
+            project=wandb_project,
+            name=wandb_run_name,
             save_code=False,
             log_model=False,
             offline=args.wandb_offline,
         )
-        print(f"Using WandB logger (mode: {wandb_mode})")
+        print(f"Using WandB logger (mode: {wandb_mode}, project: {wandb_project}, run: {wandb_run_name})")
 
     # Model
     model = FlexibleUNet3D(
@@ -631,7 +638,11 @@ def main(args):
 
     if not args.no_wandb:
         import wandb
-        wandb.finish()
+        from pytorch_lightning.utilities.rank_zero import rank_zero_only
+        # Only rank 0 ran wandb.init() (via Lightning's WandbLogger), so only
+        # rank 0 should finish the run.
+        if rank_zero_only.rank == 0:
+            wandb.finish()
 
 
 if __name__ == "__main__":
