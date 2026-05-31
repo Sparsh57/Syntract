@@ -35,6 +35,36 @@ def _apply_image_only_augmentations(*args, **kwargs):
 
     return apply_image_only_augmentations(*args, **kwargs)
 
+
+def _apply_inference_shape_augs(vol, mask, thinslab_prob, thinslab_min_z,
+                                thinslab_max_z, empty_patch_prob):
+    """Zero out Z slabs and/or whole volumes to mimic inference inputs.
+
+    Shared by the on-the-fly and cached 3D datasets so both train on the same
+    thin-slab / empty-patch distribution (train/inference shape matching).
+    Operates on already-normalised volumes in [0, 1] and masks in [0, 1].
+    """
+    if vol.ndim != 3 or mask.shape != vol.shape:
+        return vol, mask
+
+    if empty_patch_prob > 0.0 and np.random.random() < empty_patch_prob:
+        return np.zeros_like(vol), np.zeros_like(mask)
+
+    if thinslab_prob > 0.0 and np.random.random() < thinslab_prob:
+        z = int(vol.shape[0])
+        lo_bound = int(min(max(1, thinslab_min_z), z))
+        hi_bound = int(min(max(lo_bound, thinslab_max_z), z))
+        valid_z = int(np.random.randint(lo_bound, hi_bound + 1)) if hi_bound > lo_bound else lo_bound
+        if valid_z < z:
+            offset = int(np.random.randint(0, z - valid_z + 1))
+            vol_out = np.zeros_like(vol)
+            mask_out = np.zeros_like(mask)
+            vol_out[offset:offset + valid_z] = vol[offset:offset + valid_z]
+            mask_out[offset:offset + valid_z] = mask[offset:offset + valid_z]
+            return vol_out, mask_out
+    return vol, mask
+
+
 class SyntheticDataset(Dataset):
     """
     Training using synthetic data with per-image normalization.
@@ -301,6 +331,13 @@ class SyntheticDataset3D(Dataset):
         speckle_noise_density: float = 0.0012,
         speckle_noise_sigma: float = 0.35,
         seed: Optional[int] = None,
+        # Inference-shape augmentations (mirror OnTheFlySyntheticData3D so the
+        # cached path keeps the same train/inference shape matching). These run
+        # at load time on already-normalised vol/mask. Set to 0.0 to disable.
+        thinslab_prob: float = 0.3,
+        thinslab_min_z: int = 30,
+        thinslab_max_z: int = 120,
+        empty_patch_prob: float = 0.05,
     ):
         super().__init__()
         self.patch_dir = Path(patch_dir)
@@ -315,9 +352,15 @@ class SyntheticDataset3D(Dataset):
         self.speckle_noise_density = float(speckle_noise_density)
         self.speckle_noise_sigma = float(speckle_noise_sigma)
         self.seed = seed
+        self.thinslab_prob = float(np.clip(thinslab_prob, 0.0, 1.0))
+        self.thinslab_min_z = max(1, int(thinslab_min_z))
+        self.thinslab_max_z = max(self.thinslab_min_z, int(thinslab_max_z))
+        self.empty_patch_prob = float(np.clip(empty_patch_prob, 0.0, 1.0))
 
-        # Discover volume/mask pairs
-        vol_files = sorted(self.patch_dir.glob("*_3d.nii.gz"))
+        # Discover volume/mask pairs. Use rglob so per-TRK subdirectories
+        # (precompute_patches_3d.py writes output_dir/<trk_stem>/*_3d.nii.gz)
+        # are found as well as a flat layout; rglob also matches top-level files.
+        vol_files = sorted(self.patch_dir.rglob("*_3d.nii.gz"))
         self.samples = []
         for vf in vol_files:
             mask_f = Path(str(vf).replace("_3d.nii.gz", "_3d_mask.nii.gz"))
@@ -370,6 +413,17 @@ class SyntheticDataset3D(Dataset):
                 verbose=False,
             )
             vol = np.clip(vol, 0.0, 1.0).astype(np.float32, copy=False)
+
+        # Inference-shape augmentations (thin-slab + empty-patch), matching the
+        # on-the-fly path so cached training keeps the empty-in -> empty-out
+        # prior and the OME-Zarr thin-slab inference shape.
+        vol, mask = _apply_inference_shape_augs(
+            vol, mask,
+            thinslab_prob=self.thinslab_prob,
+            thinslab_min_z=self.thinslab_min_z,
+            thinslab_max_z=self.thinslab_max_z,
+            empty_patch_prob=self.empty_patch_prob,
+        )
 
         # Add channel dim: (D, H, W) -> (1, D, H, W)
         vol = vol[np.newaxis]

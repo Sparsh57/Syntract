@@ -596,7 +596,10 @@ def main(args):
         elif args.devices is not None and args.devices > cuda_device_count:
             print(f"Requested {args.devices} CUDA devices but only {cuda_device_count} available; using {cuda_device_count}.")
             devices = cuda_device_count
-        precision = "16-mixed"
+        # bf16 has fp32's dynamic range (no ~65504 overflow that NaN-poisons the
+        # forward pass under fp16) and needs no GradScaler. Free on H100/H200
+        # (Hopper). Falls back to fp16 only on pre-Ampere cards without bf16.
+        precision = "bf16-mixed" if torch.cuda.is_bf16_supported() else "16-mixed"
         gpu_names = [torch.cuda.get_device_name(i) for i in range(min(devices, cuda_device_count))]
         print(f"Using CUDA devices (count={devices}): {gpu_names}")
     elif torch.backends.mps.is_available():
@@ -624,6 +627,7 @@ def main(args):
         strategy=strategy,
         logger=logger,
         precision=precision,
+        gradient_clip_val=1.0,  # guard against the occasional exploding-grad step
         callbacks=[checkpoint_callback, timing_callback],
         accumulate_grad_batches=args.accumulate_grad_batches,
         benchmark=torch.cuda.is_available(),

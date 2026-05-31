@@ -88,10 +88,35 @@ Key design decisions baked into the script:
 - **Image slice = mask slice.** The plot picks the slice index with maximum mask signal per axis and shows the same index for both image and mask — not MIP for one and slice for the other.
 - **Cornucopia presets** restricted to `["ultra_heavy_speckle", "extreme_noise", "granular_realistic"]`. Presets `random_shapes_background` and `comprehensive_aggressive` produce structured vertical-line patterns that look artificial.
 
+## Cached (precompute) 3D training — the fast path
+
+On-the-fly 3D training at `voxel_size=0.001` is GPU-starved: with `--num_workers 0` each step blocks ~45–60s on single-threaded CPU synthesis (`render~42s` + `extract~17–29s`) while the GPU sits idle ~85%. `--num_workers>0` is gated off for on-the-fly because patch+render run on the GPU ([datasets.py] `supports_multiprocess`). The fix is to precompute patches once, then train from disk:
+
+```bash
+sbatch synthetic-training/precompute_patches.sh   # writes synthetic-training/precomputed_patches/<trk_stem>/*_3d.nii.gz
+# CONFIRM a healthy count before training:
+find synthetic-training/precomputed_patches -name '*_3d.nii.gz' | wc -l
+sbatch synthetic-training/train_cached.sh         # --cached_patches --num_workers 12, fresh checkpoint dir
+```
+
+Gotchas baked into these scripts (don't re-break):
+
+- **`precompute_patches_3d.py` must match the on-the-fly render config.** It now exposes `--tissue_threshold`, `--enable_cell_blobs`, `--cornucopia_presets`, banding/dash, `--patch_use_gpu`, and derives `new_dim` from physical size like the datamodule. Patches discovered via `rglob` (per-TRK subdirs); discovery matches BOTH `.nii` and `.nii.gz` (extractor writes uncompressed `.nii` when `skip_2d_viz=True` — a `.nii.gz`-only filter silently renders nothing). `_3d` outputs are forced to `.nii.gz` so the renderer's `output_file.replace('.nii.gz','_mask.nii.gz')` names the mask correctly.
+- **No double augmentation.** Noise is baked into precomputed patches; `train_cached.sh` leaves the load-time image augs OFF. Thin-slab/empty-patch shape augs ARE applied at load (ported into `SyntheticDataset3D`) to match on-the-fly.
+- **`--white_mask` is optional**; the `"None"` string sentinel must become real `None` before `process_patches_inmemory` (else it errors looking for a file named "None").
+
+## 3D training stability and inference
+
+- **Use `bf16-mixed`, not `16-mixed`.** fp16 overflows (~65504) in the forward pass — the AMP GradScaler only guards gradients, so a forward-pass overflow NaN-poisons the weights permanently (seen as: dice climbs to ~0.35 then collapses to flat-NaN around step ~10k). bf16 has fp32 range, needs no scaler, free on H100/H200. `train_on_synthetic_data_3d.py` now auto-selects bf16 when supported and sets `gradient_clip_val=1.0`. A NaN-poisoned `last.ckpt` will reload on resume — start fresh (`--no_resume` / new `--checkpoint_dir`).
+- **`sanity_check_synthetic.py`** is the discriminator when real-data inference looks empty: run the trained model through the inference path on a KNOWN synthetic patch+mask. dice≈0.98 ⇒ inference path is correct and the real-data failure is a genuine synthetic→real **domain gap** (not a code bug). `compare_domain_stats.py` then quantifies the gap (synthetic tissue is smoother / has a stronger background gradient+banding than real LSM). `compare_multiregion.sh` sweeps several distant regions to tell a universal gap from a location-specific one.
+- **Train/inference normalization is 1–99 percentile over the FULL patch** (training, omezarr.py, and the test scripts use `--normalize percentile`). `nonzero_percentile` excludes zeros and shifts the scale — don't use it for inference matching.
+
 ## Things to avoid
 
 - Disabling patch processing by default, hard-coding GPU, mixing mask defaults, leaving matplotlib figures open in batch loops, assuming dimensions instead of using auto-calculation, rewriting large modules for style.
 - Reverting the fine-resolution fixes above (FOV anchoring, streamline-anchored sampling, percentile normalization, soft masks) — they fix real bugs exposed at sub-micron voxel sizes, not cosmetic preferences.
+- Running a full 128³ 3D forward pass on a laptop CPU — it allocates GB of activations and OOMs the machine. Use a GPU (cluster) for any `*_3d` inference/sanity script.
+- `16-mixed` precision for 3D training (use bf16), committing `Model_prediction/` / `*.npy` / `*.ckpt` / `precomputed_patches/` (all gitignored — large binaries).
 
 ## graphify
 

@@ -61,3 +61,12 @@ AI_CONTEXT.md
 HANDOFF.md
 OUTPUT_FORMAT.md
 BRIGHTNESS_AND_COORDINATES.md
+# Local copies of prediction outputs / checkpoints / precomputed patches —
+# large binaries, never commit to the repo.
+Model_prediction/
+multiregion/
+test_run_v2/
+test_run_v3/
+*.ckpt
+*.npy
+synthetic-training/precomputed_patches/
