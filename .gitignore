@@ -70,3 +70,11 @@ test_run_v3/
 *.ckpt
 *.npy
 synthetic-training/precomputed_patches/
+synthetic-training/sanity_check_tier2.sh
+synthetic-training/train_cached.sh
+synthetic-training/test_precompute_one.sh
+synthetic-training/sanity_check_synthetic.sh
+synthetic-training/precompute_patches.sh
+compare_multiregion.sh
+compare_gt_vs_pred.sh
+calibrate_real_proxy.sh

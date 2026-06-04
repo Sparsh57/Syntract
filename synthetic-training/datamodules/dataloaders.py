@@ -212,6 +212,8 @@ class OnTheFlyDataModule3D(pl.LightningDataModule):
         thinslab_min_z: int = 30,
         thinslab_max_z: int = 120,
         empty_patch_prob: float = 0.05,
+        val_fraction: float = 0.15,
+        split_seed: int = 42,
     ):
         super().__init__()
         self.trk_dir = trk_dir
@@ -283,6 +285,8 @@ class OnTheFlyDataModule3D(pl.LightningDataModule):
         self.thinslab_min_z = int(thinslab_min_z)
         self.thinslab_max_z = int(thinslab_max_z)
         self.empty_patch_prob = float(empty_patch_prob)
+        self.val_fraction = float(val_fraction)
+        self.split_seed = int(split_seed)
 
     def setup(self, stage=None):
         patch_use_gpu = bool(self.render_use_gpu)
@@ -423,6 +427,11 @@ class OnTheFlyDataModule3D(pl.LightningDataModule):
         else:
             if not self.patch_dir:
                 raise ValueError("patch_dir is required when on_the_fly=False")
+            # Deterministic held-out split: train and val draw DISJOINT subsets
+            # of the same patch_dir (previously both loaded the full set, so
+            # val_loss only measured training fit). Shape augs (thinslab/empty)
+            # match on-the-fly on train but are DISABLED on val so the held-out
+            # metric is reproducible epoch-to-epoch.
             self.train_dataset = SyntheticDataset3D(
                 patch_dir=self.patch_dir,
                 patch_size=self.patch_size,
@@ -435,6 +444,13 @@ class OnTheFlyDataModule3D(pl.LightningDataModule):
                 speckle_noise_density=self.speckle_noise_density,
                 speckle_noise_sigma=self.speckle_noise_sigma,
                 seed=self.seed,
+                thinslab_prob=self.thinslab_prob,
+                thinslab_min_z=self.thinslab_min_z,
+                thinslab_max_z=self.thinslab_max_z,
+                empty_patch_prob=self.empty_patch_prob,
+                split="train",
+                val_fraction=self.val_fraction,
+                split_seed=self.split_seed,
             )
             self.val_dataset = SyntheticDataset3D(
                 patch_dir=self.patch_dir,
@@ -443,6 +459,11 @@ class OnTheFlyDataModule3D(pl.LightningDataModule):
                 enable_granular_noise=False,
                 enable_speckle_noise=False,
                 seed=self.seed + 9999,
+                thinslab_prob=0.0,
+                empty_patch_prob=0.0,
+                split="val",
+                val_fraction=self.val_fraction,
+                split_seed=self.split_seed,
             )
 
     def train_dataloader(self):

@@ -158,6 +158,200 @@ class ThroughputProfilerCallback(Callback):
             )
 
 
+def _median(values):
+    s = sorted(values)
+    n = len(s)
+    if n == 0:
+        return 0.0
+    mid = n // 2
+    return s[mid] if n % 2 else 0.5 * (s[mid - 1] + s[mid])
+
+
+def _multiregion_centers(level_shape_zyx):
+    """Reproduce the 3x3 YX center grid that compare_multiregion.sh sweeps.
+
+    Z near the slab centre (>=30); Y and X at {1/4, 1/2, 3/4} of each axis.
+    Keeping this identical means the proxy tracks predictions at the SAME
+    locations used to establish the universal-X/Y domain gap, so a change in
+    the proxy is directly comparable to that elimination experiment.
+    """
+    sz, sy, sx = (int(v) for v in level_shape_zyx)
+    cz = max(sz // 2, 30)
+    centers = []
+    for fy in (4, 2, 1):
+        for fx in (4, 2, 1):
+            cy = (sy * 3 // 4) if fy == 1 else (sy // fy)
+            cx = (sx * 3 // 4) if fx == 1 else (sx // fx)
+            centers.append((cz, cy, cx))
+    return centers
+
+
+class RealLSMProxyCallback(Callback):
+    """Unlabeled real-data transfer proxy.
+
+    Runs the model on a FIXED set of real OME-Zarr LSM patches each validation
+    epoch and logs the predicted-positive fraction + mean probability. There
+    are no real labels, so this is NOT a quality metric — it is a *transfer*
+    signal: a held-out synthetic val split sits ~0.87 dice regardless of
+    augmentation changes (synthetic generalization is not what is broken), so
+    it cannot show whether a domain-gap fix moves real-data behaviour. This
+    proxy can: if augmentation changes start closing the gap, real_pred_pos_frac
+    moves off its near-zero floor.
+
+    Patches are loaded through the SAME path as test_specific_region.py /
+    compare_multiregion.sh (SpecificRegionDataset, percentile normalize, the 3x3
+    multiregion center grid), so the numbers are comparable to that experiment.
+
+    Disabled (no-op) when no zarr path is provided — which is also why this is
+    safe locally: without a zarr it never runs a 128^3 forward pass.
+    """
+
+    def __init__(
+        self,
+        zarr_path,
+        patch_size=(128, 128, 128),
+        target_voxel_size_um=(1.0, 1.0, 1.0),
+        level_index=0,
+        channel_index=0,
+        normalize_percentiles=(1.0, 99.0),
+        threshold=0.5,
+        num_patches=1,
+        jitter_radius=0,
+    ):
+        super().__init__()
+        self.zarr_path = zarr_path
+        self.patch_size = tuple(int(p) for p in patch_size)
+        self.target_voxel_size_um = tuple(float(v) for v in target_voxel_size_um)
+        self.level_index = int(level_index)
+        self.channel_index = int(channel_index)
+        self.normalize_percentiles = (float(normalize_percentiles[0]), float(normalize_percentiles[1]))
+        self.threshold = float(threshold)
+        # Per-center sampling. Training default is 1 deterministic patch (no
+        # jitter) so the metric is reproducible epoch-to-epoch. The standalone
+        # calibration script (calibrate_real_proxy.py) sets these to 3/40 to
+        # match compare_multiregion.sh's baseline EXACTLY for a like-for-like
+        # comparison against its ~0.0002 number.
+        self.num_patches = max(1, int(num_patches))
+        self.jitter_radius = max(0, int(jitter_radius))
+        self._patches = None  # lazily built list of (1,1,D,H,W) tensors
+        self._build_failed = False
+
+    def _make_region_dataset(self, center):
+        from test_specific_region import SpecificRegionDataset
+        return SpecificRegionDataset(
+            zarr_path=self.zarr_path,
+            center_coords_zyx=center,
+            patch_size_zyx=self.patch_size,
+            num_patches=self.num_patches,
+            level_index=self.level_index,
+            channel_index=self.channel_index,
+            normalize=True,
+            normalize_mode="percentile",
+            normalize_percentiles=self.normalize_percentiles,
+            target_voxel_size_um=self.target_voxel_size_um,
+            jitter_radius=self.jitter_radius,
+            seed=42,
+        )
+
+    def _build_patches(self, pl_module):
+        # Probe the level shape from a throwaway dataset at a safe centre, then
+        # build the multiregion 3x3 grid. SpecificRegionDataset exposes .levels, so
+        # we reuse its own level-info extraction rather than re-probing zarr.
+        probe = self._make_region_dataset((0, 0, 0))
+        level_shape = probe.levels[self.level_index].shape_zyx
+        centers = _multiregion_centers(level_shape)
+        print(
+            f"[real-proxy] level={self.level_index} shape_zyx={tuple(int(s) for s in level_shape)} "
+            f"-> {len(centers)} fixed multiregion centers"
+        )
+
+        # Group patches BY region (center) so per-region metrics are available.
+        # The grand mean alone is outlier-dominated — at the 1-patch default one
+        # hot region (calibration showed region 9 fires ~23x the floor) can swing
+        # the mean more than a broad change across the other eight, making the
+        # scalar a weak movement detector for step (b). Per-region + median fix it.
+        regions = []  # list of (center, [patch tensors])
+        for c in centers:
+            try:
+                ds = self._make_region_dataset(c)
+                region_patches = [ds[i][0].unsqueeze(0) for i in range(len(ds))]  # (1,1,D,H,W)
+                if region_patches:
+                    regions.append((tuple(int(v) for v in c), region_patches))
+            except Exception as exc:  # out-of-bounds region etc. — skip
+                print(f"[real-proxy] center {c} skipped: {exc}")
+        return regions
+
+    def evaluate(self, module):
+        """Run the fixed real patches through ``module``. Returns a metrics dict:
+        mean/median pred_pos_frac + prob_mean over regions, and per-region
+        pred_pos_frac. Builds patches lazily. Used by both the val-epoch hook and
+        the standalone calibration script (IDENTICAL forward path).
+        """
+        if self._patches is None:
+            self._patches = self._build_patches(module)
+        device = next(module.parameters()).device
+        dtype = next(module.parameters()).dtype
+        was_training = module.training
+        module.eval()
+        region_pos, region_prob, per_region = [], [], {}
+        with torch.no_grad():
+            for center, region_patches in self._patches:
+                pf, pm = [], []
+                for patch in region_patches:
+                    x = patch.to(device, dtype=dtype)
+                    prob = torch.sigmoid(module(x).float())
+                    pm.append(float(prob.mean().item()))
+                    pf.append(float((prob >= self.threshold).float().mean().item()))
+                rp = sum(pf) / len(pf) if pf else 0.0
+                region_pos.append(rp)
+                region_prob.append(sum(pm) / len(pm) if pm else 0.0)
+                per_region[center] = rp
+        if was_training:
+            module.train()
+        if not region_pos:
+            return {"pred_pos_frac_mean": 0.0, "pred_pos_frac_median": 0.0,
+                    "prob_mean": 0.0, "per_region": {}}
+        return {
+            "pred_pos_frac_mean": float(sum(region_pos) / len(region_pos)),
+            "pred_pos_frac_median": float(_median(region_pos)),
+            "prob_mean": float(sum(region_prob) / len(region_prob)),
+            "per_region": per_region,
+        }
+
+    def on_validation_epoch_end(self, trainer, pl_module):
+        # on_validation_epoch_end already fires only on validation epochs, so
+        # the validation cadence (check_val_every_n_epoch) controls how often
+        # this runs — no separate modulo gate (which could misalign with it).
+        if not trainer.is_global_zero or self.zarr_path is None or self._build_failed:
+            return
+        if self._patches is None:
+            try:
+                self._patches = self._build_patches(pl_module)
+            except Exception as exc:
+                print(f"[real-proxy] disabled (failed to build patches): {exc}")
+                self._build_failed = True
+                return
+        if not self._patches:
+            print("[real-proxy] no in-bounds patches; disabling")
+            self._build_failed = True
+            return
+
+        m = self.evaluate(pl_module)
+        # Mean is outlier-dominated (one hot region can swing it); the MEDIAN is
+        # the robust movement signal for step (b). Log both, plus per-region.
+        pl_module.log("real_pred_pos_frac", m["pred_pos_frac_mean"], prog_bar=True, rank_zero_only=True)
+        pl_module.log("real_pred_pos_frac_median", m["pred_pos_frac_median"], prog_bar=True, rank_zero_only=True)
+        pl_module.log("real_prob_mean", m["prob_mean"], rank_zero_only=True)
+        for ridx, (center, rp) in enumerate(m["per_region"].items(), start=1):
+            pl_module.log(f"real_region{ridx}_pos_frac", rp, rank_zero_only=True)
+        print(
+            f"[real-proxy] epoch={trainer.current_epoch} regions={len(self._patches)} "
+            f"mean={m['pred_pos_frac_mean']:.5f} median={m['pred_pos_frac_median']:.5f} "
+            f"prob_mean={m['prob_mean']:.5f} per_region="
+            + ", ".join(f"{c}:{rp:.5f}" for c, rp in m["per_region"].items())
+        )
+
+
 def get_args_parser():
     parser = argparse.ArgumentParser('3D Synthetic data training', add_help=False)
 
@@ -190,6 +384,25 @@ def get_args_parser():
                         help='Use pre-generated patches from --patch_dir instead of on-the-fly generation')
     parser.add_argument('--patch_dir', type=str, default=None,
                         help='Directory with pre-generated *_3d.nii.gz patches (used when --on_the_fly is not set)')
+    parser.add_argument('--val_fraction', type=float, default=0.15,
+                        help='Cached path only: fraction of patches held out as a disjoint '
+                             'val split (deterministic, shuffled by --split_seed). '
+                             'Set 0.0 to disable (val == train, legacy behaviour).')
+    parser.add_argument('--split_seed', type=int, default=42,
+                        help='Seed for the deterministic cached train/val split shuffle.')
+    parser.add_argument('--real_proxy_zarr', type=str, default="None",
+                        help='Optional OME-Zarr path. When set, an unlabeled real-data transfer '
+                             'proxy runs each val epoch on the fixed multiregion centers and logs '
+                             'real_pred_pos_frac / real_prob_mean. "None" disables (and is required '
+                             'locally — it never runs a 128^3 forward pass without a zarr).')
+    parser.add_argument('--real_proxy_level', type=int, default=0,
+                        help='Pyramid level for the real-data proxy (0 = highest res, 1um).')
+    parser.add_argument('--real_proxy_channel', type=int, default=0,
+                        help='Channel index for the real-data proxy.')
+    parser.add_argument('--real_proxy_target_voxel_um', nargs=3, type=float, default=[1.0, 1.0, 1.0],
+                        help='Target voxel size (um, z y x) for the real-data proxy patches.')
+    parser.add_argument('--real_proxy_threshold', type=float, default=0.5,
+                        help='Probability threshold for real-data proxy binary coverage.')
     parser.add_argument('--trk_dir', type=str, required=True,
                         help='Directory containing .trk files')
     parser.add_argument('--input_nifti', type=str, required=True,
@@ -432,6 +645,8 @@ def main(args):
         seed=args.seed,
         on_the_fly=args.on_the_fly,
         patch_dir=args.patch_dir,
+        val_fraction=args.val_fraction,
+        split_seed=args.split_seed,
         voxel_size=args.voxel_size,
         min_streamlines_per_patch=args.min_streamlines_per_patch,
         streamline_margin_fraction=args.streamline_margin_fraction,
@@ -569,6 +784,22 @@ def main(args):
         window=max(20, args.log_every_n_steps * 2),
     )
 
+    callbacks = [checkpoint_callback, timing_callback]
+    real_proxy_zarr = _path_or_none(args.real_proxy_zarr)
+    if real_proxy_zarr is not None:
+        callbacks.append(RealLSMProxyCallback(
+            zarr_path=real_proxy_zarr,
+            patch_size=tuple(args.patch_size),
+            target_voxel_size_um=tuple(args.real_proxy_target_voxel_um),
+            level_index=args.real_proxy_level,
+            channel_index=args.real_proxy_channel,
+            normalize_percentiles=(1.0, 99.0),
+            threshold=args.real_proxy_threshold,
+        ))
+        print(f"Real-data transfer proxy ENABLED on zarr: {real_proxy_zarr}")
+    else:
+        print("Real-data transfer proxy disabled (--real_proxy_zarr not set)")
+
     # Accelerator: ConvTranspose3d and max_pool3d are not supported on MPS,
     # so fall back to CPU on Apple Silicon.
     world_size_env = int(os.environ.get("WORLD_SIZE", "1"))
@@ -628,7 +859,7 @@ def main(args):
         logger=logger,
         precision=precision,
         gradient_clip_val=1.0,  # guard against the occasional exploding-grad step
-        callbacks=[checkpoint_callback, timing_callback],
+        callbacks=callbacks,
         accumulate_grad_batches=args.accumulate_grad_batches,
         benchmark=torch.cuda.is_available(),
         use_distributed_sampler=False,

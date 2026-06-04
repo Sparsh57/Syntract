@@ -338,6 +338,20 @@ class SyntheticDataset3D(Dataset):
         thinslab_min_z: int = 30,
         thinslab_max_z: int = 120,
         empty_patch_prob: float = 0.05,
+        # Held-out train/val split over the discovered patch files. The cached
+        # datamodule previously pointed train AND val at the SAME patch_dir with
+        # no partition, so val_loss only measured training fit, not held-out
+        # generalization. ``split`` carves a deterministic, disjoint subset:
+        #   "all"   -> every pair (default; backward compatible)
+        #   "train" -> the (1 - val_fraction) majority
+        #   "val"   -> the val_fraction minority
+        # The split shuffles by ``split_seed`` BEFORE partitioning so both sides
+        # draw the same per-TRK mix (a contiguous split would carve along the
+        # sorted-by-subdir boundary and could starve one side of the only dense
+        # TRK, ``aligned_wavy``).
+        split: str = "all",
+        val_fraction: float = 0.15,
+        split_seed: int = 42,
     ):
         super().__init__()
         self.patch_dir = Path(patch_dir)
@@ -361,13 +375,46 @@ class SyntheticDataset3D(Dataset):
         # (precompute_patches_3d.py writes output_dir/<trk_stem>/*_3d.nii.gz)
         # are found as well as a flat layout; rglob also matches top-level files.
         vol_files = sorted(self.patch_dir.rglob("*_3d.nii.gz"))
-        self.samples = []
+        all_samples = []
         for vf in vol_files:
             mask_f = Path(str(vf).replace("_3d.nii.gz", "_3d_mask.nii.gz"))
             if mask_f.exists():
-                self.samples.append({"volume": str(vf), "mask": str(mask_f)})
-        if len(self.samples) == 0:
+                all_samples.append({"volume": str(vf), "mask": str(mask_f)})
+        if len(all_samples) == 0:
             raise ValueError(f"No *_3d.nii.gz / *_3d_mask.nii.gz pairs found in {patch_dir}")
+
+        # Deterministic held-out split. Shuffle by split_seed first so the
+        # train/val sides share the same per-TRK mix, then partition by index.
+        split = str(split).lower()
+        if split not in ("all", "train", "val"):
+            raise ValueError(f"split must be one of 'all'/'train'/'val', got {split!r}")
+        val_fraction = float(np.clip(val_fraction, 0.0, 1.0))
+        if split == "all" or val_fraction <= 0.0:
+            self.samples = all_samples
+        else:
+            order = np.random.RandomState(int(split_seed)).permutation(len(all_samples))
+            n_val = max(1, int(round(len(all_samples) * val_fraction)))
+            n_val = min(n_val, len(all_samples) - 1)  # keep train non-empty
+            val_idx = set(order[:n_val].tolist())
+            if split == "val":
+                self.samples = [all_samples[i] for i in range(len(all_samples)) if i in val_idx]
+            else:  # train
+                self.samples = [all_samples[i] for i in range(len(all_samples)) if i not in val_idx]
+        if len(self.samples) == 0:
+            raise ValueError(
+                f"split={split!r} produced 0 samples from {len(all_samples)} pairs in {patch_dir} "
+                f"(val_fraction={val_fraction})"
+            )
+
+        # Direct check (per project debugging discipline): print per-subdir
+        # counts for this split so it is visible that both sides contain the
+        # only dense TRK ('aligned_wavy') and disjoint patches.
+        from collections import Counter
+        subdir_counts = Counter(Path(s["volume"]).parent.name for s in self.samples)
+        print(
+            f"[SyntheticDataset3D] split={split!r} n={len(self.samples)}/{len(all_samples)} "
+            f"per-subdir={dict(sorted(subdir_counts.items()))}"
+        )
 
     def __len__(self):
         return len(self.samples)
