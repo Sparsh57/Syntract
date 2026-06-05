@@ -3,32 +3,37 @@
 ## Baselines (from the committed/calibrated state)
 
 - Calibration (OLD epoch-129 ckpt, 3/40 sampling): regions-1-3 mean = 0.000200; grand mean = 0.000759.
-- Fresh epoch-149 run (1/0 sampling, baked baseline aug):
-  - `real_pred_pos_frac` (mean) = 0.00140
-  - `real_pred_pos_frac_median` = **PENDING — pull from epoch-149 W&B run**
-  - Per-region: **PENDING — pull from epoch-149 W&B run**
-    - `real_region1_pos_frac` = ?
-    - `real_region2_pos_frac` = ?
-    - `real_region3_pos_frac` = ?
-    - `real_region4_pos_frac` = ?
-    - `real_region5_pos_frac` = ?
-    - `real_region6_pos_frac` = ?
-    - `real_region7_pos_frac` = ?
-    - `real_region8_pos_frac` = ?
-    - `real_region9_pos_frac` = ?
+- Fresh epoch-149 ckpt (last-v2.ckpt), calibrated via calibrate_real_proxy.py at 1/0 sampling
+  (matches training proxy default — 1 deterministic patch per center, no jitter):
+  - `real_pred_pos_frac` grand-mean = 0.001202
+  - `real_pred_pos_frac_median` = **0.000206** (5th-of-9 sorted = region 7; robust baseline)
+  - Per-region pos_frac:
+    - region 1  (30,  4826, 11220) = 0.000228
+    - region 2  (30,  4826, 22441) = 0.000160
+    - region 3  (30,  4826, 33661) = 0.000238
+    - region 4  (30,  9652, 11220) = 0.000034
+    - region 5  (30,  9652, 22441) = 0.001371
+    - region 6  (30,  9652, 33661) = 0.000115
+    - region 7  (30, 14478, 11220) = 0.000206
+    - region 8  (30, 14478, 22441) = 0.002615
+    - region 9  (30, 14478, 33661) = 0.005850
+  - regions 1-3 mean = 0.000209 (matches handoff baseline 0.0002 ✓ — proxy calibrated)
   - `val_dice` = 0.853
 - Domain stats (synth vs real, 1-99 percentile normalized):
   - `coarse_std`: synth 0.12 vs real 0.08
   - `adj_voxel_corr`: synth 0.44 vs real 0.29
 
-> **Note on median baseline:** The PRIMARY success criterion is `real_pred_pos_frac_MEDIAN` lifting ≥2×
-> over the fresh-run baseline median, SUSTAINED ≥3 val epochs. The mean (0.00140) is NOT the threshold —
-> the median must be read from W&B before any gate judgment is possible.
+> **Gate thresholds (now locked):**
+> Baseline median = 0.000206. "≥2× median" = **≥0.000412**, sustained ≥3 val epochs.
+> This is NOT degenerate — 0.000206 is a real non-zero floor, so 2× is a meaningful bar.
 >
-> **Degeneracy caveat:** If the baseline median comes back ≈0 (plausible, since calibration showed only
-> ~1 of 9 regions fires and the 5th-of-9 sorted value may land at floor), then "≥2×" is degenerate.
-> In that case the load-bearing criterion shifts to BREADTH (≥2–3 distinct regions rise, absolute) plus
-> a sustained non-zero median — not a ratio.
+> **Sorted baseline for reference** (ascending): 0.000034, 0.000115, 0.000160, 0.000206,
+> 0.000228, 0.000238, 0.001371, 0.002615, 0.005850
+> Median = 5th value = 0.000206 (region 7).
+> Regions 8 and 9 are already elevated (0.002615, 0.005850) — movement must show in regions
+> 1-7 (the floor regions) to count as broad. A shift in regions 8-9 alone = noise, not signal.
+>
+> **Breadth criterion:** ≥3 of regions 1-7 must rise above ~0.001 (5× their current floor).
 
 ---
 
@@ -44,7 +49,7 @@
 
 ### Phase 1 — Stats pre-filter (Task 3)
 
-Real LSM patch dir used: **PENDING — identify from cluster shell history or region_* debug patches**
+Real LSM patch dir used: `./real_lsm_stats_patches/debug_patches/` (extracted via extract_real_stats_patches.sh)
 
 Probe batch count (`find ./precomputed_patches_flatbg_probe -name '*_3d.nii.gz' | wc -l`): PENDING
 
