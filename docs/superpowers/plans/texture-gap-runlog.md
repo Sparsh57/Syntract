@@ -37,55 +37,97 @@
 
 ---
 
-## Combined variant (banding OFF, bg flattened, finer grain)
+## Combined variant (banding OFF, bg flattened, finer grain) — FAILED
 
-### Knob changes (from Task 2)
+### Knob changes
 
 - banding: OFF (`--disable_horizontal_banding`)
-- `--background_max_intensity`: 12.0 (down from implicit default 30.0; may be tuned in Task 3)
+- `--background_max_intensity`: 12.0 (down from default 30.0)
 - `--granular_noise_strength`: 2.5 (up from 1.5)
-- `--cornucopia_presets`: unchanged (`ultra_heavy_speckle extreme_noise granular_realistic`)
 - OUTPUT_DIR: `./precomputed_patches_flatbg`
 
-### Phase 1 — Stats pre-filter (Task 3)
+### Phase 1 — Stats probe results (true matched baseline discovered here)
 
-Real LSM patch dir used: `./real_lsm_stats_patches/debug_patches/` (extracted via extract_real_stats_patches.sh)
+> NOTE: Documented baseline stats (0.12/0.44) were wrong — true matched baseline measured here.
 
-Probe batch count (`find ./precomputed_patches_flatbg_probe -name '*_3d.nii.gz' | wc -l`): PENDING
+| Metric | Real | True baseline synth | Combined variant | Grain-2.5 only | Grain-2.0 only |
+|--------|------|--------------------|--------------------|----------------|----------------|
+| `coarse_std` | 0.079 | 0.225 | 0.213 | 0.218 | 0.201 |
+| `adj_voxel_corr` | 0.293 | 0.854 | 0.690 | 0.691 | 0.717 |
+| `fine_std` | 0.159 | 0.097 | 0.121 | 0.114 | 0.113 |
+| `grain/ratio` | 2.024 | 0.435 | 0.630 | 0.528 | 0.573 |
 
-| Metric | Synth (combined variant) | Real | Baseline synth | Gate target |
-|--------|--------------------------|------|----------------|-------------|
-| `coarse_std` | ? | 0.08 | 0.12 | ≤ ~0.09 |
-| `adj_voxel_corr` | ? | 0.29 | 0.44 | ≤ ~0.33 |
-| `std` | ? | — | — | — |
-| `grain/gradient_ratio` | ? | — | — | — |
+Key findings from single-axis probes:
+- `coarse_std` is NOT driven by fibers (mask-out test: 0.1% contribution) — it is anatomical background structure in the source NIfTI, unmovable by any CLI knob
+- `adj_voxel_corr` responds strongly to grain strength — grain is the lever
+- `bg=12.0` did NOT raise coarse_std (hypothesis was wrong); it hurt val_dice by making patches harder to learn from
+- Grain-2.5 alone moved `adj_voxel_corr` 0.854→0.691 without bg flatten
 
-Gate result: PENDING (PASS = both coarse_std and adj_voxel_corr moved meaningfully toward real)
+### Phase 2 — Full precompute + retrain results
 
-Final knobs that passed the stats gate: PENDING
+Full patch count: 1800  
+SLURM job id: 15478117  
+W&B run: `cached_128_1780662321_BCE`
 
-### Phase 2 — Full precompute + retrain (Tasks 4-5)
+Proxy trajectory (mean only — median not logged, cluster had older callback):
 
-Full patch count (`find ./precomputed_patches_flatbg -name '*_3d.nii.gz' | wc -l`): PENDING
+| Epoch | mean | note |
+|-------|------|------|
+| 4 | 0.01718 | early spike |
+| 14 | 0.00270 | decaying |
+| 29 | 0.00434 | brief bump |
+| 79 | 0.00109 | near floor |
+| 149 | 0.00146 | ~1.2× baseline — no meaningful lift |
 
-SLURM job id: PENDING  
-W&B run name/URL: PENDING
+### Phase 3 — Gate judgment: **FAIL**
 
-First val epoch sanity: PENDING
+- Proxy (mean): 0.00146 at epoch 149 vs baseline 0.001202 — ~1.2×, not ≥2× — **FAIL**
+- val_dice: 0.759 at epoch 44 (significant regression from 0.853) — **FAIL**
+- Breadth: no per-region data; mean trajectory shows no sustained broad lift — **FAIL**
 
-### Phase 3 — Result (Task 6)
+Decision branch: **No lift AND val_dice dropped → revert bg flatten, retry with grain-only at 2.5**
 
-Last ≥3 val epochs (final epoch reported first):
+---
 
-| Epoch | `real_pred_pos_frac_median` | `real_region1..9` (csv) | `val_dice` |
-|-------|-----------------------------|-------------------------|------------|
-| ? | ? | ? | ? |
-| ? | ? | ? | ? |
+## Grain-only variant (banding OFF, grain 2.5, bg default) — IN PROGRESS
+
+### Rationale
+
+Combined variant failed because `bg=12.0` hurt val_dice. Grain-2.5 alone moved
+`adj_voxel_corr` 0.854→0.691 without the harmful bg change. Banding OFF kept for
+coarse_std improvement (0.225→0.218, small but correct direction).
+
+### Knob changes
+
+- banding: OFF (`--disable_horizontal_banding`)
+- `--granular_noise_strength`: 2.5 (up from 1.5)
+- `--background_max_intensity`: NOT SET (default 30.0 — no bg flatten)
+- OUTPUT_DIR: `./precomputed_patches_grainonly`
+
+### Stats gate
+
+Real LSM patch dir: `./real_lsm_stats_patches/debug_patches/`
+
+| Metric | Real | Baseline | Grain-2.5 only | Gate target |
+|--------|------|----------|----------------|-------------|
+| `coarse_std` | 0.079 | 0.225 | 0.218 | moved toward real ✓ |
+| `adj_voxel_corr` | 0.293 | 0.854 | 0.691 | moved toward real ✓ |
+
+Stats gate: **PASS** (grain-2.5-only probe already ran as single-axis probe B)
+
+### Phase 2 — Full precompute + retrain
+
+Full patch count: PENDING
+SLURM job id: PENDING
+W&B run: PENDING
+
+### Phase 3 — Result
+
+| Epoch | `real_pred_pos_frac_median` | per-region | `val_dice` |
+|-------|----------------------------|------------|------------|
 | ? | ? | ? | ? |
 
 **Gate judgment:** PENDING
-
-Decision branch: PENDING
 
 ---
 
