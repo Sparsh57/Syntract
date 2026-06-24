@@ -284,8 +284,10 @@ def create_3d_volume_with_streamlines(nifti_file, trk_file, output_file,
                                        enable_speckle_noise=False,
                                        enable_dash_noise=False,
                                        enable_horizontal_banding=False,
+                                       enable_poisson_noise=False,
                                        artifact_strength=0.45,
                                        granular_noise_strength=0.35,
+                                       poisson_gain=80.0,
                                        speckle_noise_strength=0.70,
                                        speckle_noise_density=0.008,
                                        speckle_noise_sigma=0.0,
@@ -1024,7 +1026,7 @@ def create_3d_volume_with_streamlines(nifti_file, trk_file, output_file,
     
     # Image-only realism augmentations. These are intentionally non-geometric and
     # never touch the streamline mask accumulator, so mask/fiber alignment is kept.
-    if enable_tissue_artifacts or enable_granular_noise or enable_speckle_noise or enable_dash_noise or enable_horizontal_banding:
+    if enable_tissue_artifacts or enable_granular_noise or enable_speckle_noise or enable_dash_noise or enable_horizontal_banding or enable_poisson_noise:
         try:
             from syntract_viewer.synthetic_image_augmentations import apply_image_only_augmentations
         except ImportError:
@@ -1045,8 +1047,10 @@ def create_3d_volume_with_streamlines(nifti_file, trk_file, output_file,
             enable_speckle_noise=enable_speckle_noise,
             enable_dash_noise=enable_dash_noise,
             enable_horizontal_banding=enable_horizontal_banding,
+            enable_poisson_noise=enable_poisson_noise,
             artifact_strength=artifact_strength,
             granular_noise_strength=granular_noise_strength,
+            poisson_gain=poisson_gain,
             speckle_noise_strength=speckle_noise_strength,
             speckle_noise_density=speckle_noise_density,
             speckle_noise_sigma=speckle_noise_sigma,
@@ -1154,6 +1158,10 @@ if __name__ == '__main__':
                         help='Add image-only fine Cornucopia granular noise')
     parser.add_argument('--enable_speckle_noise', action='store_true',
                         help='Add sparse image-only whitish-grey dot artefacts')
+    parser.add_argument('--enable_poisson_noise', action='store_true',
+                        help='Add signal-dependent Poisson shot noise (image only)')
+    parser.add_argument('--poisson_gain', type=float, default=80.0,
+                        help='Photons-per-unit; lower=more shot noise, higher=cleaner')
     parser.add_argument('--artifact_strength', type=float, default=0.45)
     parser.add_argument('--granular_noise_strength', type=float, default=0.35)
     parser.add_argument('--speckle_noise_strength', type=float, default=0.35)
@@ -1201,8 +1209,10 @@ if __name__ == '__main__':
         enable_tissue_artifacts=args.enable_tissue_artifacts,
         enable_granular_noise=args.enable_granular_noise,
         enable_speckle_noise=args.enable_speckle_noise,
+        enable_poisson_noise=args.enable_poisson_noise,
         artifact_strength=args.artifact_strength,
         granular_noise_strength=args.granular_noise_strength,
+        poisson_gain=args.poisson_gain,
         speckle_noise_strength=args.speckle_noise_strength,
         speckle_noise_density=args.speckle_noise_density,
         speckle_noise_sigma=args.speckle_noise_sigma,
