@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Two longer agent-oriented docs already exist: [AI_CONTEXT.md](AI_CONTEXT.md) (read first for orientation) and [.github/copilot-instructions.md](.github/copilot-instructions.md). Keep all three in sync when changing project-wide rules.
+Longer orientation docs: [AI_CONTEXT.md](AI_CONTEXT.md) (read first), [.github/copilot-instructions.md](.github/copilot-instructions.md). Full API + architecture reference: [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md). In-depth code review with prioritized bug list: [docs/CODEBASE_REVIEW.md](docs/CODEBASE_REVIEW.md). Keep all three instruction files in sync when changing project-wide rules.
 
 ## Commands
 
@@ -28,13 +28,22 @@ Batch over a directory of TRK files sharing one NIfTI: `python cumulative.py --n
 
 3D synthetic training entry point: `python synthetic-training/train_on_synthetic_data_3d.py --on_the_fly --trk_dir ... --input_nifti ... --checkpoint_dir ... --no_wandb`.
 
+```bash
+# Sanity-check a trained checkpoint against a known synthetic patch (dice ≈ 0.98 → inference path OK)
+python synthetic-training/sanity_check_synthetic.py --checkpoint best_3d.ckpt --voxel_size 0.001
+# Sanity-check the thin-slab sliding-window path
+python synthetic-training/sanity_check_thinslab.py --checkpoint best_3d.ckpt
+# Test inference on a specific OME-Zarr region
+python test_specific_region.py --zarr /path/to/volume.ome.zarr --checkpoint best_3d.ckpt --normalize percentile
+```
+
 ## Architecture
 
 Two production packages plus a training tree:
 
 - [synthesis/](synthesis/) — core MRI/tractography processing. [main.py](synthesis/main.py) (`process_and_save`) is the traditional full-volume path; [patch_first_processing.py](synthesis/patch_first_processing.py) is the default patch-first path; [nifti_preprocessing.py](synthesis/nifti_preprocessing.py), [streamline_processing.py](synthesis/streamline_processing.py), [densify.py](synthesis/densify.py), [ants_transform_updated.py](synthesis/ants_transform_updated.py), [gpu_utils.py](synthesis/gpu_utils.py).
 - [syntract_viewer/](syntract_viewer/) — rendering. [generation.py](syntract_viewer/generation.py) builds 2D synthetic examples; [core.py](syntract_viewer/core.py) saves NIfTI/TRK visualizations and masks; [volume_renderer.py](syntract_viewer/volume_renderer.py) does 3D rendering with streamlines; [improved_cornucopia.py](syntract_viewer/improved_cornucopia.py) drives the weighted preset selection (clean 30% / subtle 30% / moderate 20% / heavy 20%); [synthetic_image_augmentations.py](syntract_viewer/synthetic_image_augmentations.py) is image-only 3D realism for training.
-- [synthetic-training/](synthetic-training/) — PyTorch Lightning 2D/3D training, OME-Zarr loading, prediction, preview. Notable: [unet3d.py](synthetic-training/unet3d.py), [loss_functions.py](synthetic-training/loss_functions.py), [datamodules/datasets.py](synthetic-training/datamodules/datasets.py), [datamodules/omezarr.py](synthetic-training/datamodules/omezarr.py) (physical-scale patch extraction → fixed output tensor shapes), [precompute_patches_3d.py](synthetic-training/precompute_patches_3d.py).
+- [synthetic-training/](synthetic-training/) — PyTorch Lightning 2D/3D training, OME-Zarr loading, prediction, preview. Notable: [unet3d.py](synthetic-training/unet3d.py), [loss_functions.py](synthetic-training/loss_functions.py), [datamodules/datasets.py](synthetic-training/datamodules/datasets.py) (`SyntheticDataset3D` / `OnTheFlySyntheticData3D`), [datamodules/dataloaders.py](synthetic-training/datamodules/dataloaders.py) (Lightning DataModules), [datamodules/omezarr.py](synthetic-training/datamodules/omezarr.py) (physical-scale patch extraction → fixed output tensor shapes), [precompute_patches_3d.py](synthetic-training/precompute_patches_3d.py).
 
 The main data flow: load NIfTI+TRK → optional ANTs transform → auto-calculate target dims from physical size and `voxel_size` (`syntract.py::calculate_target_dimensions`, constrained to 32–4000 voxels/dim, aspect ratio preserved) → sample valid patch locations with a streamline-count threshold → resample only those patches → clip streamlines to the patch FOV → render 2D/3D → save masks/summaries.
 
@@ -105,13 +114,26 @@ Gotchas baked into these scripts (don't re-break):
 - **No double augmentation.** Noise is baked into precomputed patches; `train_cached.sh` leaves the load-time image augs OFF. Thin-slab/empty-patch shape augs ARE applied at load (ported into `SyntheticDataset3D`) to match on-the-fly.
 - **`--white_mask` is optional**; the `"None"` string sentinel must become real `None` before `process_patches_inmemory` (else it errors looking for a file named "None").
 - **Held-out val split (cached path).** The cached datamodule used to point train AND val at the same `patch_dir`, so `val_loss` only measured training fit, not generalization. `SyntheticDataset3D` now takes `split=("all"|"train"|"val")` + `val_fraction` (default 0.15) + `split_seed`; it shuffles the discovered pairs by `split_seed` BEFORE partitioning so both sides get the same per-TRK mix (a contiguous split would carve along the sorted-by-subdir boundary and could starve one side of the only dense TRK, `aligned_wavy`). It prints per-subdir counts per split as a direct check. The datamodule passes `split="train"`/`split="val"` and disables thinslab/empty-patch augs on val (deterministic, reproducible metric). CLI: `--val_fraction` / `--split_seed`. Set `--val_fraction 0.0` for the legacy val==train behaviour. **A held-out *synthetic* split sits ~0.87 dice and stays flat when you change augmentation in step (b) — synthetic generalization isn't what's broken; it guards against *regressing* it.**
-- **Real-LSM transfer proxy (unlabeled).** `RealLSMProxyCallback` in `train_on_synthetic_data_3d.py` runs the model each val epoch on a FIXED set of real OME-Zarr patches (the SAME 3×3 multiregion center grid `compare_multiregion.sh` sweeps, via `SpecificRegionDataset` + percentile normalize) and logs `real_pred_pos_frac` / `real_prob_mean`. No labels — it's a *transfer* signal: it moves off the ~0.0002 floor only if a domain-gap fix actually changes real-data behaviour. Enable with `--real_proxy_zarr <path>` (default `"None"` → no-op, which is also why it's safe locally: no zarr ⇒ no 128³ forward). It forwards in fp32 (master weights under bf16-mixed; no autocast in the callback), matching the standalone `test_specific_region.py` baseline. **CALIBRATION CONFIRMED (2026-06-04):** ran [calibrate_real_proxy.py](calibrate_real_proxy.py) (cluster GPU; OOMs a laptop) on the GOOD bf16 ckpt `best_3d-epoch=129-val_loss=0.0491.ckpt` at matched 3-patch/40-jitter sampling. Per-region result reproduced the baseline exactly: **regions 1–3 (the top-Y row the handoff's ~0.0002 was quoted for) mean = 0.000200.** The proxy reuses `SpecificRegionDataset` + `_load_model` + the exact center grid (identical instrument by construction). The 9-center grand mean (0.000759) is higher purely because ONE region fires (region 9 = 0.0047 ≈ 23× the floor; that's 0.47% coverage — still essentially not-segmenting, a hint not a win) — aggregation, not a wiring bug. **Because the mean is outlier-dominated, the proxy logs `real_pred_pos_frac` (mean), `real_pred_pos_frac_median` (the ROBUST scalar to watch in step (b) — one hot region can't fake movement in it), and per-region `real_regionN_pos_frac`.** Sampling note for cross-comparison: the *training* proxy logs at 1/0 (deterministic; fresh epoch-149 run read 0.00140) — anchor step-(b) movement on that 1/0 run's own baseline, not the 3/40 calibration figure.
+- **Real-LSM transfer proxy (unlabeled).** `RealLSMProxyCallback` in `train_on_synthetic_data_3d.py` runs the model each val epoch on a fixed 3×3 OME-Zarr center grid and logs `real_pred_pos_frac` (mean) and `real_pred_pos_frac_median` (watch this — robust to one hot region). Enable with `--real_proxy_zarr <path>` (default `"None"` → no-op). **Calibrated baseline (2026-06-04):** regions 1–3 median = 0.000200; epoch-149 training run baseline = 0.00140. Anchor all step-(b) movement against the *same run's own* epoch-0 baseline, not the calibration figure. `calibrate_real_proxy.py` re-derives it on cluster GPU (OOMs on laptop).
 
 ## 3D training stability and inference
 
 - **Use `bf16-mixed`, not `16-mixed`.** fp16 overflows (~65504) in the forward pass — the AMP GradScaler only guards gradients, so a forward-pass overflow NaN-poisons the weights permanently (seen as: dice climbs to ~0.35 then collapses to flat-NaN around step ~10k). bf16 has fp32 range, needs no scaler, free on H100/H200. `train_on_synthetic_data_3d.py` now auto-selects bf16 when supported and sets `gradient_clip_val=1.0`. A NaN-poisoned `last.ckpt` will reload on resume — start fresh (`--no_resume` / new `--checkpoint_dir`).
 - **`sanity_check_synthetic.py`** is the discriminator when real-data inference looks empty: run the trained model through the inference path on a KNOWN synthetic patch+mask. dice≈0.98 ⇒ inference path is correct and the real-data failure is a genuine synthetic→real **domain gap** (not a code bug). `compare_domain_stats.py` then quantifies the gap (synthetic tissue is smoother / has a stronger background gradient+banding than real LSM). `compare_multiregion.sh` sweeps several distant regions to tell a universal gap from a location-specific one.
 - **Train/inference normalization is 1–99 percentile over the FULL patch** (training, omezarr.py, and the test scripts use `--normalize percentile`). `nonzero_percentile` excludes zeros and shifts the scale — don't use it for inference matching.
+
+## Known bugs (do not paper over, fix properly)
+
+See [docs/CODEBASE_REVIEW.md](docs/CODEBASE_REVIEW.md) for full details and remediation steps.
+
+| Priority | File | Bug |
+|---|---|---|
+| P0 | `synthesis/main.py:384` | `process_and_save()` returns `None` (not a dict) when all streamlines are filtered out — breaks every caller |
+| P0 | `synthesis/main.py:536,624` | `args.force_compression` / `args.no_compression` are referenced but never added to the argparser → `AttributeError` if that branch is reached |
+| P1 | `synthesis/nifti_preprocessing.py:237` | CPU full-volume resampler uses nearest-neighbor (`int()`), not the claimed cubic — GPU and CPU produce different outputs |
+| P1 | `synthesis/main.py:568` | Duplicate `__main__` block with different defaults (`--interp rbf` vs `hermite`) — replace with `main()` |
+| P2 | `synthesis/streamline_processing.py:251` | `[STREAMLINE DEBUG]` prints fire unconditionally in every transform call, including inside training loops |
+| P2 | `synthesis/patch_first_processing.py:555` | `DEBUG VIOLATIONS` prints fire unconditionally regardless of the `debug` flag |
 
 ## Things to avoid
 
