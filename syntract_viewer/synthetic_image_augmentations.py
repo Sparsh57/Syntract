@@ -125,6 +125,36 @@ def apply_granular_noise(
     return _restore_range(augmented, lo, hi, original)
 
 
+def apply_poisson_shot_noise(
+    volume: np.ndarray,
+    gain: float = 80.0,
+    random_state: Optional[int] = None,
+    verbose: bool = False,
+) -> np.ndarray:
+    """Add Poisson (shot) noise — the dominant noise in fluorescence light-sheet.
+
+    Photon counting makes per-voxel variance equal the mean, so brighter voxels
+    are noisier (signal-dependent), unlike additive Gaussian grain. ``gain`` is
+    photons-per-unit-intensity: lower gain = heavier shot noise, higher gain =
+    nearly clean. Image-only; never touches the mask. NumPy-only (no torch/cupy).
+    """
+    gain = float(gain)
+    if gain <= 0.0:
+        return np.asarray(volume, dtype=np.float32)
+
+    rng = np.random.default_rng(random_state)
+    original = np.asarray(volume, dtype=np.float32)
+    vol, lo, hi = _normalize_unit(original)
+
+    if verbose:
+        print(f"    Applying Poisson shot noise (gain={gain:.1f})")
+
+    lam = np.clip(vol, 0.0, None) * gain
+    noisy = (rng.poisson(lam).astype(np.float32)) / gain
+
+    return _restore_range(noisy, lo, hi, original)
+
+
 def apply_horizontal_banding(
     volume: np.ndarray,
     strength: float = 0.18,
