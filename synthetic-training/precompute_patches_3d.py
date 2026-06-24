@@ -63,7 +63,9 @@ def render_trk(
     enable_speckle_noise: bool,
     enable_dash_noise: bool,
     enable_horizontal_banding: bool,
+    enable_poisson_noise: bool,
     granular_noise_strength: float,
+    poisson_gain: float,
     artifact_strength: float,
     speckle_noise_strength: float,
     speckle_noise_density: float,
@@ -184,8 +186,10 @@ def render_trk(
             enable_speckle_noise=enable_speckle_noise,
             enable_dash_noise=enable_dash_noise,
             enable_horizontal_banding=enable_horizontal_banding,
+            enable_poisson_noise=enable_poisson_noise,
             artifact_strength=artifact_strength,
             granular_noise_strength=granular_noise_strength,
+            poisson_gain=poisson_gain,
             speckle_noise_strength=speckle_noise_strength,
             speckle_noise_density=speckle_noise_density,
             speckle_noise_sigma=speckle_noise_sigma,
@@ -259,6 +263,11 @@ def main():
                         help="Disable sparse dot artefacts")
     parser.add_argument("--granular_noise_strength", type=float, default=0.35,
                         help="Strength of fine granular noise (default: 0.35)")
+    parser.add_argument("--enable_poisson_noise", dest="enable_poisson_noise",
+                        action="store_true", default=False,
+                        help="Bake signal-dependent Poisson shot noise into images (image only)")
+    parser.add_argument("--poisson_gain", type=float, default=80.0,
+                        help="Photons-per-unit; lower=more shot noise, higher=cleaner (default: 80)")
     parser.add_argument("--artifact_strength", type=float, default=0.45,
                         help="Strength of tissue-like artefacts (default: 0.45)")
     parser.add_argument("--speckle_noise_strength", type=float, default=0.35,
@@ -356,7 +365,9 @@ def main():
             enable_speckle_noise=args.enable_speckle_noise,
             enable_dash_noise=args.enable_dash_noise,
             enable_horizontal_banding=args.enable_horizontal_banding,
+            enable_poisson_noise=args.enable_poisson_noise,
             granular_noise_strength=args.granular_noise_strength,
+            poisson_gain=args.poisson_gain,
             artifact_strength=args.artifact_strength,
             speckle_noise_strength=args.speckle_noise_strength,
             speckle_noise_density=args.speckle_noise_density,
