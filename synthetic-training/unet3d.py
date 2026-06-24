@@ -2,7 +2,10 @@ import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from loss_functions import soft_dice_cldice, DiceBCELoss, DiceFocalLoss
+try:
+    from .loss_functions import soft_dice_cldice, DiceBCELoss, DiceFocalLoss, BCEClDiceLoss
+except ImportError:
+    from loss_functions import soft_dice_cldice, DiceBCELoss, DiceFocalLoss, BCEClDiceLoss
 import numpy as np
 from transformers import get_cosine_schedule_with_warmup
 import os
@@ -101,6 +104,10 @@ class FlexibleUNet3D(pl.LightningModule):
             self.criterion = DiceFocalLoss(pos_weight=self.pos_weight)
         elif self.loss == "cldice":
             self.criterion = soft_dice_cldice()
+        elif self.loss == "bce_cldice":
+            # DiceBCE (keeps pos_weight) + clDice topology term. Takes logits, so
+            # it uses the standard (non-sigmoid) loss branch in _shared_step.
+            self.criterion = BCEClDiceLoss(pos_weight=self.pos_weight)
         else:
             raise ValueError(f"Unknown loss: {self.loss}")
 

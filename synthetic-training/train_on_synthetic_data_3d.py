@@ -289,33 +289,60 @@ class RealLSMProxyCallback(Callback):
         """
         if self._patches is None:
             self._patches = self._build_patches(module)
+        # Lazy import (matches the SpecificRegionDataset lazy import) so the
+        # module stays importable where scipy is unavailable.
+        try:
+            from connectivity_metrics import connectivity_stats
+        except ImportError:
+            connectivity_stats = None
         device = next(module.parameters()).device
         dtype = next(module.parameters()).dtype
         was_training = module.training
         module.eval()
         region_pos, region_prob, per_region = [], [], {}
+        region_continuity, region_tinyblob, region_maxlen = [], [], []
         with torch.no_grad():
             for center, region_patches in self._patches:
-                pf, pm = [], []
+                pf, pm, cont, tiny, mlen = [], [], [], [], []
                 for patch in region_patches:
                     x = patch.to(device, dtype=dtype)
                     prob = torch.sigmoid(module(x).float())
                     pm.append(float(prob.mean().item()))
                     pf.append(float((prob >= self.threshold).float().mean().item()))
+                    # Continuity: is the prediction a connected fiber, or blobs?
+                    # Label-free; replaces pred_pos_frac as the real quality signal.
+                    if connectivity_stats is not None:
+                        cs = connectivity_stats(
+                            prob[0, 0].detach().cpu().numpy(), threshold=self.threshold)
+                        cont.append(cs["continuity"])
+                        tiny.append(cs["tiny_blob_frac"])
+                        mlen.append(cs["max_comp_len"])
                 rp = sum(pf) / len(pf) if pf else 0.0
                 region_pos.append(rp)
                 region_prob.append(sum(pm) / len(pm) if pm else 0.0)
                 per_region[center] = rp
+                if cont:
+                    region_continuity.append(sum(cont) / len(cont))
+                    region_tinyblob.append(sum(tiny) / len(tiny))
+                    region_maxlen.append(sum(mlen) / len(mlen))
         if was_training:
             module.train()
         if not region_pos:
             return {"pred_pos_frac_mean": 0.0, "pred_pos_frac_median": 0.0,
-                    "prob_mean": 0.0, "per_region": {}}
+                    "prob_mean": 0.0, "per_region": {},
+                    "continuity_median": 0.0, "tiny_blob_frac_mean": 1.0,
+                    "max_comp_len_median": 0.0}
         return {
             "pred_pos_frac_mean": float(sum(region_pos) / len(region_pos)),
             "pred_pos_frac_median": float(_median(region_pos)),
             "prob_mean": float(sum(region_prob) / len(region_prob)),
             "per_region": per_region,
+            # Continuity aggregates over regions. Median continuity is the headline
+            # real-data quality signal (higher = more fiber-like, less blobby);
+            # robust to one hot region the way pred_pos_frac_median is.
+            "continuity_median": float(_median(region_continuity)) if region_continuity else 0.0,
+            "tiny_blob_frac_mean": float(sum(region_tinyblob) / len(region_tinyblob)) if region_tinyblob else 1.0,
+            "max_comp_len_median": float(_median(region_maxlen)) if region_maxlen else 0.0,
         }
 
     def on_validation_epoch_end(self, trainer, pl_module):
@@ -342,13 +369,23 @@ class RealLSMProxyCallback(Callback):
         pl_module.log("real_pred_pos_frac", m["pred_pos_frac_mean"], prog_bar=True, rank_zero_only=True)
         pl_module.log("real_pred_pos_frac_median", m["pred_pos_frac_median"], prog_bar=True, rank_zero_only=True)
         pl_module.log("real_prob_mean", m["prob_mean"], rank_zero_only=True)
+        # Continuity = the real-data QUALITY signal (label-free). Unlike
+        # pred_pos_frac, a blob-predictor cannot game it: long connected fibers
+        # score high, scattered blobs score ~0. Watch real_continuity_median rise
+        # and real_tiny_blob_frac fall as the continuity fixes (clDice loss,
+        # low-contrast synthesis) take hold.
+        pl_module.log("real_continuity_median", m["continuity_median"], prog_bar=True, rank_zero_only=True)
+        pl_module.log("real_tiny_blob_frac", m["tiny_blob_frac_mean"], rank_zero_only=True)
+        pl_module.log("real_max_comp_len_median", m["max_comp_len_median"], rank_zero_only=True)
         for ridx, (center, rp) in enumerate(m["per_region"].items(), start=1):
             pl_module.log(f"real_region{ridx}_pos_frac", rp, rank_zero_only=True)
         print(
             f"[real-proxy] epoch={trainer.current_epoch} regions={len(self._patches)} "
-            f"mean={m['pred_pos_frac_mean']:.5f} median={m['pred_pos_frac_median']:.5f} "
-            f"prob_mean={m['prob_mean']:.5f} per_region="
-            + ", ".join(f"{c}:{rp:.5f}" for c, rp in m["per_region"].items())
+            f"pos_frac median={m['pred_pos_frac_median']:.5f} | "
+            f"continuity median={m['continuity_median']:.3f} "
+            f"tiny_blob={m['tiny_blob_frac_mean']:.3f} "
+            f"max_len median={m['max_comp_len_median']:.1f} | "
+            f"per_region=" + ", ".join(f"{c}:{rp:.5f}" for c, rp in m["per_region"].items())
         )
 
 
@@ -504,7 +541,7 @@ def get_args_parser():
                              'model learns the "empty input -> empty output" prior.')
 
     # Model
-    parser.add_argument('--loss', default='BCE', choices=['BCE', 'focal', 'cldice'],
+    parser.add_argument('--loss', default='BCE', choices=['BCE', 'focal', 'cldice', 'bce_cldice'],
                         help='Loss function. BCE+pos_weight<1.0 is the reliable knob; '
                              'focal needs the class-balanced alpha (see DiceFocalLoss).')
     parser.add_argument('--pos_weight', type=float, default=0.3,

@@ -242,3 +242,30 @@ class DiceFocalLoss(nn.Module):
         loss_dice = self.dice(logits, targets)
         loss_focal = self.focal(logits, targets.float())
         return self.dice_weight * loss_dice + self.focal_weight * loss_focal
+
+
+class BCEClDiceLoss(nn.Module):
+    """DiceBCE (per-voxel overlap + pos_weight positive-encouragement) plus a
+    clDice TOPOLOGY term that rewards connected centerlines.
+
+    Motivation: plain BCE/Dice rewards per-voxel overlap and tolerates a mask made
+    of scattered blobs; on real LSM the model fragments faint fibers into blobs
+    (measured: 57-67% of components <=3 voxels). The soft-skeleton clDice term
+    penalises that disconnection directly, pushing predictions toward long
+    connected fibers (the Continuity prior) WITHOUT abandoning the tuned BCE /
+    pos_weight behaviour that keeps the model from collapsing to all-background.
+
+    Takes LOGITS (like DiceBCELoss/DiceFocalLoss); sigmoids internally for the
+    topology term, so the training step treats it like any other logit loss.
+    """
+    def __init__(self, pos_weight=1.0, cldice_weight=0.5, cldice_iter=3):
+        super(BCEClDiceLoss, self).__init__()
+        self.dicebce = DiceBCELoss(pos_weight=pos_weight)
+        self.cldice = soft_cldice(iter_=cldice_iter)  # pure topology term
+        self.cldice_weight = float(cldice_weight)
+
+    def forward(self, logits, targets):
+        base = self.dicebce(logits, targets)
+        probs = torch.sigmoid(logits.float())
+        topo = self.cldice(probs, targets.float())
+        return base + self.cldice_weight * topo
