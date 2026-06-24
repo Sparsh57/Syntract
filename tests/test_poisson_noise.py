@@ -53,3 +53,21 @@ def test_poisson_reproducible_with_seed():
     a = apply_poisson_shot_noise(base, gain=80.0, random_state=7)
     b = apply_poisson_shot_noise(base, gain=80.0, random_state=7)
     np.testing.assert_array_equal(a, b)
+
+
+from syntract_viewer.synthetic_image_augmentations import apply_image_only_augmentations
+
+
+def test_dispatcher_poisson_disabled_is_identity():
+    base = _half_dark_half_bright(24)
+    out = apply_image_only_augmentations(base, enable_poisson_noise=False, random_state=0)
+    np.testing.assert_array_equal(out, base.astype(np.float32))
+
+
+def test_dispatcher_poisson_enabled_changes_volume():
+    base = _half_dark_half_bright(24)
+    out = apply_image_only_augmentations(
+        base, enable_poisson_noise=True, poisson_gain=60.0, random_state=0
+    )
+    assert not np.array_equal(out, base.astype(np.float32))
+    assert out.shape == base.shape

@@ -343,8 +343,10 @@ def apply_image_only_augmentations(
     enable_speckle_noise: bool = False,
     enable_dash_noise: bool = False,
     enable_horizontal_banding: bool = False,
+    enable_poisson_noise: bool = False,
     artifact_strength: float = 0.45,
     granular_noise_strength: float = 0.35,
+    poisson_gain: float = 80.0,
     speckle_noise_strength: float = 0.70,
     speckle_noise_density: float = 0.008,
     speckle_noise_sigma: float = 0.0,
@@ -371,6 +373,7 @@ def apply_image_only_augmentations(
     speckle_seed = None if random_state is None else int(random_state) + 208351
     dash_seed = None if random_state is None else int(random_state) + 312973
     banding_seed = None if random_state is None else int(random_state) + 417619
+    poisson_seed = None if random_state is None else int(random_state) + 521093
 
     if enable_horizontal_banding:
         augmented = apply_horizontal_banding(
@@ -393,6 +396,13 @@ def apply_image_only_augmentations(
             augmented,
             strength=granular_noise_strength,
             random_state=granular_seed,
+            verbose=verbose,
+        )
+    if enable_poisson_noise:
+        augmented = apply_poisson_shot_noise(
+            augmented,
+            gain=poisson_gain,
+            random_state=poisson_seed,
             verbose=verbose,
         )
     if enable_speckle_noise:
