@@ -146,29 +146,73 @@ Rationale: proxy lift was broad and sustained → grain IS the right axis; magni
 
 ---
 
-## Grain-2.0 variant (banding OFF, grain=2.0, NO bg flatten)  ← CURRENT
+## Grain-2.0 variant (banding OFF, grain=2.0, NO bg flatten)  — SUPERSEDED
 
-### Knob changes
+Never run. Abandoned in favour of the Poisson + soft-mask + thick6 variant below,
+after analysing the real region-1/2 sliding-window data directly (2026-06-24):
+the gap is not "more Gaussian grain" but (a) missing signal-dependent shot noise,
+(b) too-thick binary masks, and (c) ~10× too-sparse fibers.
 
-- banding: OFF (`--disable_horizontal_banding`)
-- `--granular_noise_strength`: 2.0 (down from 2.5; up from baseline 1.5)
-- bg: 30.0 (default, unchanged)
-- OUTPUT_DIR: `./precomputed_patches_grain20`
+### Knob changes (not run)
+- banding OFF, `--granular_noise_strength 2.0`, `OUTPUT_DIR ./precomputed_patches_grain20`
 
-### Phase 1 — Stats pre-filter
+---
 
-30-patch probe → compare_domain_stats.py (run before full precompute).
-Target: `adj_voxel_corr` between ~0.80 (grain-2.5) and ~0.854 (baseline) — expect ~0.82–0.84.
+## Poisson + soft-mask + thick6 variant (banding ON, grain 1.5)  ← CURRENT
 
-Gate: PENDING
+Design: [docs/superpowers/specs/2026-06-24-real-domain-match-poisson-soft-masks-design.md].
+Plan: [docs/superpowers/plans/2026-06-24-real-domain-match-poisson-soft-masks.md].
+
+### Real region-1/2 measurements (the target, measured 2026-06-24)
+- `adj_voxel_corr` ~0.43 (x≈0.63, y≈0.22); `local_std` ~0.15; row-mean banding std 0.074 (banding IS present)
+- fiber/bg contrast ~2.3× (brightest-structure crop); model-fired spots ~1.03× (it fires on noise)
+- bright-structure coverage ~14.7% of a 128² frame — real LSM is a DENSE fiber field
+
+### Knob changes vs baseline
+- NEW `--enable_poisson_noise --poisson_gain <G>` (signal-dependent shot noise; the missing physics)
+- banding back ON (`--banding_strength 0.35`); grain back to 1.5 (Poisson is the primary texture driver)
+- masks `--soft_mask` + `--mask_smoothing_sigma 0.5` (partial-volume, ~2 vox)
+- fibers densified: `thicken_trk.py --copies 6 --radius_mm 0.05` on aligned_wavy
+  (222 → 1332 curved siblings) → `../registered_trk/thick6/`; `--trk_dir` points there
+- OUTPUT_DIR `./precomputed_patches_poisson_soft`; checkpoints `checkpoints_poisson_soft_bf16/`
+
+### Phase 1 — Local validation (laptop, render-only; 2026-06-24)
+Generated patches via visualize_poisson_soft_patch.py; measured vs real:
+
+| metric | synth (thick6, gain 80) | real target | read |
+|--------|--------------------------|-------------|------|
+| mask coverage | 4.59% | 5–8% (real bright ~14.7%) | moderate bundle, on target |
+| fiber/bg contrast | 2.8× (range 2.0–4.0) | ~2.3× | matches real; learnable |
+| **bg-only adj_corr** | **0.78** (gain 80) | **0.43** | gain 80 too gentle on texture |
+
+**Poisson does NOT dilute contrast** — ON vs OFF identical (2.36/2.33, 4.02/4.04, 1.99/1.94),
+so the contrast is fiber-render-determined, ~real, and safe. The invented "3–4× learnability
+floor" was higher than real (~2.3×) and is dropped — do NOT bump fiber brightness.
+
+**Background-only corr is the gain-sweep target** (whole-patch corr is inflated by fiber density,
+which thickening raised 0.67→0.72 — a fiber artefact, not texture). Poisson moved bg-only
+corr 0.87→0.78 at gain 80; real is 0.43, so the sweep needs **lower gain (more noise),
+likely ~40 or below.**
+
+### Phase 1b — Gain sweep (cluster GPU) — target bg-only corr ≈ 0.43
+
+| gain | bg-only adj_corr | local_std | fiber/bg contrast | verdict |
+|------|------------------|-----------|-------------------|---------|
+| 80   | 0.78 (laptop)    | ~0.12     | 2.8×              | too gentle |
+| 40   | PENDING | PENDING | PENDING | PENDING |
+| 20   | PENDING | PENDING | PENDING | PENDING |
+
+Chosen gain: PENDING.
 
 ### Phase 2 — Full precompute + retrain
+SLURM precompute job: PENDING | train job: PENDING | W&B run: PENDING
 
-SLURM precompute job: PENDING  
-SLURM train job: PENDING  
-W&B run: PENDING
-
-### Phase 3 — Result
+### Phase 3 — Result (re-baselined for soft masks)
+| Signal | baseline | result | pass? |
+|--------|----------|--------|-------|
+| real_pred_pos_frac_median | 0.000206 (binary) | PENDING | PENDING |
+| sanity dice (soft) — the REAL learnability gate | ~0.98 | PENDING | PENDING |
+| synthetic val_dice | re-baseline epoch-0 | PENDING | PENDING |
 
 Gate judgment: PENDING
 

@@ -505,16 +505,21 @@ Add to the end of `docs/superpowers/plans/texture-gap-runlog.md`:
 - checkpoints: `checkpoints_poisson_soft_bf16/`
 
 ### Phase 1 — Stats probe (gain sweep)
-Targets: adj_voxel_corr ~0.43, local_std ~0.15, fiber/bg separation ≥3-4×.
+Target: BACKGROUND-ONLY adj_voxel_corr ~0.43, local_std ~0.15. Use background-only
+corr (mask out fiber voxels) — whole-patch corr is inflated by fiber density (thick6
+raised it 0.67->0.72; that's a fiber artefact, not texture). Contrast is NOT a gate:
+validated locally that it's fiber-render-determined (~2.3x, matches real) and Poisson
+does NOT dilute it (ON==OFF), so the old "3-4x floor" is dropped — learnability is
+decided by sanity dice in Phase 3.
 
-| gain | adj_voxel_corr | local_std | fiber/bg sep | verdict |
-|------|----------------|-----------|--------------|---------|
+| gain | bg-only adj_corr | local_std | contrast (info only) | verdict |
+|------|------------------|-----------|----------------------|---------|
+| 80   | 0.78 (laptop)    | ~0.12     | 2.8x                 | too gentle |
 | 40   | PENDING | PENDING | PENDING | PENDING |
-| 80   | PENDING | PENDING | PENDING | PENDING |
-| 120  | PENDING | PENDING | PENDING | PENDING |
+| 20   | PENDING | PENDING | PENDING | PENDING |
 
 Chosen gain: PENDING. Mask width check (~2-3 vox, centered, noise-decoupled): PENDING.
-Gate (texture moved toward real AND learnability floor held): PENDING.
+Gate (bg-only corr moved toward real 0.43): PENDING.
 
 ### Phase 2 — Full precompute + retrain
 SLURM precompute job: PENDING | train job: PENDING | W&B run: PENDING
@@ -531,21 +536,21 @@ Verdict: PENDING.
 
 - [ ] **Step 2: Run the gain sweep (cluster)**
 
-For each gain in 40, 80, 120, precompute a tiny probe set:
+For each gain in 40, 20 (80 already measured ≈0.78, too gentle), precompute a tiny
+probe set. `precompute_patches.sh` already takes `POISSON_GAIN` and builds the thick6
+TRK automatically:
 
 ```bash
-for G in 40 80 120; do
+for G in 40 20; do
   OUTPUT_DIR=./precomputed_patches_probe_g${G} PATCHES_PER_TRK=3 \
     POISSON_GAIN=$G sbatch synthetic-training/precompute_patches.sh
 done
 ```
 
-(If `precompute_patches.sh` hard-codes `--poisson_gain 80`, temporarily edit it to `--poisson_gain ${POISSON_GAIN:-80}` for the sweep, then set the winner.)
-
 - [ ] **Step 3: Score each probe against real LSM**
 
 ```bash
-for G in 40 80 120; do
+for G in 40 20; do
   echo "=== gain $G ==="
   python compare_domain_stats.py \
     --synthetic_dir ./precomputed_patches_probe_g${G} \
@@ -553,7 +558,10 @@ for G in 40 80 120; do
 done
 ```
 
-Fill the Phase-1 table. Pick the gain whose `adj_voxel_corr`/`local_std` are closest to real (0.43 / 0.15) **while** fiber/bg separation stays ≥3–4×.
+Fill the Phase-1 table. Pick the gain whose **background-only** `adj_voxel_corr` and
+`local_std` are closest to real (0.43 / 0.15). Contrast is informational only — do not
+gate on it. (If `compare_domain_stats.py` reports whole-patch corr, subtract the fiber
+contribution or measure bg-only as in the local validation script.)
 
 - [ ] **Step 4: Verify mask width on a probe patch**
 
