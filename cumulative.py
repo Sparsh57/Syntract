@@ -245,6 +245,7 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
             num_patches=patches,  # Extract exactly this many patches total
             patch_size=patch_size,
             min_streamlines_per_patch=min_streamlines_per_patch,
+            min_bundle_size=min_bundle_size,
             voxel_size=voxel_size,
             new_dim=new_dim,
             use_ants=use_ants,
@@ -447,7 +448,7 @@ def _capture_figure_as_array(fig, target_size=(1024, 1024), debug=False):
     return array
 
 
-def _generate_emergency_fallback_patches(input_nifti, trk_files, num_patches_needed, output_image_size):
+def _generate_emergency_fallback_patches(input_nifti, trk_files, num_patches_needed, output_image_size, debug=False):
     """
     Generate synthetic patches when normal extraction fails completely.
     This is a last resort to guarantee exact count.
@@ -593,6 +594,7 @@ def process_patches_inmemory(
     num_patches: int = 50,
     patch_size: list = None,
     min_streamlines_per_patch: int = 0,
+    min_bundle_size: int = 50,
     voxel_size: float = 0.05,
     new_dim: tuple = None,
     use_ants: bool = False,
@@ -606,6 +608,9 @@ def process_patches_inmemory(
     white_mask_file: str = None,
     output_dir: str = None,  # Added for debug visualization saving
     debug: bool = False,
+    tract_linewidth: float = 1.0,
+    streamline_percentage: float = None,
+    exclude_presets: list = None,
     **kwargs
 ) -> Tuple[List[np.ndarray], List[np.ndarray]]:
     """
@@ -627,7 +632,9 @@ def process_patches_inmemory(
     patch_size : list, optional
         Patch dimensions [width, height, depth] (default: [600, 1, 600])
     min_streamlines_per_patch : int, optional
-        Minimum streamlines required per patch (default: 20)
+        Minimum streamlines required per patch (default: 0)
+    min_bundle_size : int, optional
+        Minimum bundle size in pixels for mask generation (default: 50)
     voxel_size : float, optional
         Target voxel size in mm (default: 0.05)
     new_dim : tuple, optional
@@ -1097,19 +1104,79 @@ def process_patches_inmemory(
                     import random as rnd
                     import time
                     
-                    # Random fiber percentage for high-density masks (70-100%)
-                    max_fiber_pct = np.random.uniform(70, 100) if random_state is None else np.random.RandomState(random_state + i).uniform(70, 100)
-                    if debug:
-                        print(f"  Using {max_fiber_pct:.1f}% of fibers for both visualization and mask")
+                    # Fiber percentage for rendering
+                    if streamline_percentage is not None:
+                        # User override: use same percentage for both image and mask
+                        max_fiber_pct = streamline_percentage
+                        viz_fiber_pct = streamline_percentage
+                        if debug:
+                            print(f"  Fiber sampling (override): {streamline_percentage:.1f}% for both image and mask")
+                    else:
+                        # Random fiber percentage - SPARSE: match real data coverage (~0.4%)
+                        # Use 2-5% of available fibers for variance while centering near target
+                        max_fiber_pct = np.random.uniform(2, 5) if random_state is None else np.random.RandomState(random_state + i).uniform(2, 5)
+                        
+                        # IMAGE SUBSAMPLING: Use only 50-70% of sampled fibers for visualization
+                        # This creates sparse/fragmented appearance in INPUT while mask remains fuller
+                        viz_subsample_ratio = np.random.uniform(0.5, 0.7) if random_state is None else np.random.RandomState(random_state + i + 1000).uniform(0.5, 0.7)
+                        viz_fiber_pct = max_fiber_pct * viz_subsample_ratio
+                        
+                        if debug:
+                            print(f"  Fiber sampling: {max_fiber_pct:.1f}% for mask, {viz_fiber_pct:.1f}% for image ({viz_subsample_ratio*100:.0f}% subsample)")
                     
-                    # Randomize cornucopia preset for variation (same as syntract.py)
+                    # Randomize cornucopia preset for variation (OPTIMIZED FOR DOMAIN RANDOMIZATION)
                     presets = ['clean_optical', 'gamma_speckle', 'optical_with_debris', 
                               'subtle_debris', 'clinical_simulation', 'heavy_speckle', 
                               'extreme_noise', 'ultra_heavy_speckle', 'gaussian_mixture_aggressive',
                               'noncentral_chi_aggressive', 'aggressive_smoothing', 'comprehensive_aggressive',
-                              'random_shapes_background', 'shapes_with_noise', 'aggressive_shapes']
-                    # Weights: clean (1%), moderate (12%), heavy (20%), extreme (30%), new aggressive (25%), shapes (12%)
-                    weights = [0.01, 0.08, 0.12, 0.04, 0.02, 0.12, 0.08, 0.08, 0.08, 0.08, 0.04, 0.08, 0.08, 0.08, 0.05]
+                              'random_shapes_background', 'shapes_with_noise', 'aggressive_shapes',
+                              'multiplicative_field_subtle', 'multiplicative_field_moderate', 
+                              'multiplicative_field_aggressive', 'multiplicative_field_extreme',
+                              'smooth_multiplicative_field', 'smooth_multiplicative_with_noise',
+                              'color_field_subtle', 'color_field_moderate', 'color_field_aggressive']
+                    
+                    # AGGRESSIVE DOMAIN RANDOMIZATION VERSION (commented out for ablation testing):
+                    # Weights distribution OPTIMIZED for MAXIMUM domain randomization diversity:
+                    # Clean presets: 5% (minimal - just enough variety)
+                    # Moderate presets: 20% (reduced to make room for aggressive)
+                    # Aggressive/Extreme/Ultra presets: 55% (MASSIVELY INCREASED - key for domain randomization!)
+                    # Multiplicative field: 15% (increased for bias field coverage)
+                    # Color field: 5% (maintain color variation)
+                    # Total: 100% (ALL patches get augmentation)
+                    weights = [0.03,  # clean_optical (3%)
+                               0.05, 0.08, 0.04, 0.02,  # gamma_speckle, optical_with_debris, subtle_debris, clinical_simulation (19% moderate)
+                               0.03,  # heavy_speckle (3% - moved to moderate/aggressive boundary)
+                               0.09, 0.09, 0.09,  # extreme_noise, ultra_heavy_speckle, gaussian_mixture_aggressive (27% AGGRESSIVE!)
+                               0.09, 0.09, 0.09,  # noncentral_chi_aggressive, aggressive_smoothing, comprehensive_aggressive (27% AGGRESSIVE!)
+                               0.02, 0.02, 0.02,  # random_shapes_background, shapes_with_noise, aggressive_shapes (6% shapes)
+                               0.03, 0.04, 0.04, 0.03,  # multiplicative_field_subtle/moderate/aggressive/extreme (14% fields)
+                               0.01, 0.01,  # smooth_multiplicative_field variants (2%)
+                               0.02, 0.02, 0.01]  # color_field variants (5%)
+                    
+                    # # LESS AGGRESSIVE VERSION (for ablation testing):
+                    # # More balanced distribution with moderate presets getting higher weight
+                    # # Clean presets: ~3%, Moderate: ~36%, Aggressive: ~44%, Shapes: ~21%, Multiplicative fields: ~11%, Color fields: ~5%
+                    # weights = [0.01,  # clean_optical (1%)
+                    #            0.08, 0.12, 0.04, 0.02,  # gamma_speckle, optical_with_debris, subtle_debris, clinical_simulation (26% moderate)
+                    #            0.12,  # heavy_speckle (12% - restored to original)
+                    #            0.08, 0.08, 0.08,  # extreme_noise, ultra_heavy_speckle, gaussian_mixture_aggressive (24% aggressive)
+                    #            0.08, 0.04, 0.08,  # noncentral_chi_aggressive, aggressive_smoothing, comprehensive_aggressive (20% aggressive)
+                    #            0.08, 0.08, 0.05,  # random_shapes_background, shapes_with_noise, aggressive_shapes (21% shapes)
+                    #            0.015, 0.02, 0.03, 0.02,  # multiplicative_field_subtle/moderate/aggressive/extreme (8.5% fields)
+                    #            0.01, 0.015,  # smooth_multiplicative_field variants (2.5%)
+                    #            0.015, 0.02, 0.015]  # color_field variants (5%)
+
+
+                    # Filter out excluded presets if specified
+                    if exclude_presets:
+                        filtered = [(p, w) for p, w in zip(presets, weights) if p not in exclude_presets]
+                        if filtered:
+                            presets, weights = zip(*filtered)
+                            presets, weights = list(presets), list(weights)
+                            # Re-normalize weights
+                            total_w = sum(weights)
+                            weights = [w / total_w for w in weights]
+
                     rnd.seed(int(time.time() * 1000000) % (2**32))  # Truly random seed
                     actual_cornucopia_preset = rnd.choices(presets, weights=weights, k=1)[0]
                     if debug:
@@ -1126,9 +1193,9 @@ def process_patches_inmemory(
                         contrast_method='clahe',
                         background_enhancement='preserve_edges',
                         cornucopia_augmentation=actual_cornucopia_preset,
-                        tract_linewidth=1.0,
+                        tract_linewidth=tract_linewidth,
                         output_image_size=output_image_size,
-                        streamline_percentage=max_fiber_pct,  # USE SAME PERCENTAGE AS MASK
+                        streamline_percentage=viz_fiber_pct,  # Use SUBSAMPLED percentage for sparse image
                         random_state=random_state + i if random_state else None,
                         white_mask_file=white_mask_patch,
                         debug=debug
@@ -1281,16 +1348,16 @@ def process_patches_inmemory(
                         output_file=temp_viz_file,
                         slice_idx=slice_idx,
                         max_fiber_percentage=max_fiber_pct,
-                        tract_linewidth=1.0,
-                        mask_thickness=6,  # Smaller thickness to prevent merging
-                        density_threshold=0.01,  # Low threshold to capture sparse streamlines
-                        gaussian_sigma=0.5,  # Minimal smoothing to preserve separation
+                        tract_linewidth=tract_linewidth,
+                        mask_thickness=4,  # Reduced to create thinner, more realistic bundles
+                        density_threshold=0.02,  # Slightly higher to reduce over-segmentation
+                        gaussian_sigma=0.3,  # Minimal smoothing to preserve bundle separation
                         close_gaps=False,  # Disable gap closing to preserve separation
                         closing_footprint_size=3,  # Smaller footprint
                         label_bundles=False,
-                        min_bundle_size=10,  # Very low to keep all visible bundles separate
+                        min_bundle_size=min_bundle_size,  # Use parameter value from function call
                         output_image_size=output_image_size,
-                        static_streamline_threshold=0.05,  # Lower threshold to detect sparser streamlines
+                        static_streamline_threshold=0.08,  # Slightly higher to reduce noise
                         white_mask_file=white_mask_patch,  # Pass white mask for filtering
                         debug=debug
                     )

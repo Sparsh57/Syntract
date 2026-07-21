@@ -8,6 +8,86 @@ from scipy import ndimage
 from scipy.signal import find_peaks
 
 
+def add_bundle_fragmentation(mask, drop_ratio=(0.1, 0.3), erosion_prob=0.7, 
+                             erosion_iterations=(1, 2), debug=False):
+    """
+    Add fragmentation to fiber bundle masks to match real histology appearance.
+    
+    This post-processes synthetic masks to create more realistic fragmentation by:
+    1. Randomly dropping 10-30% of pixels from bundles
+    2. Applying morphological erosion to break up coherent regions
+    
+    Parameters
+    ----------
+    mask : ndarray
+        Binary mask (0 or 1) with fiber bundles
+    drop_ratio : tuple of float
+        Range of pixel drop percentage (min, max). Default: (0.1, 0.3) = 10-30%
+    erosion_prob : float
+        Probability of applying erosion to each bundle. Default: 0.7 (70%)
+    erosion_iterations : tuple of int
+        Range of erosion iterations (min, max). Default: (1, 2)
+    debug : bool
+        Print debug information
+        
+    Returns
+    -------
+    ndarray
+        Fragmented mask with same shape and dtype as input
+    """
+    if not np.any(mask):
+        return mask
+    
+    result = mask.copy()
+    
+    # Step 1: Randomly drop pixels from the entire mask
+    drop_pct = np.random.uniform(drop_ratio[0], drop_ratio[1])
+    nonzero_coords = np.argwhere(result > 0)
+    
+    if len(nonzero_coords) > 0:
+        n_drop = int(len(nonzero_coords) * drop_pct)
+        if n_drop > 0:
+            drop_indices = np.random.choice(len(nonzero_coords), size=n_drop, replace=False)
+            drop_coords = nonzero_coords[drop_indices]
+            result[drop_coords[:, 0], drop_coords[:, 1]] = 0
+            
+            if debug:
+                print(f"  Fragmentation: Dropped {n_drop}/{len(nonzero_coords)} pixels ({drop_pct*100:.1f}%)")
+    
+    # Step 2: Apply morphological erosion VERY LIGHTLY to rough up edges only
+    # NOTE: Pixel dropping above already creates gaps. Erosion is just for edge roughness.
+    if np.random.random() < erosion_prob:
+        # Only 1 iteration max to avoid breaking bundles into dots
+        n_iter = 1
+        
+        # Label individual bundles
+        labeled = measure.label(result, connectivity=2)
+        n_bundles = labeled.max()
+        
+        if n_bundles > 0:
+            # Erode each bundle independently but SPARINGLY
+            fragmented = np.zeros_like(result)
+            
+            for bundle_id in range(1, n_bundles + 1):
+                bundle_mask = (labeled == bundle_id).astype(np.uint8)
+                
+                # Only 30% chance to erode each bundle (not 80%)
+                if np.random.random() < 0.3:
+                    eroded = morphology.binary_erosion(bundle_mask, morphology.disk(1))
+                    fragmented = np.maximum(fragmented, eroded.astype(np.uint8))
+                else:
+                    fragmented = np.maximum(fragmented, bundle_mask)
+            
+            result = fragmented
+            
+            if debug:
+                pixels_before = np.sum(mask > 0)
+                pixels_after = np.sum(result > 0)
+                print(f"  Fragmentation: Light erosion (1 iter, 30% bundles) - pixels {pixels_before} → {pixels_after} ({100*pixels_after/pixels_before:.1f}%)")
+    
+    return result
+
+
 def create_fiber_mask(streamlines_voxel, slice_idx, orientation='axial', dims=(256, 256, 256), 
                      thickness=1, dilate=True, density_threshold=0.6, gaussian_sigma=2.0,
                      close_gaps=False, closing_footprint_size=5, label_bundles=False,

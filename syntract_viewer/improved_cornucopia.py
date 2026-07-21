@@ -331,15 +331,16 @@ class ImprovedCornucopiaAugmenter:
         
         return MultiplicativeField()
     
-    def _create_custom_multiplicative_field(self, strength_range=(0.06, 0.12), prob=0.75):
+    def _create_custom_multiplicative_field(self, strength_range=(0.06, 0.12), prob=0.75, shared=True):
         """Create multiplicative field transform with custom parameters."""
         if not CORNUCOPIA_AVAILABLE:
             return self._create_fallback_multiplicative()
         
         class CustomMultiplicativeField:
-            def __init__(self, strength_range, prob):
+            def __init__(self, strength_range, prob, shared):
                 self.strength_range = strength_range
                 self.prob = prob
+                self.shared = shared
             
             def __call__(self, x):
                 if random.random() > self.prob:
@@ -347,13 +348,13 @@ class ImprovedCornucopiaAugmenter:
                 
                 strength = random.uniform(*self.strength_range)
                 try:
-                    mul_field = RandomMulFieldTransform(vmax=strength, order=3, shape=6)
+                    mul_field = RandomMulFieldTransform(vmax=strength, order=3, shape=6, shared=self.shared)
                     return mul_field(x)
                 except Exception as e:
                     print(f"    Custom multiplicative field failed: {e}")
                     return x
         
-        return CustomMultiplicativeField(strength_range, prob)
+        return CustomMultiplicativeField(strength_range, prob, shared)
     
     def _create_optical_intensity_transform(self):
         """Create optical intensity transform."""
@@ -411,15 +412,13 @@ class ImprovedCornucopiaAugmenter:
     def _create_random_spheres_debris(self):
         """Create random spheres debris simulation."""
         class RandomSpheresDebris:
-            def __init__(self, n_spheres=(1, 5), radius_range=(2, 8), intensity_range=(0.1, 0.8), prob=0.0):  # DISABLED - prob=0.0
+            def __init__(self, n_spheres=(1, 5), radius_range=(2, 8), intensity_range=(0.1, 0.8), prob=0.2):  # Controlled artifact augmentation
                 self.n_spheres = n_spheres
                 self.radius_range = radius_range
                 self.intensity_range = intensity_range
-                self.prob = prob  # DISABLED to remove large circles/spheres
+                self.prob = prob  # Controlled augmentation to improve model robustness
             
             def __call__(self, x):
-                # DISABLED: No spheres will be generated
-                return x
                 if random.random() > self.prob:
                     return x
                 
@@ -461,15 +460,13 @@ class ImprovedCornucopiaAugmenter:
     def _create_random_shapes_debris(self):
         """Create random shapes debris simulation."""
         class RandomShapesDebris:
-            def __init__(self, n_shapes=(1, 3), size_range=(4, 10), intensity_range=(0.15, 0.35), prob=0.0):  # DISABLED - prob=0.0
+            def __init__(self, n_shapes=(1, 3), size_range=(4, 10), intensity_range=(0.15, 0.35), prob=0.25):  # Controlled artifact augmentation
                 self.n_shapes = n_shapes
                 self.size_range = size_range
                 self.intensity_range = intensity_range
-                self.prob = prob  # DISABLED to remove large circles/shapes
+                self.prob = prob  # Controlled augmentation to teach fiber vs noise discrimination
             
             def __call__(self, x):
-                # DISABLED: No shapes will be generated
-                return x
                 if random.random() > self.prob:
                     return x
                 
@@ -942,15 +939,13 @@ class ImprovedCornucopiaAugmenter:
     def _create_fallback_random_shapes(self):
         """Create fallback random shapes implementation."""
         class FallbackRandomShapes:
-            def __init__(self, n_shapes_range=(3, 12), size_range=(0.05, 0.3), intensity_range=(0.3, 1.5), prob=0.0):  # DISABLED - prob=0.0
+            def __init__(self, n_shapes_range=(3, 12), size_range=(0.05, 0.3), intensity_range=(0.3, 1.5), prob=0.2):  # Controlled artifact augmentation
                 self.n_shapes_range = n_shapes_range
                 self.size_range = size_range
                 self.intensity_range = intensity_range  # Increased intensity range
-                self.prob = prob  # DISABLED to remove large circles/shapes
+                self.prob = prob  # Controlled augmentation for better generalization
             
             def __call__(self, x):
-                # DISABLED: No shapes will be generated
-                return x
                 if random.random() > self.prob:
                     return x
                 
@@ -1245,7 +1240,8 @@ class ImprovedCornucopiaAugmenter:
                     if transform_type == 'multiplicative_field' and 'strength_range' in intensity_config:
                         custom_transform = self._create_custom_multiplicative_field(
                             strength_range=intensity_config.get('strength_range', (0.06, 0.12)),
-                            prob=intensity_config.get('prob', 0.75)
+                            prob=intensity_config.get('prob', 0.75),
+                            shared=intensity_config.get('shared', True)
                         )
                         tensor_img = custom_transform(tensor_img)
                     else:
@@ -1387,6 +1383,50 @@ def create_optical_presets():
         # Compatibility presets with old cornucopia_augmentation module
         'clinical_simulation': {
             'intensity': {'type': 'smooth_multiplicative'}  # Keep this completely clean
+        },
+        
+        # NEW: RandomMulFieldTransform-focused presets for bias field simulation
+        'multiplicative_field_subtle': {
+            'intensity': {'type': 'multiplicative_field', 'strength_range': (0.05, 0.15), 'prob': 0.85}
+        },
+        
+        'multiplicative_field_moderate': {
+            'intensity': {'type': 'multiplicative_field', 'strength_range': (0.15, 0.35), 'prob': 0.9},
+            'noise': {'type': 'gamma_speckle', 'intensity_range': (0.2, 3.0), 'prob': 0.7}
+        },
+        
+        'multiplicative_field_aggressive': {
+            'intensity': {'type': 'multiplicative_field', 'strength_range': (0.35, 0.8), 'prob': 0.95},
+            'noise': {'type': 'gaussian_mixture', 'sigma_range': (0.3, 1.2), 'prob': 0.8}
+        },
+        
+        'multiplicative_field_extreme': {
+            'intensity': {'type': 'multiplicative_field', 'strength_range': (0.6, 1.5), 'prob': 0.98},
+            'noise': {'type': 'noncentral_chi', 'df_range': (0.5, 3), 'nc_range': (1.5, 5.0), 'prob': 0.9}
+        },
+        
+        'smooth_multiplicative_field': {
+            'intensity': {'type': 'smooth_multiplicative', 'field_strength': (0.1, 0.3), 'smoothness': (2, 3), 'prob': 0.85}
+        },
+        
+        'smooth_multiplicative_with_noise': {
+            'intensity': {'type': 'smooth_multiplicative', 'field_strength': (0.15, 0.35), 'smoothness': (2, 4), 'prob': 0.9},
+            'noise': {'type': 'gamma_speckle', 'intensity_range': (0.15, 2.5), 'prob': 0.75}
+        },
+        
+        # NEW: Per-channel color variation presets (shared=False for RGB color shifts)
+        'color_field_subtle': {
+            'intensity': {'type': 'multiplicative_field', 'strength_range': (0.05, 0.15), 'prob': 0.85, 'shared': False}
+        },
+        
+        'color_field_moderate': {
+            'intensity': {'type': 'multiplicative_field', 'strength_range': (0.15, 0.35), 'prob': 0.9, 'shared': False},
+            'noise': {'type': 'gamma_speckle', 'intensity_range': (0.2, 3.0), 'prob': 0.7}
+        },
+        
+        'color_field_aggressive': {
+            'intensity': {'type': 'multiplicative_field', 'strength_range': (0.35, 0.8), 'prob': 0.95, 'shared': False},
+            'noise': {'type': 'gaussian_mixture', 'sigma_range': (0.3, 1.2), 'prob': 0.8}
         }
     }
 
