@@ -614,7 +614,8 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
             colors = []
             
             # Use streamlines_for_mask (filtered) instead of streamlines_voxel (unfiltered)
-            streamlines_to_draw = streamlines_for_mask if white_mask_slice is not None else streamlines_voxel
+            # streamlines_to_draw = streamlines_for_mask if white_mask_slice is not None else streamlines_voxel
+            streamlines_to_draw = streamlines_voxel # Margarita: applied WM mask only to masks, not images
             
             for sl in streamlines_to_draw:
                 sl_dense = densify_streamline(sl)
@@ -636,27 +637,9 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
                 base_opacity = max(0.0, (1.0 - min_distance / 2.0) * 0.4)
 
                 for seg_idx, seg in enumerate(segs):
-                    # SEGMENT-LEVEL white mask filtering
-                    # Even though streamlines are filtered, we need to ensure segments don't extend into non-WM areas
-                    if white_mask_slice is not None:
-                        # Check both endpoints of the segment using ORIGINAL z coordinates (not z_plot)
-                        # seg shape is (2, 2) where seg[0] is start point [x, z_plot], seg[1] is end point [x, z_plot]
-                        start_x = int(np.clip(seg[0, 0], 0, white_mask_slice.shape[0] - 1))
-                        # Use original z array (not z_plot) for mask lookup
-                        start_z = int(np.clip(z[seg_idx], 0, white_mask_slice.shape[1] - 1))
-                        
-                        end_x = int(np.clip(seg[1, 0], 0, white_mask_slice.shape[0] - 1))
-                        end_z = int(np.clip(z[seg_idx + 1], 0, white_mask_slice.shape[1] - 1))
-                        
-                        # Check if BOTH endpoints are in white matter
-                        start_in_wm = white_mask_slice[start_x, start_z] > 0
-                        end_in_wm = white_mask_slice[end_x, end_z] > 0
-                        
-                        # Only draw segment if at least one endpoint is in white matter
-                        # This allows segments that partially cross WM boundaries
-                        if not (start_in_wm or end_in_wm):
-                            continue
-                    
+                    # NO SEGMENT-LEVEL white mask filtering for IMAGES
+                    # White mask filtering is ONLY applied to masks, not to synthetic images
+                    # This ensures synthetic images show ALL streamlines regardless of WM boundaries
                     segments.append(seg)
                     colors.append(tract_color + (base_opacity,))
 
@@ -1108,11 +1091,11 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
     output_size = max(output_image_size) if output_image_size else 256
     size_scale = output_size / 256.0  # Scale factor relative to base 256x256
     
-    # HIGH-DENSITY specific parameters - wider masks that merge nearby bundles
-    adaptive_thickness = max(2, int(mask_thickness * size_scale))  # Wider for better visibility
+    # HIGH-DENSITY specific parameters - slightly tighter masks that follow fiber bundles without missing bundles
+    adaptive_thickness = max(1, int(mask_thickness * size_scale * 0.85))  # Slight thickness reduction (15% tighter)
     # Lower density threshold to capture sparser white matter tracts
     high_density_threshold = max(0.01, density_threshold * (1.0 / max(1.0, size_scale)))  # Permissive threshold
-    adaptive_gaussian_sigma = max(1.0, gaussian_sigma * size_scale * 0.5)  # More smoothing for connectivity
+    adaptive_gaussian_sigma = max(0.6, gaussian_sigma * size_scale * 0.65)  # Slight smoothing reduction (35% tighter)
     # Permissive minimum bundle size - keeps smaller bundles
     high_density_min_bundle_size = max(1, int(min_bundle_size * size_scale * 0.01))  # Very permissive bundle size filtering
     
@@ -1191,10 +1174,38 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
         if debug:
             print(f"  Smoothing complete")
     
+    # CRITICAL: Apply white mask as POST-PROCESSING to remove leaked areas
+    # This ensures mask dilation/smoothing doesn't spread into non-WM regions
+    if white_mask_slice is not None:
+        # Multiply final mask by white mask to strictly constrain to WM
+        mask_before = np.sum(high_density_mask > 0)
+        high_density_mask = high_density_mask * white_mask_slice
+        mask_after = np.sum(high_density_mask > 0)
+        if debug:
+            print(f"  Applied white mask post-processing filter")
+            print(f"    Mask pixels before: {mask_before}, after: {mask_after}, removed: {mask_before - mask_after}")
+    
     # Apply the same rotation as the regular masks
     high_density_mask = np.rot90(high_density_mask)
     # Apply vertical flip to match the image orientation (bottom to top)
     high_density_mask = np.flipud(high_density_mask)
+    
+    # FRAGMENTATION DISABLED: Keep masks solid like real data
+    # The sparse image (50-70% of fibers) already provides training difficulty
+    # No need to also fragment the mask
+    if False and np.any(high_density_mask):
+        from .masking import add_bundle_fragmentation
+        high_density_mask_original_sum = np.sum(high_density_mask > 0)
+        high_density_mask = add_bundle_fragmentation(
+            high_density_mask,
+            drop_ratio=(0.05, 0.15),  # Drop 5-15% of pixels (reduced since image is also subsampled)
+            erosion_prob=0.6,  # 60% chance to apply erosion
+            erosion_iterations=(1, 2),  # 1-2 erosion iterations
+            debug=debug
+        )
+        high_density_mask_fragmented_sum = np.sum(high_density_mask > 0)
+        if debug:
+            print(f"  Bundle fragmentation applied: {high_density_mask_original_sum} → {high_density_mask_fragmented_sum} pixels")
     
     # DEBUG: Check mask content
     mask_nonzero = np.sum(high_density_mask > 0)
