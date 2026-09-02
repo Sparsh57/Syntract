@@ -2,7 +2,12 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-Longer orientation docs: [AI_CONTEXT.md](AI_CONTEXT.md) (read first), [.github/copilot-instructions.md](.github/copilot-instructions.md). Full API + architecture reference: [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md). In-depth code review with prioritized bug list: [docs/CODEBASE_REVIEW.md](docs/CODEBASE_REVIEW.md). Keep all three instruction files in sync when changing project-wide rules.
+Full API + architecture reference: [docs/DOCUMENTATION.md](docs/DOCUMENTATION.md).
+
+Some orientation docs are intentionally local-only (untracked): `AI_CONTEXT.md`,
+`.github/copilot-instructions.md`, and `docs/CODEBASE_REVIEW.md` (the prioritized
+bug list). If you have them on disk, read `AI_CONTEXT.md` first and keep it in sync
+with this file when changing project-wide rules.
 
 ## Commands
 
@@ -124,7 +129,7 @@ Gotchas baked into these scripts (don't re-break):
 
 ## Known bugs (do not paper over, fix properly)
 
-See [docs/CODEBASE_REVIEW.md](docs/CODEBASE_REVIEW.md) for full details and remediation steps.
+Full details and remediation steps are in `docs/CODEBASE_REVIEW.md` (local-only, untracked).
 
 | Priority | File | Bug |
 |---|---|---|

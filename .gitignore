@@ -16,6 +16,13 @@ patches_*/
 /viz_preview/
 *.png
 *.npy
+*.tif
+*.tiff
+
+# Inference / extraction output dirs (large binaries + run summaries)
+/fiber3d_out/
+/sliding_infer_out/
+sliding_infer_out_*/
 
 # Training artifacts
 checkpoints/
@@ -47,6 +54,18 @@ Visualize_npy.py
 visualize_one_patch.py
 visualize_patch_with_mask.py
 visualize_training_inputs.py
+visualize_patch_256.py
+visualize_poisson_soft_patch.py
+visualize_thick_binary_patch.py
+visualize_nifti_trk.py
+
+# Domain-gap diagnostics + one-off extraction (local experiments)
+probe_brightness_shortcut.py
+real_vs_training.py
+extract_mf283_slice036.py
+synthetic-training/download_slice049.sh
+locate_region_in_slice.ipynb
+view_slices.ipynb
 validate_dataset.py
 syntract_slide.html
 densify_all_trks.sh
@@ -58,6 +77,7 @@ synthetic-training/view_prediction_npy_gui.py
 
 # Scratch docs (kept on disk, not version-controlled)
 AI_CONTEXT.md
+docs/CODEBASE_REVIEW.md
 HANDOFF.md
 OUTPUT_FORMAT.md
 BRIGHTNESS_AND_COORDINATES.md
