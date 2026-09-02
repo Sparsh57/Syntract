@@ -98,6 +98,8 @@ def render_trk(
     patch_use_gpu: bool,
     new_dim,
     temp_dir_base: str,
+    fiber_smoothing_sigma_range=None,
+    mask_smoothing_sigma_range=None,
 ):
     target_dir = output_dir / trk_path.stem
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -138,7 +140,8 @@ def render_trk(
     )
     create_3d = get_create_3d_fn()
 
-    for nii_f in nii_files:
+    import random as _random
+    for _patch_idx, nii_f in enumerate(nii_files):
         nii_ext = ".nii.gz" if nii_f.endswith(".nii.gz") else ".nii"
         patch_base = nii_f[: -len(nii_ext)]
         trk_f = patch_base + ".trk"
@@ -146,6 +149,20 @@ def render_trk(
         trk_path_out = target_dir / trk_f
         if not trk_path_out.exists():
             continue
+
+        # Domain randomization on fiber THICKNESS: vary per patch so the model
+        # learns the invariant (a continuous tubular structure) rather than a
+        # fixed width. Length/curvature already vary naturally per patch.
+        # Deterministic per patch (idx-seeded) for reproducible precomputes.
+        _rng = _random.Random(1000 + _patch_idx)
+        _fiber_sigma = fiber_smoothing_sigma
+        _mask_sigma = mask_smoothing_sigma
+        if fiber_smoothing_sigma_range is not None:
+            _fiber_sigma = _rng.uniform(float(fiber_smoothing_sigma_range[0]),
+                                        float(fiber_smoothing_sigma_range[1]))
+        if mask_smoothing_sigma_range is not None:
+            _mask_sigma = _rng.uniform(float(mask_smoothing_sigma_range[0]),
+                                       float(mask_smoothing_sigma_range[1]))
         # Always emit compressed _3d outputs so the cached training loader
         # (SyntheticDataset3D globs *_3d.nii.gz) finds them regardless of whether
         # the raw extracted patch was .nii or .nii.gz.
@@ -171,7 +188,7 @@ def render_trk(
             fiber_intensity_max=fiber_intensity_max,
             fiber_max_boost=fiber_max_boost,
             fiber_opacity=fiber_opacity,
-            fiber_smoothing_sigma=fiber_smoothing_sigma,
+            fiber_smoothing_sigma=_fiber_sigma,
             fiber_antialias=fiber_antialias,
             min_streamlines_rendered=min_streamlines_rendered,
             fiber_brightness_variation=fiber_brightness_variation,
@@ -200,7 +217,7 @@ def render_trk(
             dash_cross_sigma=dash_cross_sigma,
             banding_strength=banding_strength,
             banding_axis=banding_axis,
-            mask_smoothing_sigma=mask_smoothing_sigma,
+            mask_smoothing_sigma=_mask_sigma,
             mask_binary_threshold=mask_binary_threshold,
             soft_mask=soft_mask,
             use_gpu=use_gpu,
@@ -286,6 +303,13 @@ def main():
                         help="Multiplier on added fiber brightness after capping (default: 0.72)")
     parser.add_argument("--fiber_smoothing_sigma", type=float, default=0.35,
                         help="Smooth only the rendered fiber boost to reduce pixel stair-steps (default: 0.35)")
+    parser.add_argument("--fiber_smoothing_sigma_range", type=float, nargs=2, default=None,
+                        metavar=("LO", "HI"),
+                        help="Per-patch random fiber thickness (overrides --fiber_smoothing_sigma). "
+                             "Domain randomization so the model learns structure, not a fixed width.")
+    parser.add_argument("--mask_smoothing_sigma_range", type=float, nargs=2, default=None,
+                        metavar=("LO", "HI"),
+                        help="Per-patch random mask thickness (overrides --mask_smoothing_sigma).")
     parser.add_argument("--fiber_antialias", action="store_true",
                         help="Use CPU subvoxel antialias rendering for less blocky streamlines")
     parser.add_argument("--min_streamlines_rendered", type=int, default=20,
@@ -400,6 +424,8 @@ def main():
             patch_use_gpu=args.patch_use_gpu,
             new_dim=new_dim,
             temp_dir_base=fast_tmp,
+            fiber_smoothing_sigma_range=args.fiber_smoothing_sigma_range,
+            mask_smoothing_sigma_range=args.mask_smoothing_sigma_range,
         )
         rendered = len(list((output_dir / trk_path.stem).glob("*_3d.nii.gz")))
         total = len(list(output_dir.rglob("*_3d.nii.gz")))
