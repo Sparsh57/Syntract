@@ -816,12 +816,23 @@ def main(args):
         save_last=True,
         save_top_k=1,
     )
+    # UNCONDITIONAL periodic snapshot at TRAIN-epoch end (not tied to validation).
+    # The val-monitored checkpoint above freezes if val_loss goes non-finite (the
+    # "checkpoints stuck at epoch 14 while training runs to 150" bug). This one
+    # saves every N epochs regardless of val, so we always capture late weights.
+    periodic_callback = ModelCheckpoint(
+        dirpath=args.checkpoint_dir,
+        filename="epoch-{epoch:03d}",
+        every_n_epochs=10,
+        save_top_k=-1,                 # keep all periodic snapshots
+        save_on_train_epoch_end=True,  # fire at train-epoch end, independent of val
+    )
     timing_callback = ThroughputProfilerCallback(
         print_every_batches=max(10, args.log_every_n_steps),
         window=max(20, args.log_every_n_steps * 2),
     )
 
-    callbacks = [checkpoint_callback, timing_callback]
+    callbacks = [checkpoint_callback, periodic_callback, timing_callback]
     real_proxy_zarr = _path_or_none(args.real_proxy_zarr)
     if real_proxy_zarr is not None:
         callbacks.append(RealLSMProxyCallback(
