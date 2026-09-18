@@ -56,8 +56,8 @@ viewer = ["neuroglancer>=2.36"]
 dev = ["pytest>=7.0", "pyflakes>=3.0"]
 
 [project.urls]
-Repository = "https://github.com/Sparsh57/Syntract"
-Issues = "https://github.com/Sparsh57/Syntract/issues"
+Repository = "https://github.com/Sparsh57/Syntract-3D"
+Issues = "https://github.com/Sparsh57/Syntract-3D/issues"
 
 [project.scripts]
 syntract = "syntract:main"

@@ -43,8 +43,8 @@ Python 3.10 or newer. A CUDA GPU is required for training and for any 128³
 inference; the preprocessing and rendering code falls back to CPU automatically.
 
 ```bash
-git clone https://github.com/Sparsh57/Syntract.git
-cd Syntract
+git clone https://github.com/Sparsh57/Syntract-3D.git
+cd Syntract-3D
 python -m venv venv && source venv/bin/activate
 pip install -r requirements.txt        # exact pins used for the paper experiments
 # optional GPU acceleration of preprocessing/rendering (CUDA 12):
