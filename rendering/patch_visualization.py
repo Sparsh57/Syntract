@@ -1,0 +1,241 @@
+#!/usr/bin/env python
+"""
+DEPRECATED: Patch Extraction Module for Syntract Viewer
+
+This module is largely deprecated in favor of the integrated patch-first optimization 
+in syntract.py. The visualization function _generate_patch_visualization() is still 
+used by the main pipeline.
+
+For new patch extraction, use:
+  python syntract.py --input brain.nii.gz --trk fibers.trk --total_patches 100
+
+Features:
+- Patch visualization generation with orange blob support  
+- Smart Cornucopia preset selection
+- Multiple contrast enhancement options
+"""
+import os
+import random
+import time
+import argparse
+from typing import List, Tuple, Dict, Optional
+
+try:
+    from .slice_renderer import visualize_nifti_with_trk_coronal
+except ImportError:
+    from slice_renderer import visualize_nifti_with_trk_coronal
+
+
+def extract_random_patches(nifti_file: str, 
+                          trk_files: List[str], 
+                          output_dir: str,
+                          total_patches: int = 100,
+                          patch_size: Tuple[int, int] = (1024, 1024),
+                          min_streamlines_per_patch: int = 50,
+                          random_state: Optional[int] = None,
+                          prefix: str = "patch",
+                          batch_size: int = 50,
+                          save_masks: bool = True,
+                          contrast_method: str = 'clahe',
+                          background_enhancement: str = 'preserve_edges',
+                          cornucopia_preset: str = 'clean_optical',
+                          tract_linewidth: float = 1.0,
+                          mask_thickness: int = 1,
+                          density_threshold: float = 0.15,
+                          gaussian_sigma: float = 2.0,
+                          close_gaps: bool = False,
+                          closing_footprint_size: int = 5,
+                          label_bundles: bool = False,
+                          min_bundle_size: int = 20,
+                          enable_orange_blobs: bool = False,
+                          orange_blob_probability: float = 0.3,
+                          **kwargs) -> List[Dict]:
+    """
+    DEPRECATED: Use syntract.py patch-first optimization instead.
+    
+    This function is deprecated. For patch extraction, use:
+        python syntract.py --input brain.nii.gz --trk fibers.trk \\
+            --total_patches 100 --patch_size 800 1 800
+    
+    The new patch-first method provides 80-95% performance improvements with better
+    curvature preservation and zero-tolerance spatial accuracy.
+    """
+    
+    raise DeprecationWarning(
+        "extract_random_patches() is deprecated. "
+        "Use the patch-first optimization in syntract.py instead:\n"
+        "  python syntract.py --input brain.nii.gz --trk fibers.trk \\\n"
+        "    --total_patches 100 --patch_size 800 1 800\n"
+        "This provides 80-95% performance improvements with better accuracy."
+    )
+
+
+def _generate_patch_visualization(nifti_path, trk_path, output_dir, prefix, save_masks,
+                                 contrast_method, background_enhancement, cornucopia_preset,
+                                 tract_linewidth, mask_thickness, density_threshold,
+                                 gaussian_sigma, close_gaps, closing_footprint_size,
+                                 label_bundles, min_bundle_size, enable_orange_blobs,
+                                 orange_blob_probability=0.3, output_image_size=(1024, 1024),
+                                 white_mask_path=None):
+    """Generate visualization for a single patch."""
+    
+    # Randomize cornucopia preset for variation unless explicitly set to clean_optical
+    if cornucopia_preset == 'clean_optical':
+        # Weighted selection with MUCH MORE AGGRESSIVE noise presets
+        presets = ['clean_optical', 'gamma_speckle', 'optical_with_debris', 
+                  'subtle_debris', 'clinical_simulation', 'heavy_speckle', 
+                  'extreme_noise', 'ultra_heavy_speckle', 'gaussian_mixture_aggressive',
+                  'noncentral_chi_aggressive', 'aggressive_smoothing', 'comprehensive_aggressive',
+                  'random_shapes_background', 'shapes_with_noise', 'aggressive_shapes']  # Added random shapes presets
+        # Weights: clean (1%), moderate (12%), heavy (20%), extreme (30%), new aggressive (25%), shapes (12%) - MUCH MORE NOISE
+        weights = [0.01, 0.08, 0.12, 0.04, 0.02, 0.12, 0.08, 0.08, 0.08, 0.08, 0.04, 0.08, 0.08, 0.08, 0.05]  # Much more aggressive noise
+        random.seed(int(time.time() * 1000000) % (2**32))  # Truly random seed
+        actual_preset = random.choices(presets, weights=weights, k=1)[0]
+    else:
+        actual_preset = cornucopia_preset
+    
+    # Use coronal view for patches
+    try:
+        # Create the visualization with high-density mask support and white mask filtering
+        output_path = os.path.join(output_dir, f"{prefix}_visualization.png")
+        visualize_nifti_with_trk_coronal(
+            nifti_file=nifti_path,
+            trk_file=trk_path,
+            output_file=output_path,
+            n_slices=1,
+            slice_idx=0,  # Use middle slice
+            streamline_percentage=100.0,
+            tract_linewidth=tract_linewidth,
+            save_masks=save_masks,
+            mask_thickness=mask_thickness,
+            density_threshold=density_threshold,
+            gaussian_sigma=gaussian_sigma,
+            close_gaps=close_gaps,
+            closing_footprint_size=closing_footprint_size,
+            label_bundles=label_bundles,
+            min_bundle_size=min_bundle_size,
+            contrast_method=contrast_method,  # Use the passed contrast method parameter
+            background_enhancement=background_enhancement,
+            cornucopia_augmentation=actual_preset,
+            truly_random=True,  # Enable truly random parameters
+            output_image_size=output_image_size,
+            # High-density mask parameters
+            use_high_density_masks=True,
+            max_fiber_percentage=80.0,
+            min_fiber_percentage=10.0,
+            white_mask_file=white_mask_path
+        )
+        print(f"Saved filtered visualization: {output_path}")
+        
+        # Apply orange blobs post-processing if enabled
+        if enable_orange_blobs and os.path.exists(output_path):
+            try:
+                from .example_generation import apply_orange_blobs_to_saved_image
+                apply_orange_blobs_to_saved_image(output_path, random_state=None)
+                print(f"Applied custom orange blob to {prefix}")
+            except ImportError:
+                try:
+                    from example_generation import apply_orange_blobs_to_saved_image
+                    apply_orange_blobs_to_saved_image(output_path, random_state=None)
+                    print(f"Applied custom orange blob to {prefix}")
+                except ImportError as e:
+                    print(f"Warning: Could not apply orange blobs: {e}")
+        
+        return True  # Success
+        
+    except Exception as e:
+        print(f"Error generating patch visualization: {e}")
+        return False
+
+
+def main():
+    """DEPRECATED: Command line interface for patch extraction."""
+    print("=" * 60)
+    print("DEPRECATION WARNING:")
+    print("This patch extraction module is deprecated.")
+    print("Use the integrated patch-first optimization in syntract.py instead:")
+    print("")
+    print("  python syntract.py --input brain.nii.gz --trk fibers.trk \\")
+    print("    --total_patches 100 --patch_size 800 1 800")
+    print("")
+    print("The new method provides 80-95% performance improvements")
+    print("with better curvature preservation and spatial accuracy.")
+    print("=" * 60)
+    
+    response = input("Continue with deprecated method anyway? [y/N]: ")
+    if response.lower() != 'y':
+        print("Exiting. Please use syntract.py for patch extraction.")
+        return
+    
+    # Original argument parsing (kept for reference but will fail due to deprecated function)
+    parser = argparse.ArgumentParser(
+        description="DEPRECATED: Extract random patches from NIfTI volume with tractography data",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter
+    )
+    
+    # Input arguments
+    parser.add_argument("--nifti", required=True, help="Path to NIfTI file")
+    parser.add_argument("--trk_files", nargs='+', required=True, help="Paths to TRK files")
+    parser.add_argument("--output_dir", required=True, help="Output directory for patches")
+    
+    # Patch parameters
+    parser.add_argument("--total_patches", type=int, default=100, help="Total number of patches to extract")
+    parser.add_argument("--patch_size", type=int, nargs='+', default=[1024, 15, 1024], help="Patch size (width height depth) - use 3 values for 3D patches, 2 for 2D")
+    parser.add_argument("--min_streamlines", type=int, default=5, help="Minimum streamlines per patch")
+    parser.add_argument("--random_state", type=int, help="Random seed for reproducibility")
+    
+    # Output parameters
+    parser.add_argument("--prefix", default="patch", help="Prefix for output files")
+    parser.add_argument("--save_masks", action="store_true", help="Save fiber masks")
+    
+    # Visualization parameters
+    parser.add_argument("--contrast_method", default="clahe", choices=["none", "clahe", "equalize"],
+                       help="Contrast enhancement method")
+    parser.add_argument("--background_enhancement", default="preserve_edges",
+                       choices=["none", "preserve_edges", "enhance_contrast"],
+                       help="Background enhancement preset")
+    parser.add_argument("--cornucopia_preset", default="clean_optical",
+                       choices=["clean_optical", "gamma_speckle", "optical_with_debris", 
+                               "subtle_debris", "clinical_simulation", "heavy_speckle"],
+                       help="Cornucopia augmentation preset")
+    parser.add_argument("--tract_linewidth", type=float, default=1.0, help="Tract line width")
+    parser.add_argument("--mask_thickness", type=int, default=1, help="Mask line thickness")
+    parser.add_argument("--density_threshold", type=float, default=0.15, help="Density threshold")
+    parser.add_argument("--gaussian_sigma", type=float, default=2.0, help="Gaussian smoothing sigma")
+    parser.add_argument("--close_gaps", action="store_true", help="Close gaps in masks")
+    parser.add_argument("--closing_footprint_size", type=int, default=5, help="Gap closing footprint size")
+    parser.add_argument("--label_bundles", action="store_true", help="Label distinct bundles")
+    parser.add_argument("--min_bundle_size", type=int, default=20, help="Minimum bundle size")
+    
+    args = parser.parse_args()
+    
+    # Run patch extraction
+    results = extract_random_patches(
+        nifti_file=args.nifti,
+        trk_files=args.trk_files,
+        output_dir=args.output_dir,
+        total_patches=args.total_patches,
+        patch_size=tuple(args.patch_size),
+        min_streamlines_per_patch=args.min_streamlines,
+        random_state=args.random_state,
+        prefix=args.prefix,
+        save_masks=args.save_masks,
+        contrast_method=args.contrast_method,
+        background_enhancement=args.background_enhancement,
+        cornucopia_preset=args.cornucopia_preset,
+        tract_linewidth=args.tract_linewidth,
+        mask_thickness=args.mask_thickness,
+        density_threshold=args.density_threshold,
+        gaussian_sigma=args.gaussian_sigma,
+        close_gaps=args.close_gaps,
+        closing_footprint_size=args.closing_footprint_size,
+        label_bundles=args.label_bundles,
+        min_bundle_size=args.min_bundle_size
+    )
+    
+    print(f"\nPatch extraction completed successfully!")
+    print(f"Results: {results['patches_extracted']}/{args.total_patches} patches extracted")
+
+
+if __name__ == "__main__":
+    main()

@@ -2,53 +2,29 @@
 
 import argparse
 import os
-import sys
-import tempfile
-import shutil
 import signal
-from pathlib import Path
+import sys
 
 # Import synthesis functions
 try:
-    from synthesis.main import process_and_save
-    SYNTHESIS_AVAILABLE = True
+    from preprocessing.full_volume import process_and_save
 except ImportError:
-    try:
-        import sys
-        sys.path.append(os.path.join(os.path.dirname(__file__), 'synthesis'))
-        from main import process_and_save
-        SYNTHESIS_AVAILABLE = True
-    except ImportError:
-        SYNTHESIS_AVAILABLE = False
-        print("Warning: Synthesis module not available")
+    sys.path.append(os.path.join(os.path.dirname(__file__), 'preprocessing'))
+    from full_volume import process_and_save
 
 # Import patch-first optimization (separate from main synthesis)
 try:
-    from synthesis.patch_first_processing import process_patch_first_extraction
+    from preprocessing.patch_extraction import process_patch_first_extraction
     PATCH_FIRST_AVAILABLE = True
 except ImportError:
     try:
-        import sys
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'synthesis'))
-        from patch_first_processing import process_patch_first_extraction
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'preprocessing'))
+        from patch_extraction import process_patch_first_extraction
         PATCH_FIRST_AVAILABLE = True
     except ImportError:
         PATCH_FIRST_AVAILABLE = False
         print("Warning: Patch-first optimization module not available")
 
-# Import syntract viewer functions  
-try:
-    from syntract_viewer.generate_fiber_examples import generate_examples_original_mode
-    SYNTRACT_AVAILABLE = True
-except ImportError:
-    try:
-        import sys
-        sys.path.append(os.path.join(os.path.dirname(__file__), 'syntract_viewer'))
-        from generate_fiber_examples import generate_examples_original_mode
-        SYNTRACT_AVAILABLE = True
-    except ImportError:
-        SYNTRACT_AVAILABLE = False
-        print("Warning: Syntract viewer module not available")
 
 
 def calculate_target_dimensions(input_nifti, target_voxel_size=0.05):
@@ -135,9 +111,11 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                     density_threshold=0.6, min_bundle_size=2000, label_bundles=False,
                     output_image_size=None, cleanup_intermediate=True, white_mask_path=None, threed_output=False):
     """Main processing function"""
-    import signal
-    import sys
-    
+    if not os.path.isfile(input_nifti):
+        raise FileNotFoundError(f"Input NIfTI file not found: {input_nifti}")
+    if not os.path.isfile(input_trk):
+        raise FileNotFoundError(f"Input TRK file not found: {input_trk}")
+
     def signal_handler(signum, frame):
         """Handle various signals that might kill the process"""
         signal_names = {
@@ -247,7 +225,7 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                     print(f"\nGenerating 3D volume outputs for {patch_result['patches_extracted']} patches...")
                     
                     try:
-                        from syntract_viewer.volume_renderer import create_3d_volume_with_streamlines
+                        from rendering.volume_renderer import create_3d_volume_with_streamlines
                         
                         for patch_detail in patch_result['patch_details']:
                             patch_id = patch_detail['patch_id']
@@ -318,7 +296,7 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                     print(f"\nGenerating 2D visualizations for {patch_result['patches_extracted']} patches...")
                     
                     try:
-                        from syntract_viewer.patch_extraction import _generate_patch_visualization
+                        from rendering.patch_visualization import _generate_patch_visualization
                         
                         for patch_detail in patch_result['patch_details']:
                             patch_id = patch_detail['patch_id']
@@ -404,8 +382,6 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
         else:
             # Run base synthesis first to create files at target dimensions
             print("\nRunning base synthesis...")
-            from synthesis.main import process_and_save
-            
             synthesis_result = process_and_save(
                 original_nifti_path=input_nifti,
                 original_trk_path=input_trk,

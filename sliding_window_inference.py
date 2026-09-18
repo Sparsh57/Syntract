@@ -25,7 +25,7 @@ Examples:
 
   # From OME-Zarr on the cluster
   python sliding_window_inference.py \\
-      --zarr /orcd/data/.../data.ome.zarr \\
+      --zarr /path/to/volume.ome.zarr \\
       --region_center_zyx 19 12000 20000 \\
       --region_size_zyx 256 512 512 \\
       --checkpoint Model_prediction/best_3d-epoch=129-val_loss=0.0491.ckpt \\
@@ -44,7 +44,7 @@ import numpy as np
 import torch
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SYNTH_DIR = os.path.join(SCRIPT_DIR, "synthetic-training")
+SYNTH_DIR = os.path.join(SCRIPT_DIR, "training")
 if SCRIPT_DIR not in sys.path:
     sys.path.insert(0, SCRIPT_DIR)
 if SYNTH_DIR not in sys.path:
@@ -59,10 +59,12 @@ DEFAULT_REF_PATCH = os.path.join(SCRIPT_DIR, "Model_prediction", "patch_0001_3d.
 
 def _load_model(checkpoint_path: str, device: torch.device, pos_weight: float = 1.0):
     try:
-        from synthetic_training.unet3d import FlexibleUNet3D
+        from training.unet3d import FlexibleUNet3D
     except ImportError:
         from unet3d import FlexibleUNet3D  # type: ignore
 
+    if not os.path.isfile(checkpoint_path):
+        raise FileNotFoundError(f"Checkpoint not found: {checkpoint_path}")
     ckpt = torch.load(checkpoint_path, map_location=device)
     hparams = ckpt.get("hyper_parameters", {}) if isinstance(ckpt, dict) else {}
     allowed = [
@@ -181,8 +183,8 @@ def sliding_window_inference(
             for y0 in y_starts:
                 for x0 in x_starts:
                     patch_np = vol_pad[z0:z0 + pD, y0:y0 + pH, x0:x0 + pW]
-                    t = torch.from_numpy(patch_np).unsqueeze(0).unsqueeze(0).to(device)
-                    prob_patch = torch.sigmoid(model(t)).squeeze().cpu().numpy()
+                    patch_tensor = torch.from_numpy(patch_np).unsqueeze(0).unsqueeze(0).to(device)
+                    prob_patch = torch.sigmoid(model(patch_tensor)).squeeze().cpu().numpy()
                     w_prob = (prob_patch * weight_map).astype(np.float32)
                     acc_num[z0:z0 + pD, y0:y0 + pH, x0:x0 + pW] += w_prob
                     acc_den[z0:z0 + pD, y0:y0 + pH, x0:x0 + pW] += weight_map
@@ -220,6 +222,8 @@ def _read_zarr_region(
     except ImportError:
         raise ImportError("zarr not installed: pip install zarr ome-zarr")
 
+    if not os.path.exists(zarr_path):
+        raise FileNotFoundError(f"OME-Zarr store not found: {zarr_path}")
     store = zarr.open(zarr_path, mode="r")
     arr = None
     for key in (str(level), level):
@@ -256,6 +260,8 @@ def _read_zarr_region(
 def _tile_synthetic(ref_path: str, target_size_zyx: tuple[int, int, int]) -> tuple[np.ndarray, np.ndarray]:
     """Tile the reference 128³ synthetic patch to fill target_size_zyx (then crop)."""
     import nibabel as nib
+    if not os.path.isfile(ref_path):
+        raise FileNotFoundError(f"Reference patch not found: {ref_path} (pass --ref_patch)")
     img = nib.load(ref_path)
     ref = img.get_fdata().astype(np.float32)
     rD, rH, rW = ref.shape
@@ -335,6 +341,8 @@ def main():
     affine = None
     if args.input:
         p = args.input
+        if not os.path.isfile(p):
+            ap.error(f"--input file not found: {p}")
         if p.endswith(".npy"):
             volume = np.load(p).astype(np.float32)
         else:

@@ -23,7 +23,7 @@
 ### Task 1: `apply_poisson_shot_noise()` augmentation function
 
 **Files:**
-- Modify: `syntract_viewer/synthetic_image_augmentations.py` (add function after `apply_granular_noise`, ~line 126)
+- Modify: `rendering/volume_artifact_augmentation.py` (add function after `apply_granular_noise`, ~line 126)
 - Test: `tests/test_poisson_noise.py` (create)
 
 **Interfaces:**
@@ -38,7 +38,7 @@ Create `tests/test_poisson_noise.py`:
 import numpy as np
 import pytest
 
-from syntract_viewer.synthetic_image_augmentations import apply_poisson_shot_noise
+from rendering.volume_artifact_augmentation import apply_poisson_shot_noise
 
 
 def _half_dark_half_bright(n=64):
@@ -95,7 +95,7 @@ Expected: FAIL with `ImportError`/`cannot import name 'apply_poisson_shot_noise'
 
 - [ ] **Step 3: Implement the function**
 
-In `syntract_viewer/synthetic_image_augmentations.py`, insert directly after `apply_granular_noise` (after its `return _restore_range(...)`, ~line 126):
+In `rendering/volume_artifact_augmentation.py`, insert directly after `apply_granular_noise` (after its `return _restore_range(...)`, ~line 126):
 
 ```python
 def apply_poisson_shot_noise(
@@ -136,7 +136,7 @@ Expected: 5 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add syntract_viewer/synthetic_image_augmentations.py tests/test_poisson_noise.py
+git add rendering/volume_artifact_augmentation.py tests/test_poisson_noise.py
 git commit -m "feat: add apply_poisson_shot_noise (signal-dependent LSM noise)"
 ```
 
@@ -145,7 +145,7 @@ git commit -m "feat: add apply_poisson_shot_noise (signal-dependent LSM noise)"
 ### Task 2: Wire Poisson into the `apply_image_only_augmentations` dispatcher
 
 **Files:**
-- Modify: `syntract_viewer/synthetic_image_augmentations.py:309-390` (`apply_image_only_augmentations`)
+- Modify: `rendering/volume_artifact_augmentation.py:309-390` (`apply_image_only_augmentations`)
 - Test: `tests/test_poisson_noise.py` (append)
 
 **Interfaces:**
@@ -157,7 +157,7 @@ git commit -m "feat: add apply_poisson_shot_noise (signal-dependent LSM noise)"
 Append to `tests/test_poisson_noise.py`:
 
 ```python
-from syntract_viewer.synthetic_image_augmentations import apply_image_only_augmentations
+from rendering.volume_artifact_augmentation import apply_image_only_augmentations
 
 
 def test_dispatcher_poisson_disabled_is_identity():
@@ -220,7 +220,7 @@ Expected: 7 passed.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add syntract_viewer/synthetic_image_augmentations.py tests/test_poisson_noise.py
+git add rendering/volume_artifact_augmentation.py tests/test_poisson_noise.py
 git commit -m "feat: wire Poisson shot noise into apply_image_only_augmentations"
 ```
 
@@ -229,7 +229,7 @@ git commit -m "feat: wire Poisson shot noise into apply_image_only_augmentations
 ### Task 3: Thread Poisson through `volume_renderer.create_3d_volume_with_streamlines`
 
 **Files:**
-- Modify: `syntract_viewer/volume_renderer.py` (signature ~283-288, trigger ~1027, call ~1044-1049, CLI ~1153-1158, args pass-through ~1202-1205)
+- Modify: `rendering/volume_renderer.py` (signature ~283-288, trigger ~1027, call ~1044-1049, CLI ~1153-1158, args pass-through ~1202-1205)
 
 **Interfaces:**
 - Consumes: `apply_image_only_augmentations(..., enable_poisson_noise, poisson_gain, ...)` (Task 2).
@@ -302,8 +302,8 @@ In the `__main__` call to `create_3d_volume_with_streamlines(...)`, after `granu
 Run:
 
 ```bash
-python -c "from syntract_viewer.volume_renderer import create_3d_volume_with_streamlines as f; import inspect; p=inspect.signature(f).parameters; assert 'enable_poisson_noise' in p and 'poisson_gain' in p; print('OK')"
-python syntract_viewer/volume_renderer.py --help 2>&1 | grep -E "poisson"
+python -c "from rendering.volume_renderer import create_3d_volume_with_streamlines as f; import inspect; p=inspect.signature(f).parameters; assert 'enable_poisson_noise' in p and 'poisson_gain' in p; print('OK')"
+python rendering/volume_renderer.py --help 2>&1 | grep -E "poisson"
 ```
 
 Expected: `OK`, and both `--enable_poisson_noise` and `--poisson_gain` listed.
@@ -311,7 +311,7 @@ Expected: `OK`, and both `--enable_poisson_noise` and `--poisson_gain` listed.
 - [ ] **Step 7: Commit**
 
 ```bash
-git add syntract_viewer/volume_renderer.py
+git add rendering/volume_renderer.py
 git commit -m "feat: thread Poisson shot noise through volume_renderer"
 ```
 
@@ -320,7 +320,7 @@ git commit -m "feat: thread Poisson shot noise through volume_renderer"
 ### Task 4: Thread Poisson through `precompute_patches_3d.py`
 
 **Files:**
-- Modify: `synthetic-training/precompute_patches_3d.py` (inner fn signature ~62-66, pass-through ~183-188, CLI ~252-262, args pass-through ~355-361)
+- Modify: `training/precompute_patches_3d.py` (inner fn signature ~62-66, pass-through ~183-188, CLI ~252-262, args pass-through ~355-361)
 
 **Interfaces:**
 - Consumes: `create_3d_volume_with_streamlines(..., enable_poisson_noise, poisson_gain, ...)` (Task 3).
@@ -385,7 +385,7 @@ After `granular_noise_strength=args.granular_noise_strength,` (line 359), add:
 Run:
 
 ```bash
-python synthetic-training/precompute_patches_3d.py --help 2>&1 | grep -E "poisson"
+python training/precompute_patches_3d.py --help 2>&1 | grep -E "poisson"
 ```
 
 Expected: `--enable_poisson_noise` and `--poisson_gain` both listed.
@@ -393,7 +393,7 @@ Expected: `--enable_poisson_noise` and `--poisson_gain` both listed.
 - [ ] **Step 6: Commit**
 
 ```bash
-git add synthetic-training/precompute_patches_3d.py
+git add training/precompute_patches_3d.py
 git commit -m "feat: thread Poisson shot noise through precompute_patches_3d"
 ```
 
@@ -402,8 +402,8 @@ git commit -m "feat: thread Poisson shot noise through precompute_patches_3d"
 ### Task 5: Update the SLURM configs (precompute + train)
 
 **Files:**
-- Modify: `synthetic-training/precompute_patches.sh`
-- Modify: `synthetic-training/train_cached.sh`
+- Modify: `training/precompute_patches.sh`
+- Modify: `training/train_cached.sh`
 
 **Interfaces:**
 - Consumes: `--enable_poisson_noise` / `--poisson_gain` (Task 4); `--soft_mask`, `--mask_smoothing_sigma` (existing).
@@ -411,7 +411,7 @@ git commit -m "feat: thread Poisson shot noise through precompute_patches_3d"
 
 - [ ] **Step 1: Set the new precompute config**
 
-In `synthetic-training/precompute_patches.sh`:
+In `training/precompute_patches.sh`:
 
 1. Change `OUTPUT_DIR` default to:
 
@@ -441,7 +441,7 @@ The mask/noise block should read:
 
 - [ ] **Step 2: Point training at the new patches with a fresh checkpoint dir**
 
-In `synthetic-training/train_cached.sh`:
+In `training/train_cached.sh`:
 
 1. Change `PATCH_DIR` default to:
 
@@ -462,9 +462,9 @@ PATCH_DIR=${PATCH_DIR:-./precomputed_patches_poisson_soft}
 Run:
 
 ```bash
-bash -n synthetic-training/precompute_patches.sh && echo "precompute OK"
-bash -n synthetic-training/train_cached.sh && echo "train OK"
-grep -E "poisson|soft_mask|smoothing_sigma 0.5|banding_strength 0.35|granular_noise_strength 1.5|precomputed_patches_poisson_soft|checkpoints_poisson_soft" synthetic-training/precompute_patches.sh synthetic-training/train_cached.sh
+bash -n training/precompute_patches.sh && echo "precompute OK"
+bash -n training/train_cached.sh && echo "train OK"
+grep -E "poisson|soft_mask|smoothing_sigma 0.5|banding_strength 0.35|granular_noise_strength 1.5|precomputed_patches_poisson_soft|checkpoints_poisson_soft" training/precompute_patches.sh training/train_cached.sh
 ```
 
 Expected: both `OK`, and every expected flag present.
@@ -472,7 +472,7 @@ Expected: both `OK`, and every expected flag present.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add synthetic-training/precompute_patches.sh synthetic-training/train_cached.sh
+git add training/precompute_patches.sh training/train_cached.sh
 git commit -m "chore: precompute/train config for Poisson + soft thin masks"
 ```
 
@@ -543,7 +543,7 @@ TRK automatically:
 ```bash
 for G in 40 20; do
   OUTPUT_DIR=./precomputed_patches_probe_g${G} PATCHES_PER_TRK=3 \
-    POISSON_GAIN=$G sbatch synthetic-training/precompute_patches.sh
+    POISSON_GAIN=$G sbatch training/precompute_patches.sh
 done
 ```
 
@@ -581,20 +581,20 @@ Expected: full width ≈ 2–3 vox (max_halfwidth ≈ 1.0–1.5), `max ≤ 1.0` 
 
 - [ ] **Step 5: Set the winning gain and record GO/NO-GO**
 
-Edit `synthetic-training/precompute_patches.sh` so `--poisson_gain` is the chosen value. Fill the runlog Phase-1 verdict. Commit:
+Edit `training/precompute_patches.sh` so `--poisson_gain` is the chosen value. Fill the runlog Phase-1 verdict. Commit:
 
 ```bash
-git add synthetic-training/precompute_patches.sh docs/superpowers/plans/texture-gap-runlog.md
+git add training/precompute_patches.sh docs/superpowers/plans/texture-gap-runlog.md
 git commit -m "docs: Poisson+soft-mask probe results, lock winning gain"
 ```
 
 - [ ] **Step 6: Full precompute + train (only if gate PASS)**
 
 ```bash
-sbatch synthetic-training/precompute_patches.sh
+sbatch training/precompute_patches.sh
 # confirm a healthy count BEFORE training:
-find synthetic-training/precomputed_patches_poisson_soft -name '*_3d.nii.gz' | wc -l
-sbatch synthetic-training/train_cached.sh
+find training/precomputed_patches_poisson_soft -name '*_3d.nii.gz' | wc -l
+sbatch training/train_cached.sh
 ```
 
 Then track the three Phase-3 signals each val epoch and fill the runlog. If learnability regresses, raise `--poisson_gain` (less noise) and re-probe.

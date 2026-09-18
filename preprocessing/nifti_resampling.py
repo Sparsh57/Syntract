@@ -1,0 +1,356 @@
+import numpy as np
+import tempfile
+import gc
+import math
+
+def estimate_memory_usage(shape, dtype=np.float32):
+    """
+    Estimate memory usage for an array with given shape and dtype.
+
+    Parameters
+    ----------
+    shape : tuple
+        Shape of the array.
+    dtype : numpy.dtype, optional
+        Data type of the array.
+
+    Returns
+    -------
+    float
+        Estimated memory usage in GB.
+    """
+    bytes_per_element = np.dtype(dtype).itemsize
+    total_elements = np.prod(shape)
+    memory_gb = (total_elements * bytes_per_element) / (1024**3)
+    return memory_gb
+
+def resample_nifti(old_img, new_affine, new_shape, chunk_size=(64, 64, 64), n_jobs=-1, use_gpu=True, max_output_gb=64):
+    """
+    Resample a NIfTI image to a new resolution and shape using high-quality cubic interpolation.
+
+    Parameters
+    ----------
+    old_img : nibabel.Nifti1Image
+        Original NIfTI image.
+    new_affine : np.ndarray
+        New affine transformation matrix.
+    new_shape : tuple
+        Desired shape of the resampled volume.
+    chunk_size : tuple, optional
+        Processing chunk size.
+    n_jobs : int, optional
+        Number of CPU cores for parallel processing.
+    use_gpu : bool, optional
+        Whether to use GPU acceleration.
+    max_output_gb : float, optional
+        Maximum allowed output size in GB.
+
+    Returns
+    -------
+    np.ndarray
+        Resampled image data.
+    str
+        Path to temporary memory-mapped file.
+    """
+    est_memory_gb = estimate_memory_usage(new_shape)
+    
+    if est_memory_gb > max_output_gb:
+        scale_factor = math.pow(max_output_gb / max(0.1, est_memory_gb), 1/3)
+        safe_shape = tuple(int(dim * scale_factor) for dim in new_shape)
+        print(f"WARNING: Reducing dimensions from {new_shape} to {safe_shape} for memory safety")
+        new_shape = safe_shape
+    
+    if est_memory_gb > 10:
+        mmap_file = tempfile.NamedTemporaryFile(delete=False, suffix='.npy').name
+        output_mmap = np.lib.format.open_memmap(mmap_file, mode='w+', 
+                                               dtype=np.float32, 
+                                               shape=new_shape)
+    else:
+        mmap_file = None
+        output_mmap = None
+    
+    if use_gpu:
+        try:
+            import cupy as xp
+            from numba import cuda
+            
+            @cuda.jit(device=True)
+            def cubic_kernel_device(x):
+                """Cubic interpolation kernel for CUDA device"""
+                x = abs(x)
+                if x < 1:
+                    return (21*x*x*x - 36*x*x + 16) / 18
+                elif x < 2:
+                    return (-7*x*x*x + 36*x*x - 60*x + 32) / 18
+                else:
+                    return 0.0
+            
+            @cuda.jit(device=True)
+            def interpolate_point_device(data_in, i, j, k):
+                """High-quality cubic interpolation for CUDA device"""
+                i_center = int(round(i))
+                j_center = int(round(j))
+                k_center = int(round(k))
+                
+                result = 0.0
+                total_weight = 0.0
+                
+                for di in range(-1, 3):  # 4x4x4 neighborhood
+                    for dj in range(-1, 3):
+                        for dk in range(-1, 3):
+                            ii = i_center + di
+                            jj = j_center + dj
+                            kk = k_center + dk
+                            
+                            if (0 <= ii < data_in.shape[0] and 0 <= jj < data_in.shape[1] and 0 <= kk < data_in.shape[2]):
+                                weight_i = cubic_kernel_device(i - ii)
+                                weight_j = cubic_kernel_device(j - jj)
+                                weight_k = cubic_kernel_device(k - kk)
+                                weight = weight_i * weight_j * weight_k
+                                
+                                result += data_in[ii, jj, kk] * weight
+                                total_weight += weight
+                
+                return result / max(total_weight, 1e-10)
+            
+            @cuda.jit
+            def resample_kernel(new_data, data_in, new_affine, old_affine_inv, new_shape):
+                x, y, z = cuda.grid(3)
+                if x < new_shape[0] and y < new_shape[1] and z < new_shape[2]:
+                    x_mm = new_affine[0, 0] * x + new_affine[0, 1] * y + new_affine[0, 2] * z + new_affine[0, 3]
+                    y_mm = new_affine[1, 0] * x + new_affine[1, 1] * y + new_affine[1, 2] * z + new_affine[1, 3]
+                    z_mm = new_affine[2, 0] * x + new_affine[2, 1] * y + new_affine[2, 2] * z + new_affine[2, 3]
+                    
+                    i = old_affine_inv[0, 0] * x_mm + old_affine_inv[0, 1] * y_mm + old_affine_inv[0, 2] * z_mm + old_affine_inv[0, 3]
+                    j = old_affine_inv[1, 0] * x_mm + old_affine_inv[1, 1] * y_mm + old_affine_inv[1, 2] * z_mm + old_affine_inv[1, 3]
+                    k = old_affine_inv[2, 0] * x_mm + old_affine_inv[2, 1] * y_mm + old_affine_inv[2, 2] * z_mm + old_affine_inv[2, 3]
+                    
+                    # Use cubic interpolation for high quality results
+                    new_data[x, y, z] = interpolate_point_device(data_in, i, j, k)
+            
+            data_in = xp.asarray(old_img.get_fdata(), dtype=xp.float32)
+            old_affine_inv = xp.linalg.inv(xp.asarray(old_img.affine))
+            
+            if output_mmap is not None:
+                new_data = None
+                max_chunk_size = min(chunk_size[0], new_shape[0]), min(chunk_size[1], new_shape[1]), min(chunk_size[2], new_shape[2])
+                
+                @cuda.jit
+                def resample_chunk_kernel(chunk_data, data_in, new_affine, old_affine_inv, x_offset, y_offset, z_offset):
+                    x, y, z = cuda.grid(3)
+                    if x < chunk_data.shape[0] and y < chunk_data.shape[1] and z < chunk_data.shape[2]:
+                        global_x = x + x_offset
+                        global_y = y + y_offset
+                        global_z = z + z_offset
+                        
+                        x_mm = new_affine[0, 0] * global_x + new_affine[0, 1] * global_y + new_affine[0, 2] * global_z + new_affine[0, 3]
+                        y_mm = new_affine[1, 0] * global_x + new_affine[1, 1] * global_y + new_affine[1, 2] * global_z + new_affine[1, 3]
+                        z_mm = new_affine[2, 0] * global_x + new_affine[2, 1] * global_y + new_affine[2, 2] * global_z + new_affine[2, 3]
+                        
+                        i = old_affine_inv[0, 0] * x_mm + old_affine_inv[0, 1] * y_mm + old_affine_inv[0, 2] * z_mm + old_affine_inv[0, 3]
+                        j = old_affine_inv[1, 0] * x_mm + old_affine_inv[1, 1] * y_mm + old_affine_inv[1, 2] * z_mm + old_affine_inv[1, 3]
+                        k = old_affine_inv[2, 0] * x_mm + old_affine_inv[2, 1] * y_mm + old_affine_inv[2, 2] * z_mm + old_affine_inv[2, 3]
+                        
+                        # Use cubic interpolation for high quality results
+                        val = interpolate_point_device(data_in, i, j, k)
+                        chunk_data[x, y, z] = val
+                
+                for x_start in range(0, new_shape[0], max_chunk_size[0]):
+                    x_end = min(x_start + max_chunk_size[0], new_shape[0])
+                    for y_start in range(0, new_shape[1], max_chunk_size[1]):
+                        y_end = min(y_start + max_chunk_size[1], new_shape[1])
+                        for z_start in range(0, new_shape[2], max_chunk_size[2]):
+                            z_end = min(z_start + max_chunk_size[2], new_shape[2])
+                            
+                            chunk_shape = (x_end - x_start, y_end - y_start, z_end - z_start)
+                            chunk_data = xp.zeros(chunk_shape, dtype=xp.float32)
+                            
+                            threads_per_block = (8, 8, 8)
+                            blocks_per_grid = tuple((dim + threads_per_block[i] - 1) // threads_per_block[i] 
+                                                  for i, dim in enumerate(chunk_shape))
+                            
+                            resample_chunk_kernel[blocks_per_grid, threads_per_block](
+                                chunk_data, data_in, xp.asarray(new_affine), old_affine_inv, x_start, y_start, z_start
+                            )
+                            
+                            output_mmap[x_start:x_end, y_start:y_end, z_start:z_end] = chunk_data.get()
+                            del chunk_data
+                            gc.collect()
+                
+                new_data = output_mmap
+            else:
+                new_data = xp.zeros(new_shape, dtype=xp.float32)
+                
+                threads_per_block = (8, 8, 8)
+                blocks_per_grid = tuple((dim + threads_per_block[i] - 1) // threads_per_block[i] 
+                                      for i, dim in enumerate(new_shape))
+                
+                resample_kernel[blocks_per_grid, threads_per_block](
+                    new_data, data_in, xp.asarray(new_affine), old_affine_inv, new_shape
+                )
+                
+                if isinstance(new_data, xp.ndarray):
+                    new_data = new_data.get()
+            
+        except Exception as e:
+            print(f"GPU processing failed: {e}. Falling back to CPU.")
+            import numpy as xp
+            use_gpu = False
+    
+    if not use_gpu:
+        from scipy.ndimage import map_coordinates
+
+        data_in = old_img.get_fdata().astype(np.float32)
+        old_affine_inv = np.linalg.inv(old_img.affine)
+        # Direct map from output voxel -> input voxel coordinates.
+        vox_to_vox = old_affine_inv @ new_affine
+
+        if output_mmap is not None:
+            new_data = output_mmap
+        else:
+            new_data = np.zeros(new_shape, dtype=np.float32)
+
+        # Cubic B-spline interpolation (order=3), matching the GPU cubic kernel
+        # in quality. Process Z slabs so the coordinate grid never exceeds a few
+        # hundred MB even for very large output volumes.
+        xs = np.arange(new_shape[0], dtype=np.float32)
+        ys = np.arange(new_shape[1], dtype=np.float32)
+        slab = max(1, int(chunk_size[2]))
+        for z0 in range(0, new_shape[2], slab):
+            z1 = min(z0 + slab, new_shape[2])
+            zs = np.arange(z0, z1, dtype=np.float32)
+            gx, gy, gz = np.meshgrid(xs, ys, zs, indexing="ij")
+            coords = np.stack([gx.ravel(), gy.ravel(), gz.ravel(), np.ones(gx.size, dtype=np.float32)])
+            src = (vox_to_vox @ coords)[:3]
+            resampled = map_coordinates(data_in, src, order=3, mode="constant", cval=0.0, prefilter=True)
+            new_data[:, :, z0:z1] = resampled.reshape(gx.shape).astype(np.float32)
+
+    if output_mmap is not None:
+        output_mmap.flush()
+    
+    if use_gpu and hasattr(new_data, 'get'):
+        new_data = new_data.get()
+    
+    return new_data, mmap_file
+
+
+def resample_nifti_patch(patch_img, target_affine, target_shape, use_gpu=False):
+    """
+    Resample a small NIfTI patch to target resolution.
+    
+    This is an optimized version of resample_nifti specifically for small patches
+    that doesn't require chunking or memory mapping.
+    
+    Parameters
+    ----------
+    patch_img : nibabel.Nifti1Image
+        Input patch image
+    target_affine : np.ndarray
+        Target affine transformation matrix
+    target_shape : tuple
+        Target shape (x, y, z)
+    use_gpu : bool
+        Whether to use GPU acceleration
+        
+    Returns
+    -------
+    np.ndarray
+        Resampled patch data
+    """
+    import numpy as np
+    data_in = patch_img.get_fdata().astype(np.float32)
+    old_affine_inv = np.linalg.inv(patch_img.affine)
+
+    # GPU-accelerated path via torch grid_sample when available
+    if use_gpu:
+        try:
+            import torch
+            import torch.nn.functional as F
+            if torch.cuda.is_available():
+                device = torch.device("cuda")
+                data_t = torch.from_numpy(data_in).unsqueeze(0).unsqueeze(0).to(device)
+
+                target_shape = tuple(int(x) for x in target_shape)
+                xs = torch.arange(target_shape[0], device=device, dtype=torch.float32)
+                ys = torch.arange(target_shape[1], device=device, dtype=torch.float32)
+                zs = torch.arange(target_shape[2], device=device, dtype=torch.float32)
+                gx, gy, gz = torch.meshgrid(xs, ys, zs, indexing='ij')
+
+                coords_flat = torch.stack([gx, gy, gz, torch.ones_like(gx)], dim=-1).reshape(-1, 4).T
+                target_affine_t = torch.as_tensor(target_affine, device=device, dtype=torch.float32)
+                old_affine_inv_t = torch.as_tensor(old_affine_inv, device=device, dtype=torch.float32)
+
+                world = target_affine_t @ coords_flat
+                old_vox = old_affine_inv_t @ world
+
+                i = old_vox[0].reshape(target_shape)
+                j = old_vox[1].reshape(target_shape)
+                k = old_vox[2].reshape(target_shape)
+
+                grid = torch.stack([
+                    (k / max(data_in.shape[2] - 1, 1)) * 2 - 1,
+                    (j / max(data_in.shape[1] - 1, 1)) * 2 - 1,
+                    (i / max(data_in.shape[0] - 1, 1)) * 2 - 1,
+                ], dim=-1).unsqueeze(0)  # (1, D, H, W, 3)
+
+                sampled = F.grid_sample(
+                    data_t,
+                    grid,
+                    mode="bilinear",
+                    padding_mode="zeros",
+                    align_corners=True,
+                )
+                return sampled.squeeze(0).squeeze(0).cpu().numpy().astype(np.float32)
+        except Exception as e:
+            print(f"GPU resample fallback to CPU due to: {e}")
+            # fall through to CPU
+
+    # CPU fallback (original trilinear interpolation)
+    new_data = np.zeros(target_shape, dtype=np.float32)
+
+    x_coords, y_coords, z_coords = np.mgrid[0:target_shape[0], 0:target_shape[1], 0:target_shape[2]]
+    coords_flat = np.vstack([x_coords.ravel(), y_coords.ravel(), z_coords.ravel(), np.ones(x_coords.size)])
+
+    world_coords = target_affine @ coords_flat
+    old_vox_coords = old_affine_inv @ world_coords
+
+    i_coords = old_vox_coords[0, :]
+    j_coords = old_vox_coords[1, :]
+    k_coords = old_vox_coords[2, :]
+
+    i0 = np.floor(i_coords).astype(int)
+    j0 = np.floor(j_coords).astype(int)
+    k0 = np.floor(k_coords).astype(int)
+
+    wi = i_coords - i0
+    wj = j_coords - j0
+    wk = k_coords - k0
+
+    def is_valid(i, j, k):
+        return ((i >= 0) & (i < data_in.shape[0]) &
+                (j >= 0) & (j < data_in.shape[1]) &
+                (k >= 0) & (k < data_in.shape[2]))
+
+    output_flat = np.zeros(x_coords.size, dtype=np.float32)
+
+    for di in [0, 1]:
+        for dj in [0, 1]:
+            for dk in [0, 1]:
+                i_curr = i0 + di
+                j_curr = j0 + dj
+                k_curr = k0 + dk
+
+                valid_curr = is_valid(i_curr, j_curr, k_curr)
+                valid_indices = np.where(valid_curr)[0]
+
+                if len(valid_indices) > 0:
+                    weight_i = (1 - wi) if di == 0 else wi
+                    weight_j = (1 - wj) if dj == 0 else wj
+                    weight_k = (1 - wk) if dk == 0 else wk
+                    weights = weight_i * weight_j * weight_k
+
+                    sampled = data_in[i_curr[valid_indices], j_curr[valid_indices], k_curr[valid_indices]]
+                    output_flat[valid_indices] += sampled * weights[valid_indices]
+
+    new_data = output_flat.reshape(target_shape)
+    return new_data

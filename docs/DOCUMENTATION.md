@@ -12,9 +12,9 @@
 2. [Repository Layout](#2-repository-layout)
 3. [Data Model & Coordinate Systems](#3-data-model--coordinate-systems)
 4. [End-to-End Data Flow](#4-end-to-end-data-flow)
-5. [Package: `synthesis/`](#5-package-synthesis)
-6. [Package: `syntract_viewer/`](#6-package-syntract_viewer)
-7. [Package: `synthetic-training/`](#7-package-synthetic-training)
+5. [Package: `preprocessing/`](#5-package-synthesis)
+6. [Package: `rendering/`](#6-package-rendering)
+7. [Package: `training/`](#7-package-training)
 8. [Root-Level Scripts](#8-root-level-scripts)
 9. [CLI Reference](#9-cli-reference)
 10. [Public Python API](#10-public-python-api)
@@ -44,82 +44,69 @@
 ```
 syntract-3d/
 ├── syntract.py                    # Main CLI entry point (single NIfTI+TRK → patches)
-├── cumulative.py                  # Batch CLI: one NIfTI + directory of TRKs
+├── batch_processing.py                  # Batch CLI: one NIfTI + directory of TRKs
 ├── thicken_trk.py                 # TRK density augmentation (copies + waviness)
 ├── visualize_one_patch.py         # Quick 3D patch preview script
 ├── calibrate_real_proxy.py        # Calibrate real-data proxy metric (cluster only)
-├── test_specific_region.py        # Targeted OME-Zarr region inference tester
-├── validate_dataset.py            # Dataset quality validation helpers
-├── compare_predictions.py         # Side-by-side prediction comparison
+├── predict_real_region.py        # Targeted OME-Zarr region inference tester
 ├── batch_ants_trk_registration.py # Batch ANTs registration helper
 │
-├── synthesis/                     # Core MRI + tractography processing package
+├── preprocessing/                     # Core MRI + tractography processing package
 │   ├── __init__.py
-│   ├── main.py                    # Full-volume pipeline: process_and_save()
-│   ├── patch_first_processing.py  # Patch-first pipeline: process_patch_first_extraction()
-│   ├── nifti_preprocessing.py     # NIfTI resampling (GPU cubic + CPU trilinear)
+│   ├── full_volume.py                    # Full-volume pipeline: process_and_save()
+│   ├── patch_extraction.py  # Patch-first pipeline: process_patch_first_extraction()
+│   ├── nifti_resampling.py     # NIfTI resampling (GPU cubic + CPU trilinear)
 │   ├── streamline_processing.py   # Streamline transform, FOV clip, densify dispatch
 │   ├── densify.py                 # Interpolation methods (linear/hermite/RBF)
-│   ├── transform.py               # Affine matrix builder: build_new_affine()
-│   ├── ants_transform_updated.py  # ANTs warp + inverse warp + affine application
-│   ├── gpu_utils.py               # Centralized GPU detection + graceful fallback
-│   ├── validation.py              # Parameter validation helpers
-│   ├── visualize.py               # Synthesis debugging visualizations
-│   ├── slice_simplified.py        # Simplified coronal slice extraction
-│   └── compare_interpolation.py   # Interpolation method comparison tool
+│   ├── affine.py               # Affine matrix builder: build_new_affine()
+│   ├── ants_transform.py  # ANTs warp + inverse warp + affine application
+│   └── gpu_utils.py               # Centralized GPU detection + graceful fallback
 │
-├── syntract_viewer/               # Rendering, augmentation, mask generation package
+├── rendering/               # Rendering, augmentation, mask generation package
 │   ├── __init__.py
-│   ├── core.py                    # NIfTI + TRK visualization; mask saving
-│   ├── generation.py              # 2D synthetic example generation (main generator)
+│   ├── slice_renderer.py                    # NIfTI + TRK visualization; mask saving
+│   ├── example_generation.py              # 2D synthetic example generation (main generator)
 │   ├── volume_renderer.py         # 3D volume rendering with GPU line kernels
-│   ├── volumetric_3d.py           # 3D volumetric processing pipeline
-│   ├── improved_cornucopia.py     # Weighted cornucopia augmentation presets
-│   ├── cornucopia_3d.py           # True 3D Cornucopia augmentation (full volume)
-│   ├── synthetic_image_augmentations.py  # Image-only 3D realism augmentations
+│   ├── volume_processing.py           # 3D volumetric processing pipeline
+│   ├── slice_augmentation.py     # Weighted cornucopia augmentation presets
+│   ├── volume_noise_augmentation.py           # True 3D Cornucopia augmentation (full volume)
+│   ├── volume_artifact_augmentation.py  # Image-only 3D realism augmentations
 │   ├── contrast.py                # CLAHE + contrast enhancement
 │   ├── masking.py                 # Brain + fiber mask creation
-│   ├── effects.py                 # Dark-field effects
+│   ├── dark_field_effects.py                 # Dark-field effects
 │   ├── background_enhancement.py  # LPSVD + slice sharpening
-│   ├── patch_extraction.py        # Patch visualization helper
-│   ├── generate_fiber_examples.py # Spatial-subdivision example generator
-│   ├── utils.py                   # Streamline utilities (colormap, densify, etc.)
-│   └── orange_blob_generator.py   # Orange injection-site artifact simulator
+│   ├── patch_visualization.py        # Patch visualization helper
+│   ├── example_generation_cli.py # Spatial-subdivision example generator
+│   └── streamline_utils.py                   # Streamline utilities (colormap, densify, etc.)
 │
-├── synthetic-training/            # PyTorch Lightning training, inference, OME-Zarr
-│   ├── train_on_synthetic_data_3d.py   # Primary 3D training script
-│   ├── train_on_synthetic_data.py      # Legacy 2D training script
+├── training/            # PyTorch Lightning training, inference, OME-Zarr
+│   ├── train_3d.py   # Primary 3D training script
 │   ├── unet3d.py                       # FlexibleUNet3D Lightning module
-│   ├── unet.py                         # FlexibleUNet (2D) Lightning module
-│   ├── loss_functions.py               # Dice, BCE, Focal, clDice, DiceBCE, DiceFocal
+│   ├── losses.py               # Dice, BCE, Focal, clDice, DiceBCE, DiceFocal
 │   ├── precompute_patches_3d.py        # Offline 3D patch pre-generation
 │   ├── predict_omezarr_thinslab_3d.py  # Thin-slab sliding-window inference
-│   ├── predict_synthetic_data_3d.py    # 3D synthetic data prediction
-│   ├── predict_synthetic_data.py       # 2D synthetic data prediction
+│   ├── predict_3d.py    # 3D synthetic data prediction
 │   ├── sanity_check_synthetic.py       # Sanity check: model on known synthetic patch
 │   ├── sanity_check_thinslab.py        # Sanity check: thin-slab path
-│   ├── view_prediction_3d.py           # 3D prediction visualization
-│   ├── view_prediction_npy_gui.py      # NPY prediction GUI viewer
 │   ├── compare_domain_stats.py         # Quantify synthetic→real domain gap
-│   ├── gen_3d_patches_offline.py       # Offline 3D patch generator (alternate)
 │   ├── preview_patch_gamma.py          # Preview gamma/gain effect on patches
 │   ├── preview_realistic_augmentations_3d.py  # QA: clean vs. augmented patches
-│   ├── test_omezarr_patches.py         # OME-Zarr patch extraction sanity check
+│   ├── check_omezarr_patches.py         # OME-Zarr patch extraction sanity check
 │   └── datamodules/
-│       ├── datasets.py            # SyntheticDataset, OnTheFlySyntheticData3D, SyntheticDataset3D
+│       ├── datasets.py            # OnTheFlySyntheticData3D, SyntheticDataset3D
 │       ├── dataloaders.py         # Lightning DataModules (OnTheFlyDataModule3D, etc.)
-│       └── omezarr.py             # PhysicalScaleOMEZarrDataset + OMEZarrPatchDataModule
+│       └── omezarr.py             # PhysicalScaleOMEZarrDataset
 │
 ├── tests/                         # pytest unit and integration tests
 │   ├── conftest.py                # sys.path setup
-│   ├── test_nifti_preprocessing.py
+│   ├── test_nifti_resampling.py
 │   ├── test_streamline_processing.py
 │   ├── test_densify.py
-│   ├── test_transform.py
-│   ├── test_main.py
+│   ├── test_affine.py
+│   ├── test_full_volume.py
 │   ├── test_comprehensive_integration.py
-│   ├── test_synthesis_complete.py
-│   └── test_syntract_viewer_complete.py
+│   ├── test_preprocessing_complete.py
+│   └── test_rendering_complete.py
 │
 ├── graphify-out/                  # Pre-built knowledge graph (AST + LLM extraction)
 ├── docs/                          # Documentation directory (this file)
@@ -151,7 +138,7 @@ SynTract operates in four coordinate spaces that must stay consistent throughout
 
 **Pitfalls to avoid:**
 - Do not apply voxel-space operations to RAS-space streamlines or vice versa.
-- Do not use `synthesis/densify.py::densify_streamlines_parallel()` for per-patch lazy densification — it overrides the sub-voxel step size with a curvature-adaptive one. Use `_densify_segment_for_patch()` instead.
+- Do not use `preprocessing/densify.py::densify_streamlines_parallel()` for per-patch lazy densification — it overrides the sub-voxel step size with a curvature-adaptive one. Use `_densify_segment_for_patch()` instead.
 - At sub-millimeter voxel sizes the voxel-snapped bbox origin can be hundreds of target voxels off; `synthesize_patch_region()` sets the target affine origin to `bbox['ras_min']` to fix this.
 
 ---
@@ -167,15 +154,15 @@ Input: brain.nii.gz + fibers.trk
 [syntract.py::process_syntract()]
           │
           ├──(use_ants?)──► process_with_ants() → streamlines_ras (RAS mm)
-          │                  synthesis/ants_transform_updated.py
+          │                  preprocessing/ants_transform.py
           │
           ▼
-[synthesis/patch_first_processing.py::process_patch_first_extraction()]
+[preprocessing/patch_extraction.py::process_patch_first_extraction()]
           │
           ├── Load NIfTI (mmap) + TRK → streamlines in RAS mm
           ├── Build streamline bounding boxes (_build_streamline_bounds)
           ├── Auto-center target FOV on streamline centroid (if FOV < streamline extent)
-          ├── Build target_affine via synthesis/transform.py::build_new_affine()
+          ├── Build target_affine via preprocessing/affine.py::build_new_affine()
           │
           ├─ FOR EACH PATCH:
           │   ├── sample_patch_locations_transformed_space()
@@ -199,15 +186,15 @@ Input: brain.nii.gz + fibers.trk
                     │
                     ▼
           [syntract.py] dispatch to visualization:
-          ├──(3d_output)──► syntract_viewer/volume_renderer.py::create_3d_volume_with_streamlines()
+          ├──(3d_output)──► rendering/volume_renderer.py::create_3d_volume_with_streamlines()
           │                  GPU line kernels (CuPy RawKernel) or CPU fallback
-          │                  Cornucopia 3D augmentation (cornucopia_3d.py)
+          │                  Cornucopia 3D augmentation (volume_noise_augmentation.py)
           │                  Soft mask (trilinear fiber accumulation)
           │
-          └──(2d_output)──► syntract_viewer/patch_extraction.py::_generate_patch_visualization()
-                             syntract_viewer/improved_cornucopia.py preset selection
-                             syntract_viewer/contrast.py CLAHE
-                             syntract_viewer/masking.py fiber + brain masks
+          └──(2d_output)──► rendering/patch_visualization.py::_generate_patch_visualization()
+                             rendering/slice_augmentation.py preset selection
+                             rendering/contrast.py CLAHE
+                             rendering/masking.py fiber + brain masks
                              Save PNG image + PNG mask
 ```
 
@@ -217,7 +204,7 @@ Input: brain.nii.gz + fibers.trk
 Input: brain.nii.gz + fibers.trk
           │
           ▼
-synthesis/main.py::process_and_save()
+preprocessing/full_volume.py::process_and_save()
     ├── resample_nifti() → full resampled NIfTI [can be multi-GB]
     ├── transform_and_densify_streamlines() → all streamlines in voxel space
     ├── clip_streamline_to_fov() per streamline
@@ -231,11 +218,11 @@ Precompute (offline):
   precompute_patches_3d.py → patch_dir/<trk_stem>/*_3d.nii.gz + *_3d_mask.nii.gz
 
 OR On-the-fly:
-  cumulative.py::process_patches_inmemory() → (images, masks) np arrays in RAM
+  batch_processing.py::process_patches_inmemory() → (images, masks) np arrays in RAM
 
           │
           ▼
-synthetic-training/train_on_synthetic_data_3d.py
+training/train_3d.py
     ├── OnTheFlyDataModule3D / SyntheticDataset3D (cached)
     ├── FlexibleUNet3D (PyTorch Lightning)
     ├── Loss: DiceBCELoss (default)
@@ -255,7 +242,7 @@ Inference (OME-Zarr):
 
 ---
 
-## 5. Package: `synthesis/`
+## 5. Package: `preprocessing/`
 
 ### 5.1 `main.py` — Full-volume pipeline
 
@@ -281,10 +268,7 @@ def process_and_save(
     ants_aff_path: str | None = None,
     force_dimensions: bool = False,
     transform_mri_with_ants: bool = False,
-    slice_count: int | None = None,
-    enable_slice_extraction: bool = False,
-    slice_output_dir: str | None = None,
-) -> dict
+) -> dict   # {'synthesis_outputs': {'nifti', 'trk'} | None, 'error': str | None}
 ```
 
 **What it does:**
@@ -298,7 +282,7 @@ def process_and_save(
 
 ---
 
-### 5.2 `patch_first_processing.py` — Patch-first pipeline
+### 5.2 `patch_extraction.py` — Patch-first pipeline
 
 **Entry point:** `process_patch_first_extraction()`
 
@@ -354,7 +338,7 @@ def process_patch_first_extraction(
 
 ---
 
-### 5.3 `nifti_preprocessing.py` — NIfTI resampling
+### 5.3 `nifti_resampling.py` — NIfTI resampling
 
 | Function | Description |
 |---|---|
@@ -414,7 +398,7 @@ Builds a new NIfTI affine that:
 
 ---
 
-### 5.7 `ants_transform_updated.py` — ANTs transform application
+### 5.7 `ants_transform.py` — ANTs transform application
 
 **Entry point:** `process_with_ants(warp_path, iwarp_path, aff_path, nifti_path, trk_path, ...)`
 
@@ -439,23 +423,20 @@ class GPUSupport:
     numba_cuda_available: bool
     
     def get_array_module(prefer_gpu=True) -> np | cp
-    def has_full_gpu_support() -> bool      # CuPy + Numba CUDA
-    def has_partial_gpu_support() -> bool   # Either
     def try_import_cupy() -> (module, bool)
-    def convert_to_numpy(array) -> ndarray
+    def try_import_numba_cuda() -> (module | None, bool)
 ```
 
 **Convenience functions at module level:**
 ```python
+get_gpu_support() → GPUSupport   # process-wide singleton
 get_array_module(prefer_gpu=True) → np | cp
-has_gpu_support() → bool
-has_full_gpu_support() → bool
 try_gpu_import() → dict   # {'xp', 'cuda', 'cupy_available', 'numba_available', 'gpu_support'}
 ```
 
 **Usage pattern throughout codebase:**
 ```python
-from synthesis.gpu_utils import try_gpu_import
+from preprocessing.gpu_utils import try_gpu_import
 result = try_gpu_import()
 xp = result['xp']           # cupy or numpy
 use_gpu = result['cupy_available']
@@ -463,7 +444,7 @@ use_gpu = result['cupy_available']
 
 ---
 
-## 6. Package: `syntract_viewer/`
+## 6. Package: `rendering/`
 
 ### 6.1 `volume_renderer.py` — 3D rendering with streamlines
 
@@ -524,8 +505,7 @@ Generates coronal/axial slice images with fiber overlays at various augmentation
 - `core.py` — base NIfTI + TRK slice visualization
 - `contrast.py` — CLAHE and augmentation pipeline
 - `masking.py` — high-density fiber mask generation
-- `improved_cornucopia.py` — weighted preset selection
-- `orange_blob_generator.py` — optional injection artifact
+- `slice_augmentation.py` — weighted preset selection
 
 ---
 
@@ -541,10 +521,10 @@ Main functions:
 
 ---
 
-### 6.4 `improved_cornucopia.py` — Augmentation preset selection
+### 6.4 `slice_augmentation.py` — Augmentation preset selection
 
 ```python
-class ImprovedCornucopiaAugmenter:
+class SliceAugmenter:
     # 16+ named presets across 4 weight categories
     # clean 30% / subtle 30% / moderate 20% / heavy 20%
     
@@ -562,7 +542,7 @@ class ImprovedCornucopiaAugmenter:
 
 ---
 
-### 6.5 `synthetic_image_augmentations.py` — Image-only 3D realism
+### 6.5 `volume_artifact_augmentation.py` — Image-only 3D realism
 
 ```python
 def apply_image_only_augmentations(
@@ -608,7 +588,7 @@ def apply_comprehensive_slice_processing(image, ...) -> ndarray
 
 ---
 
-### 6.8 `cornucopia_3d.py` — True 3D Cornucopia augmentation
+### 6.8 `volume_noise_augmentation.py` — True 3D Cornucopia augmentation
 
 ```python
 def apply_cornucopia_true_3d(volume: ndarray, preset: str = 'granular_realistic') -> ndarray
@@ -624,7 +604,7 @@ Individual transforms:
 
 ---
 
-## 7. Package: `synthetic-training/`
+## 7. Package: `training/`
 
 ### 7.1 `unet3d.py` — FlexibleUNet3D
 
@@ -661,11 +641,11 @@ class FlexibleUNet3D(pl.LightningModule):
 - Gradient clipping: `gradient_clip_val=1.0` (set in training script)
 - Checkpoint: saves best `val_loss`
 
-**Inference:** `predict_volume()` in `predict_synthetic_data_3d.py` — Gaussian importance map weighted sliding window, optional test-time mirroring.
+**Inference:** `predict_volume()` in `predict_3d.py` — Gaussian importance map weighted sliding window, optional test-time mirroring.
 
 ---
 
-### 7.2 `loss_functions.py`
+### 7.2 `losses.py`
 
 | Class / Function | Description |
 |---|---|
@@ -683,16 +663,6 @@ class FlexibleUNet3D(pl.LightningModule):
 ---
 
 ### 7.3 `datamodules/datasets.py`
-
-**For 2D training:**
-```python
-class SyntheticDataset(Dataset):
-    # Static list of {'image_path', 'label_path'} pairs
-    # Per-image Z-score normalization
-    
-class OnTheFlySyntheticData(IterableDataset):
-    # Generates 2D slice patches on-the-fly via cumulative.process_patches_inmemory()
-```
 
 **For 3D training (on-the-fly):**
 ```python
@@ -719,29 +689,6 @@ class SyntheticDataset3D(Dataset):
 
 ### 7.4 `datamodules/omezarr.py` — OME-Zarr physical-scale loader
 
-```python
-@dataclass
-class OMEZarrLevelInfo:
-    level_index: int
-    path: str
-    array: zarr.Array
-    axis_names: tuple
-    shape_zyx: tuple
-    voxel_size_um_zyx: tuple
-    spatial_axis_indices_zyx: tuple
-    spatial_permutation_to_zyx: tuple
-
-class PhysicalScaleOMEZarrDataset(Dataset):
-    # Physical field-of-view patch extraction from OME-Zarr
-    # patch_size_um: physical extent in micrometers (fixed across pyramid levels)
-    # output_shape: fixed tensor output shape (resampled to this from any level)
-    
-    def __len__() -> int
-    def __getitem__(idx) -> dict  # {'image': tensor, 'coords': (z,y,x), 'level': int}
-
-class OMEZarrPatchDataModule(pl.LightningDataModule):
-    # Lightning wrapper around PhysicalScaleOMEZarrDataset
-```
 
 **Key features:**
 - Parses `multiscales/coordinateTransformations` for physical voxel sizes.
@@ -751,11 +698,11 @@ class OMEZarrPatchDataModule(pl.LightningDataModule):
 
 ---
 
-### 7.5 `train_on_synthetic_data_3d.py` — Training script
+### 7.5 `train_3d.py` — Training script
 
 **CLI:**
 ```bash
-python synthetic-training/train_on_synthetic_data_3d.py \
+python training/train_3d.py \
   --on_the_fly \
   --trk_dir /path/to/trk_files \
   --input_nifti /path/to/brain.nii.gz \
@@ -786,10 +733,10 @@ python synthetic-training/train_on_synthetic_data_3d.py \
 ### 7.6 `precompute_patches_3d.py` — Offline patch pre-generation
 
 ```bash
-python synthetic-training/precompute_patches_3d.py \
+python training/precompute_patches_3d.py \
   --trk_dir /path/to/trks \
   --input_nifti /path/to/brain.nii.gz \
-  --output_dir synthetic-training/precomputed_patches \
+  --output_dir training/precomputed_patches \
   --n_patches 500 \
   --voxel_size 0.001 \
   --patch_size 128 128 128 \
@@ -814,14 +761,14 @@ Sliding-window inference over an OME-Zarr volume. Loads the volume in `(z_size �
 
 Main CLI for single NIfTI+TRK processing. See [CLI Reference](#9-cli-reference) below.
 
-### `cumulative.py`
+### `batch_processing.py`
 
 Batch processor for one NIfTI + many TRKs.
 
 **Python API:**
 
 ```python
-from cumulative import process_batch, process_patches_inmemory
+from batch_processing import process_batch, process_patches_inmemory
 
 # Batch: writes patch files to disk
 results = process_batch(
@@ -874,7 +821,7 @@ python visualize_one_patch.py --seed 42 --out patch_preview.png
 
 Runs the real-data proxy metric on a GOOD checkpoint + the OME-Zarr volume. Run on cluster GPU only (128³ forward pass OOMs on laptop CPU). Calibrated result: regions 1–3 mean = 0.000200.
 
-### `test_specific_region.py`
+### `predict_real_region.py`
 
 Runs inference on a specific OME-Zarr region and saves the prediction. Used as the baseline for domain-gap experiments. Accepts `--normalize percentile` to match training normalization.
 
@@ -936,10 +883,10 @@ White Mask:
   --3d_output       Generate 3D NIfTI volumes instead of 2D PNGs
 ```
 
-### `cumulative.py`
+### `batch_processing.py`
 
 ```
-python cumulative.py --nifti NIFTI --trk-dir DIR [options]
+python batch_processing.py --nifti NIFTI --trk-dir DIR [options]
 
 Required:
   --nifti           Input NIfTI file
@@ -962,7 +909,7 @@ Optional:
 
 ```python
 # Patch-first extraction (recommended)
-from synthesis.patch_first_processing import process_patch_first_extraction
+from preprocessing.patch_extraction import process_patch_first_extraction
 
 results = process_patch_first_extraction(
     original_nifti_path="brain.nii.gz",
@@ -977,7 +924,7 @@ results = process_patch_first_extraction(
 # results['patch_details']     -> list of {patch_id, bbox, num_streamlines, files}
 
 # Full-volume synthesis (legacy)
-from synthesis.main import process_and_save
+from preprocessing.full_volume import process_and_save
 
 process_and_save(
     original_nifti_path="brain.nii.gz",
@@ -991,7 +938,7 @@ process_and_save(
 ### In-memory patch generation (for training)
 
 ```python
-from cumulative import process_patches_inmemory
+from batch_processing import process_patches_inmemory
 
 images, masks = process_patches_inmemory(
     nifti_file="brain.nii.gz",
@@ -1010,7 +957,7 @@ images, masks = process_patches_inmemory(
 ### 3D volume rendering
 
 ```python
-from syntract_viewer.volume_renderer import create_3d_volume_with_streamlines
+from rendering.volume_renderer import create_3d_volume_with_streamlines
 
 create_3d_volume_with_streamlines(
     nifti_file="patch_0001.nii.gz",
@@ -1027,7 +974,7 @@ create_3d_volume_with_streamlines(
 ### Batch processing
 
 ```python
-from cumulative import process_batch
+from batch_processing import process_batch
 
 results = process_batch(
     nifti_file="brain.nii.gz",
@@ -1094,11 +1041,11 @@ tissue_threshold = 0.0      # render fibers in ALL voxels at this scale
 pytest
 
 # Targeted (fast)
-pytest tests/test_nifti_preprocessing.py
-pytest tests/test_transform.py
+pytest tests/test_nifti_resampling.py
+pytest tests/test_affine.py
 pytest tests/test_streamline_processing.py
 pytest tests/test_densify.py
-pytest tests/test_syntract_viewer_complete.py
+pytest tests/test_rendering_complete.py
 
 # Custom integration runner
 python run_comprehensive_tests.py
@@ -1108,24 +1055,24 @@ python run_comprehensive_tests.py
 
 | File | Tests |
 |---|---|
-| `test_nifti_preprocessing.py` | `resample_nifti`, `resample_nifti_patch`, memory estimation |
+| `test_nifti_resampling.py` | `resample_nifti`, `resample_nifti_patch`, memory estimation |
 | `test_streamline_processing.py` | `clip_streamline_to_fov`, `transform_streamline`, `transform_and_densify_streamlines` |
 | `test_densify.py` | Linear / hermite interpolation, edge cases, metrics |
-| `test_transform.py` | `build_new_affine` — isotropic, anisotropic, patch_center |
-| `test_main.py` | `process_and_save` integration (requires real data) |
+| `test_affine.py` | `build_new_affine` — isotropic, anisotropic, patch_center |
+| `test_full_volume.py` | `process_and_save` integration (requires real data) |
 | `test_comprehensive_integration.py` | End-to-end pipeline with synthetic test files |
-| `test_synthesis_complete.py` | Full synthesis module import + basic function tests |
-| `test_syntract_viewer_complete.py` | Core, generation, effects, utils, masking |
+| `test_preprocessing_complete.py` | Full synthesis module import + basic function tests |
+| `test_rendering_complete.py` | Core, generation, effects, utils, masking |
 
 ### Sanity checks (cluster)
 
 ```bash
 # Confirm model reproduces synthetic mask (dice ≈ 0.98 → inference path OK)
-python synthetic-training/sanity_check_synthetic.py \
+python training/sanity_check_synthetic.py \
   --checkpoint best_3d.ckpt --voxel_size 0.001
 
 # Test thin-slab path
-python synthetic-training/sanity_check_thinslab.py \
+python training/sanity_check_thinslab.py \
   --checkpoint best_3d.ckpt
 ```
 

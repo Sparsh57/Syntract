@@ -124,7 +124,7 @@ ordering exploits the prior that it is the most likely single cause.
 - Render knobs live in `precompute_patches_3d.py` CLI and the cluster scripts
   `precompute_patches.sh` / `train_cached.sh` (untracked, synced manually). The
   Python defaults flow `precompute_patches_3d.py` → `create_3d_volume_with_streamlines`
-  (`syntract_viewer/volume_renderer.py`).
+  (`rendering/volume_renderer.py`).
 - No committed-code changes are required to RUN the experiment (knobs are CLI flags);
   the only committed change is locking the winning config + a CLAUDE.md note once a
   winner is found.

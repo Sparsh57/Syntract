@@ -118,7 +118,7 @@ scattered blobs (tiny_blob_frac 0.57-0.67, length/thickness ~5-10) — a
 continuity-transfer failure, not a target or reference problem.
 
 Implemented this session:
-- `synthetic-training/connectivity_metrics.py` — label-free connectivity stats
+- `training/connectivity_metrics.py` — label-free connectivity stats
   (continuity, tiny_blob_frac, max_comp_len, ...) with a self-test.
 - `RealLSMProxyCallback` now logs `real_continuity_median` / `real_tiny_blob_frac`
   / `real_max_comp_len_median` each val epoch — the real-data QUALITY signal that

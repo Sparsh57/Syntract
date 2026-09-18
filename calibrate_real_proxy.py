@@ -3,7 +3,7 @@
 
 WHY THIS EXISTS
 ---------------
-`RealLSMProxyCallback` (in synthetic-training/train_on_synthetic_data_3d.py) logs
+`RealLSMProxyCallback` (in training/train_3d.py) logs
 `real_pred_pos_frac` each val epoch as an unlabeled real-data transfer signal for
 closing the synthetic->real domain gap (step (b)). Before that number can be
 trusted to MOVE meaningfully, the instrument must be shown to REPRODUCE a known
@@ -19,15 +19,15 @@ INTERPRETATION
 --------------
 - result ~= 0.0002  -> proxy is calibrated. A different (e.g. fresh epoch-149) run
   reading higher (e.g. 0.0014) reflects that DIFFERENT MODEL, not a wiring bug.
-- result far from 0.0002 -> the proxy diverges from test_specific_region.py
+- result far from 0.0002 -> the proxy diverges from predict_real_region.py
   (extraction / normalization / threshold). Investigate before trusting step (b).
 
 CLUSTER ONLY. A 128^3 forward pass OOMs a laptop — run on the A100/H200 node, e.g.:
 
     module load cuda/12.4.0 && source ../venv/bin/activate
     python calibrate_real_proxy.py \
-        --checkpoint synthetic-training/checkpoints_cached_bf16/best_3d-epoch=129-val_loss=0.0491.ckpt \
-        --zarr /orcd/data/linc/001/lsm_test_data_sparsh/LSM_test_data/2025_09_09_MonkeySlice_561channel_561laser_Stitched.ome.zarr
+        --checkpoint training/checkpoints_cached_bf16/best_3d-epoch=129-val_loss=0.0491.ckpt \
+        --zarr /path/to/volume.ome.zarr
 
 Defaults match compare_multiregion.sh (level 0, 1um target, 3 patches, 40 jitter,
 percentile 1-99, threshold 0.5).
@@ -41,12 +41,12 @@ import torch
 REPO_ROOT = os.path.abspath(os.path.dirname(__file__))
 if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
-SYNTH_DIR = os.path.join(REPO_ROOT, "synthetic-training")
+SYNTH_DIR = os.path.join(REPO_ROOT, "training")
 if SYNTH_DIR not in sys.path:
     sys.path.insert(0, SYNTH_DIR)
 
-from test_specific_region import _load_model  # exact loader used by the baseline
-from train_on_synthetic_data_3d import RealLSMProxyCallback
+from predict_real_region import _load_model  # exact loader used by the baseline
+from train_3d import RealLSMProxyCallback
 
 
 def parse_args():
@@ -114,7 +114,7 @@ def main():
     print("-" * 72)
     print("INTERPRETATION:")
     print("  The proxy reuses SpecificRegionDataset + _load_model + the exact center")
-    print("  grid, so the load/forward path is identical to test_specific_region.py by")
+    print("  grid, so the load/forward path is identical to predict_real_region.py by")
     print("  construction. The handoff's ~0.0002 is a one-sig-fig, top-Y-row figure;")
     print("  compare it to REGIONS 1-3, not the grand mean. Regions 1-3 ~= 0.0002 means")
     print("  the proxy reproduces the baseline; the grand-mean offset is one hot region")

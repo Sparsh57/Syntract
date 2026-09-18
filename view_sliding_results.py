@@ -6,9 +6,9 @@ so it handles the huge full-region outputs (100+ GB) without loading them into
 RAM and WITHOUT downloading them. Run it on the cluster with the display
 forwarded to your laptop (ssh -X). Scroll the slider or use arrow keys.
 
-    ssh -X sparsh@<login-host>
+    ssh -X <user>@<login-host>
     cd ~/syntract-3d && source venv/bin/activate
-    python view_sliding_results.py --prefix /orcd/.../sliding_infer_out_slice037/region1
+    python view_sliding_results.py --prefix /path/to/sliding_infer_out/region1
     python view_sliding_results.py --prefix .../region1 --axis y
     python view_sliding_results.py --prefix .../region1 --downsample 1   # full-res panel
 """

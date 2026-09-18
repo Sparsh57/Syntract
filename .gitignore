@@ -5,7 +5,7 @@ examples/
 __pycache__/
 *.nii.gz
 *.trk
-synthesis/MRISynth.egg-info/*
+preprocessing/MRISynth.egg-info/*
 
 # OS
 .DS_Store
@@ -38,7 +38,7 @@ training_input_preview/
 reports/
 
 # Large test/output data
-synthetic-training/new_test_thinslab_e2e/
+training/new_test_thinslab_e2e/
 
 # Local tooling / agent config
 .claude/
@@ -51,7 +51,6 @@ run_3d_pad_test.sh
 extra.py
 zar_to_nii.py
 Visualize_npy.py
-visualize_one_patch.py
 visualize_patch_with_mask.py
 visualize_training_inputs.py
 visualize_patch_256.py
@@ -63,7 +62,7 @@ visualize_nifti_trk.py
 probe_brightness_shortcut.py
 real_vs_training.py
 extract_mf283_slice036.py
-synthetic-training/download_slice049.sh
+training/download_slice049.sh
 locate_region_in_slice.ipynb
 view_slices.ipynb
 validate_dataset.py
@@ -71,9 +70,8 @@ syntract_slide.html
 densify_all_trks.sh
 compare.sh
 compare_predictions.py
-test_specific_region.py
-synthetic-training/view_prediction_3d.py
-synthetic-training/view_prediction_npy_gui.py
+training/view_prediction_3d.py
+training/view_prediction_npy_gui.py
 
 # Scratch docs (kept on disk, not version-controlled)
 AI_CONTEXT.md
@@ -89,12 +87,7 @@ test_run_v2/
 test_run_v3/
 *.ckpt
 *.npy
-synthetic-training/precomputed_patches/
-synthetic-training/sanity_check_tier2.sh
-synthetic-training/train_cached.sh
-synthetic-training/test_precompute_one.sh
-synthetic-training/sanity_check_synthetic.sh
-synthetic-training/precompute_patches.sh
-compare_multiregion.sh
+training/precomputed_patches/
+training/sanity_check_tier2.sh
+training/test_precompute_one.sh
 compare_gt_vs_pred.sh
-calibrate_real_proxy.sh

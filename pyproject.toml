@@ -1,15 +1,20 @@
 [build-system]
-requires = ["setuptools>=45", "wheel", "setuptools_scm[toml]>=6.2"]
+requires = ["setuptools>=61", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "SynTract"
-description = "MRI synthesis and tractography processing tools"
+name = "syntract"
+version = "1.0.0"
+description = "Synthetic training data and 3D U-Net segmentation of tracer-labelled fibers in light-sheet microscopy, synthesised from MRI tractography"
 readme = "README.md"
-requires-python = ">=3.8"
+requires-python = ">=3.10"
 license = {text = "MIT"}
 authors = [
-    {name = "SynTract Contributors"}
+    {name = "Sparsh Makharia"},
+]
+keywords = [
+    "tractography", "light-sheet microscopy", "synthetic data", "segmentation",
+    "3D U-Net", "neuroimaging", "nifti", "ome-zarr", "dark-field",
 ]
 classifiers = [
     "Development Status :: 4 - Beta",
@@ -17,13 +22,51 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.8",
-    "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Topic :: Scientific/Engineering :: Medical Science Apps.",
+    "Topic :: Scientific/Engineering :: Image Processing",
 ]
-dynamic = ["version"]
+# Loose lower bounds for library use; requirements.txt holds the exact pins the
+# paper experiments ran with.
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "matplotlib>=3.7",
+    "scikit-image>=0.19",
+    "nibabel>=5.0",
+    "dipy>=1.7",
+    "joblib>=1.2",
+    "tqdm>=4.60",
+    "Pillow>=9.0",
+    "opencv-python>=4.5",
+    "zarr>=2.16,<3",
+    "torch>=2.3",
+    "pytorch-lightning>=2.2",
+    "torchmetrics>=1.0",
+    "transformers>=4.41",
+    "cornucopia>=0.3",
+    "psutil>=5.0",
+]
+
+[project.optional-dependencies]
+gpu = ["cupy-cuda12x>=12.0", "numba>=0.57"]
+logging = ["wandb>=0.16"]
+viewer = ["neuroglancer>=2.36"]
+dev = ["pytest>=7.0", "pyflakes>=3.0"]
+
+[project.urls]
+Repository = "https://github.com/Sparsh57/Syntract"
+Issues = "https://github.com/Sparsh57/Syntract/issues"
+
+[project.scripts]
+syntract = "syntract:main"
+syntract-batch = "batch_processing:main"
+syntract-full-volume = "preprocessing.full_volume:main"
+
+[tool.setuptools]
+packages = ["preprocessing", "rendering", "training", "training.datamodules"]
+py-modules = ["syntract", "batch_processing"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -35,6 +78,3 @@ markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
 minversion = "6.0"
-
-[tool.setuptools]
-packages = ["synthesis", "syntract_viewer"] 

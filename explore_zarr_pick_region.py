@@ -7,13 +7,12 @@ paste into sliding_window_infer.sh.
 
 Run on the cluster (needs display or X11):
     python explore_zarr_pick_region.py \
-        --zarr /orcd/data/linc/001/lsm_test_data_sparsh/LSM_test_data/2025_09_09_MonkeySlice_561channel_561laser_Stitched.ome.zarr
+        --zarr /path/to/volume.ome.zarr
 
 Or save a PNG overview without a display:
     python explore_zarr_pick_region.py --zarr <path> --save_png zarr_overview.png --no_gui
 """
 import argparse
-import sys
 import numpy as np
 
 ap = argparse.ArgumentParser()

@@ -9,7 +9,6 @@ This allows running the comprehensive tests via pytest:
 
 import pytest
 import sys
-import os
 from pathlib import Path
 
 # Add project root to path so we can import the comprehensive test runner

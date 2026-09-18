@@ -7,11 +7,11 @@ on the big regions. Prints a URL; keep the process running while you view.
 Install once:   pip install neuroglancer
 
 Run (on the cluster where the outputs live, or on your laptop after copying):
-    python view_neuroglancer.py --prefix /orcd/.../sliding_infer_out_slice037/region1
+    python view_neuroglancer.py --prefix /path/to/sliding_infer_out/region1
 
 Then open the printed URL in a browser. If you ran it on the cluster, first make
 an SSH tunnel from your laptop:
-    ssh -L 9999:localhost:9999 sparsh@<login-host>
+    ssh -L 9999:localhost:9999 <user>@<login-host>
 and replace the host in the URL with localhost:9999 (use --port 9999 below).
 """
 import argparse

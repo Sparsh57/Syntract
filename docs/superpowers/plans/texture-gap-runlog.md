@@ -114,7 +114,7 @@ adj_voxel_corr moved slightly (0.854→~0.80) — not fully closed but grain-onl
 Full patch count: 1800 patches. SLURM job: 15478117 (precompute) + 15613697 (train).  
 W&B run: `cached_128_1780662321_BCE` (grain-only run)
 
-**Note:** Cluster had stale `train_on_synthetic_data_3d.py` for SLURM 15478117 (no median/per-region).
+**Note:** Cluster had stale `train_3d.py` for SLURM 15478117 (no median/per-region).
 Re-synced local file to cluster; SLURM 15613697 logged full median+per-region.
 
 ### Phase 3 — Result

@@ -1,0 +1,778 @@
+"""Synthetic 3D fiber datasets: cached NIfTI patches and on-the-fly generation."""
+
+import contextlib
+import gc
+import os
+import random
+import shutil
+import sys
+import tempfile
+import time
+from pathlib import Path
+from typing import Iterator, Optional, Sequence, Tuple
+
+import nibabel as nib
+import numpy as np
+import torch
+from torch.utils.data import Dataset, IterableDataset
+
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "../../")))
+
+from batch_processing import process_patches_inmemory
+
+
+def _apply_image_only_augmentations(*args, **kwargs) -> np.ndarray:
+    from rendering.volume_artifact_augmentation import apply_image_only_augmentations
+
+    return apply_image_only_augmentations(*args, **kwargs)
+
+
+def _apply_inference_shape_augs(
+    vol: np.ndarray,
+    mask: np.ndarray,
+    thinslab_prob: float,
+    thinslab_min_z: int,
+    thinslab_max_z: int,
+    empty_patch_prob: float,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Zero out Z slabs and/or whole volumes to mimic inference inputs.
+
+    Shared by the on-the-fly and cached 3D datasets so both train on the same
+    thin-slab / empty-patch distribution (train/inference shape matching).
+    Operates on already-normalised volumes in [0, 1] and masks in [0, 1].
+    """
+    if vol.ndim != 3 or mask.shape != vol.shape:
+        return vol, mask
+
+    if empty_patch_prob > 0.0 and np.random.random() < empty_patch_prob:
+        return np.zeros_like(vol), np.zeros_like(mask)
+
+    if thinslab_prob > 0.0 and np.random.random() < thinslab_prob:
+        z = int(vol.shape[0])
+        lo_bound = int(min(max(1, thinslab_min_z), z))
+        hi_bound = int(min(max(lo_bound, thinslab_max_z), z))
+        valid_z = int(np.random.randint(lo_bound, hi_bound + 1)) if hi_bound > lo_bound else lo_bound
+        if valid_z < z:
+            offset = int(np.random.randint(0, z - valid_z + 1))
+            vol_out = np.zeros_like(vol)
+            mask_out = np.zeros_like(mask)
+            vol_out[offset:offset + valid_z] = vol[offset:offset + valid_z]
+            mask_out[offset:offset + valid_z] = mask[offset:offset + valid_z]
+            return vol_out, mask_out
+    return vol, mask
+
+
+# ======================================================================
+# 3D DATASET CLASSES
+# ======================================================================
+
+class SyntheticDataset3D(Dataset):
+    """
+    Loads pre-generated 3D NIfTI patches from disk.
+
+    Expects a directory containing *_3d.nii.gz (volume) and *_3d_mask.nii.gz (mask) pairs
+    produced by the existing pipeline with ``--3d-output``.
+
+    Each sample is a volumetric patch: (1, D, H, W) image and (1, D, H, W) mask.
+    """
+
+    def __init__(
+        self,
+        patch_dir: str,
+        patch_size: Sequence[int] = (128, 128, 128),
+        transform=None,
+        enable_tissue_artifacts: bool = False,
+        enable_granular_noise: bool = False,
+        enable_speckle_noise: bool = False,
+        granular_noise_strength: float = 0.35,
+        artifact_strength: float = 0.45,
+        speckle_noise_strength: float = 0.35,
+        speckle_noise_density: float = 0.0012,
+        speckle_noise_sigma: float = 0.35,
+        seed: Optional[int] = None,
+        # Inference-shape augmentations (mirror OnTheFlySyntheticData3D so the
+        # cached path keeps the same train/inference shape matching). These run
+        # at load time on already-normalised vol/mask. Set to 0.0 to disable.
+        thinslab_prob: float = 0.3,
+        thinslab_min_z: int = 30,
+        thinslab_max_z: int = 120,
+        empty_patch_prob: float = 0.05,
+        # Held-out train/val split over the discovered patch files. The cached
+        # datamodule previously pointed train AND val at the SAME patch_dir with
+        # no partition, so val_loss only measured training fit, not held-out
+        # generalization. ``split`` carves a deterministic, disjoint subset:
+        #   "all"   -> every pair (default; backward compatible)
+        #   "train" -> the (1 - val_fraction) majority
+        #   "val"   -> the val_fraction minority
+        # The split shuffles by ``split_seed`` BEFORE partitioning so both sides
+        # draw the same per-TRK mix (a contiguous split would carve along the
+        # sorted-by-subdir boundary and could starve one side of the only dense
+        # TRK, ``aligned_wavy``).
+        split: str = "all",
+        val_fraction: float = 0.15,
+        split_seed: int = 42,
+    ):
+        super().__init__()
+        self.patch_dir = Path(patch_dir)
+        if not self.patch_dir.is_dir():
+            raise FileNotFoundError(f"patch_dir does not exist or is not a directory: {patch_dir}")
+        self.patch_size = tuple(patch_size)
+        self.transform = transform
+        self.enable_tissue_artifacts = bool(enable_tissue_artifacts)
+        self.enable_granular_noise = bool(enable_granular_noise)
+        self.enable_speckle_noise = bool(enable_speckle_noise)
+        self.granular_noise_strength = float(granular_noise_strength)
+        self.artifact_strength = float(artifact_strength)
+        self.speckle_noise_strength = float(speckle_noise_strength)
+        self.speckle_noise_density = float(speckle_noise_density)
+        self.speckle_noise_sigma = float(speckle_noise_sigma)
+        self.seed = seed
+        self.thinslab_prob = float(np.clip(thinslab_prob, 0.0, 1.0))
+        self.thinslab_min_z = max(1, int(thinslab_min_z))
+        self.thinslab_max_z = max(self.thinslab_min_z, int(thinslab_max_z))
+        self.empty_patch_prob = float(np.clip(empty_patch_prob, 0.0, 1.0))
+
+        # Discover volume/mask pairs. Use rglob so per-TRK subdirectories
+        # (precompute_patches_3d.py writes output_dir/<trk_stem>/*_3d.nii.gz)
+        # are found as well as a flat layout; rglob also matches top-level files.
+        vol_files = sorted(self.patch_dir.rglob("*_3d.nii.gz"))
+        all_samples = []
+        for vf in vol_files:
+            mask_f = Path(str(vf).replace("_3d.nii.gz", "_3d_mask.nii.gz"))
+            if mask_f.exists():
+                all_samples.append({"volume": str(vf), "mask": str(mask_f)})
+        if len(all_samples) == 0:
+            raise ValueError(f"No *_3d.nii.gz / *_3d_mask.nii.gz pairs found in {patch_dir}")
+
+        # Deterministic held-out split. Shuffle by split_seed first so the
+        # train/val sides share the same per-TRK mix, then partition by index.
+        split = str(split).lower()
+        if split not in ("all", "train", "val"):
+            raise ValueError(f"split must be one of 'all'/'train'/'val', got {split!r}")
+        val_fraction = float(np.clip(val_fraction, 0.0, 1.0))
+        if split == "all" or val_fraction <= 0.0:
+            self.samples = all_samples
+        else:
+            order = np.random.RandomState(int(split_seed)).permutation(len(all_samples))
+            n_val = max(1, int(round(len(all_samples) * val_fraction)))
+            n_val = min(n_val, len(all_samples) - 1)  # keep train non-empty
+            val_idx = set(order[:n_val].tolist())
+            if split == "val":
+                self.samples = [all_samples[i] for i in range(len(all_samples)) if i in val_idx]
+            else:  # train
+                self.samples = [all_samples[i] for i in range(len(all_samples)) if i not in val_idx]
+        if len(self.samples) == 0:
+            raise ValueError(
+                f"split={split!r} produced 0 samples from {len(all_samples)} pairs in {patch_dir} "
+                f"(val_fraction={val_fraction})"
+            )
+
+        # Direct check (per project debugging discipline): print per-subdir
+        # counts for this split so it is visible that both sides contain the
+        # only dense TRK ('aligned_wavy') and disjoint patches.
+        from collections import Counter
+        subdir_counts = Counter(Path(s["volume"]).parent.name for s in self.samples)
+        print(
+            f"[SyntheticDataset3D] split={split!r} n={len(self.samples)}/{len(all_samples)} "
+            f"per-subdir={dict(sorted(subdir_counts.items()))}"
+        )
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor]:
+        sample = self.samples[idx]
+        vol = nib.load(sample["volume"]).get_fdata().astype(np.float32)
+        mask = nib.load(sample["mask"]).get_fdata().astype(np.float32)
+
+        # Random crop to patch_size if volume is larger
+        vol, mask = self._random_crop(vol, mask)
+
+        # Normalize volume to [0, 1] using 1-99 percentile clipping.
+        # This MUST match the OME-Zarr inference loader (omezarr.py uses
+        # normalize_percentiles=(1.0, 99.0)); min-max here would make training
+        # outlier-sensitive (one bright fiber/hot voxel sets the scale) and
+        # encode intensity differently than the model sees at inference.
+        v_lo, v_hi = np.percentile(vol, [1.0, 99.0])
+        if v_hi > v_lo:
+            vol = np.clip((vol - v_lo) / (v_hi - v_lo), 0.0, 1.0)
+        else:
+            vol = np.zeros_like(vol, dtype=np.float32)
+
+        # Preserve soft (partial-volume) masks as BCE targets in [0, 1].
+        # Hard-binarizing here would destroy the anti-aliased sub-voxel mask and
+        # re-introduce stair-stepping (and thicken thin fibers). Binary masks
+        # (values already 0/1) are unchanged by the clip.
+        mask = np.clip(mask, 0.0, 1.0).astype(np.float32)
+
+        if self.enable_tissue_artifacts or self.enable_granular_noise or self.enable_speckle_noise:
+            aug_seed = None if self.seed is None else int(self.seed) + int(idx)
+            vol = _apply_image_only_augmentations(
+                vol,
+                enable_tissue_artifacts=self.enable_tissue_artifacts,
+                enable_granular_noise=self.enable_granular_noise,
+                enable_speckle_noise=self.enable_speckle_noise,
+                artifact_strength=self.artifact_strength,
+                granular_noise_strength=self.granular_noise_strength,
+                speckle_noise_strength=self.speckle_noise_strength,
+                speckle_noise_density=self.speckle_noise_density,
+                speckle_noise_sigma=self.speckle_noise_sigma,
+                random_state=aug_seed,
+                verbose=False,
+            )
+            vol = np.clip(vol, 0.0, 1.0).astype(np.float32, copy=False)
+
+        # Inference-shape augmentations (thin-slab + empty-patch), matching the
+        # on-the-fly path so cached training keeps the empty-in -> empty-out
+        # prior and the OME-Zarr thin-slab inference shape.
+        vol, mask = _apply_inference_shape_augs(
+            vol, mask,
+            thinslab_prob=self.thinslab_prob,
+            thinslab_min_z=self.thinslab_min_z,
+            thinslab_max_z=self.thinslab_max_z,
+            empty_patch_prob=self.empty_patch_prob,
+        )
+
+        # Add channel dim: (D, H, W) -> (1, D, H, W)
+        vol = vol[np.newaxis]
+        mask = mask[np.newaxis]
+
+        return torch.from_numpy(vol).float(), torch.from_numpy(mask).float()
+
+    def _random_crop(self, vol: np.ndarray, mask: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Randomly crop volume and mask to self.patch_size."""
+        d, h, w = vol.shape
+        td, th, tw = self.patch_size
+        if d <= td and h <= th and w <= tw:
+            # Pad if smaller
+            vol = self._pad_to(vol, (td, th, tw))
+            mask = self._pad_to(mask, (td, th, tw))
+            return vol, mask
+        sd = np.random.randint(0, max(1, d - td + 1))
+        sh = np.random.randint(0, max(1, h - th + 1))
+        sw = np.random.randint(0, max(1, w - tw + 1))
+        return vol[sd:sd+td, sh:sh+th, sw:sw+tw], mask[sd:sd+td, sh:sh+th, sw:sw+tw]
+
+    @staticmethod
+    def _pad_to(arr: np.ndarray, target_shape: Sequence[int]) -> np.ndarray:
+        """Zero-pad array to target_shape."""
+        pad_widths = []
+        for s, t in zip(arr.shape, target_shape):
+            total = max(0, t - s)
+            pad_widths.append((0, total))
+        return np.pad(arr, pad_widths, mode="constant", constant_values=0)
+
+
+class OnTheFlySyntheticData3D(IterableDataset):
+    """
+    IterableDataset that generates 3D volumetric patches on-the-fly.
+
+    Each iteration:
+    1. Picks a random .trk file
+    2. Extracts 3D patches via process_patches_inmemory (saves to temp dir)
+    3. Renders streamlines on the 3D volume via create_3d_volume_with_streamlines
+    4. Loads the resulting NIfTI volumes and masks into memory
+    5. Yields batches of (B, 1, D, H, W) tensors
+    """
+
+    def __init__(
+        self,
+        trk_dir: str,
+        input_nifti: str,
+        white_mask_file: Optional[str] = None,
+        batch_size: int = 4,
+        patch_size: Sequence[int] = (128, 128, 128),
+        batches_per_epoch: int = 50,
+        seed: Optional[int] = None,
+        min_streamlines_per_patch: int = 5,
+        min_bundle_size: int = 5,
+        voxel_size: float = 0.05,
+        streamline_margin_fraction: float = 0.10,
+        use_cornucopia_3d: bool = True,
+        enable_tissue_artifacts: bool = True,
+        enable_granular_noise: bool = True,
+        enable_speckle_noise: bool = True,
+        enable_dash_noise: bool = True,
+        enable_horizontal_banding: bool = True,
+        granular_noise_strength: float = 0.35,
+        artifact_strength: float = 0.45,
+        speckle_noise_strength: float = 0.70,
+        speckle_noise_density: float = 0.008,
+        speckle_noise_sigma: float = 0.0,
+        speckle_square_size: int = 2,
+        dash_noise_strength: float = 0.55,
+        dash_noise_density: float = 0.0005,
+        dash_length_sigma: float = 4.0,
+        dash_cross_sigma: float = 0.8,
+        banding_strength: float = 0.18,
+        banding_axis: int = 1,
+        fiber_intensity_min: float = 60.0,
+        fiber_intensity_max: float = 100.0,
+        fiber_max_boost: float = 10.0,
+        fiber_opacity: float = 1.0,
+        fiber_smoothing_sigma: float = 0.0,
+        fiber_antialias: bool = True,
+        min_streamlines_rendered: Optional[int] = None,
+        fiber_brightness_variation: float = 0.60,
+        fiber_segment_brightness_variation: float = 0.35,
+        fiber_render_mode: str = "additive",
+        fiber_density_gamma: float = 5.0,
+        fiber_min_visibility: float = 0.0,
+        fiber_target_intensity: float = 25.0,
+        background_max_intensity: Optional[float] = None,
+        tissue_threshold: float = 2.0,
+        enable_cell_blobs: bool = False,
+        cell_blob_count: int = 60,
+        cell_blob_intensity: float = 0.3,
+        cell_blob_radius_range: Sequence[float] = (1.5, 4.0),
+        cornucopia_allowed_presets: Optional[Sequence[str]] = None,
+        mask_smoothing_sigma: float = 0.0,
+        mask_binary_threshold: float = 0.01,
+        move_to_gpu: bool = False,
+        batch_group_factor: int = 10,
+        render_use_gpu: bool = True,
+        verbose_generation: bool = False,
+        patch_use_gpu: bool = True,
+        # --- Inference-shape augmentations ---------------------------------
+        # Probability of zero-padding a contiguous Z slab to simulate the
+        # thin-slab inference setting (OME-Zarr 60 slices padded into 128).
+        thinslab_prob: float = 0.3,
+        # Allowed Z extent of the "real" slab when thin-slab is applied.
+        thinslab_min_z: int = 30,
+        thinslab_max_z: int = 120,
+        # Probability of replacing the whole patch with zeros (vol+mask) so
+        # the model learns "empty in → empty out".
+        empty_patch_prob: float = 0.05,
+    ):
+        super().__init__()
+        if not os.path.isdir(trk_dir):
+            raise FileNotFoundError(f"trk_dir does not exist or is not a directory: {trk_dir}")
+        if not os.path.isfile(input_nifti):
+            raise FileNotFoundError(f"input_nifti not found: {input_nifti}")
+        if white_mask_file is not None and not os.path.isfile(white_mask_file):
+            raise FileNotFoundError(f"white_mask_file not found: {white_mask_file}")
+        self.trk_paths = sorted(Path(trk_dir).glob("*.trk"))
+        if len(self.trk_paths) == 0:
+            raise ValueError(f"No .trk files found in {trk_dir}")
+        self.input_nifti = input_nifti
+        self.white_mask_file = white_mask_file
+        self.batch_size = batch_size
+        self.patch_size = list(patch_size)
+        self.batches_per_epoch = batches_per_epoch
+        self.seed = seed if seed is not None else np.random.randint(0, 2**31 - 1)
+        self.min_streamlines_per_patch = min_streamlines_per_patch
+        self.min_bundle_size = min_bundle_size
+        self.voxel_size = voxel_size
+        self.streamline_margin_fraction = float(streamline_margin_fraction)
+        self.use_cornucopia_3d = use_cornucopia_3d
+        self.enable_tissue_artifacts = bool(enable_tissue_artifacts)
+        self.enable_granular_noise = bool(enable_granular_noise)
+        self.enable_speckle_noise = bool(enable_speckle_noise)
+        self.enable_dash_noise = bool(enable_dash_noise)
+        self.enable_horizontal_banding = bool(enable_horizontal_banding)
+        self.granular_noise_strength = float(granular_noise_strength)
+        self.artifact_strength = float(artifact_strength)
+        self.speckle_noise_strength = float(speckle_noise_strength)
+        self.speckle_noise_density = float(speckle_noise_density)
+        self.speckle_noise_sigma = float(speckle_noise_sigma)
+        self.speckle_square_size = int(speckle_square_size)
+        self.dash_noise_strength = float(dash_noise_strength)
+        self.dash_noise_density = float(dash_noise_density)
+        self.dash_length_sigma = float(dash_length_sigma)
+        self.dash_cross_sigma = float(dash_cross_sigma)
+        self.banding_strength = float(banding_strength)
+        self.banding_axis = int(banding_axis)
+        self.fiber_intensity_min = float(fiber_intensity_min)
+        self.fiber_intensity_max = float(fiber_intensity_max)
+        self.fiber_max_boost = None if fiber_max_boost is None else float(fiber_max_boost)
+        self.fiber_opacity = float(fiber_opacity)
+        self.fiber_smoothing_sigma = float(fiber_smoothing_sigma)
+        self.fiber_antialias = bool(fiber_antialias)
+        self.min_streamlines_rendered = (
+            None if min_streamlines_rendered is None else int(min_streamlines_rendered)
+        )
+        self.fiber_brightness_variation = float(fiber_brightness_variation)
+        self.fiber_segment_brightness_variation = float(fiber_segment_brightness_variation)
+        self.fiber_render_mode = str(fiber_render_mode)
+        self.fiber_density_gamma = float(fiber_density_gamma)
+        self.fiber_min_visibility = float(fiber_min_visibility)
+        self.fiber_target_intensity = float(fiber_target_intensity)
+        self.background_max_intensity = (
+            None if background_max_intensity is None else float(background_max_intensity)
+        )
+        self.tissue_threshold = float(tissue_threshold)
+        self.enable_cell_blobs = bool(enable_cell_blobs)
+        self.cell_blob_count = int(cell_blob_count)
+        self.cell_blob_intensity = float(cell_blob_intensity)
+        self.cell_blob_radius_range = tuple(float(r) for r in cell_blob_radius_range)
+        self.cornucopia_allowed_presets = (
+            None if cornucopia_allowed_presets is None else list(cornucopia_allowed_presets)
+        )
+        self.mask_smoothing_sigma = float(mask_smoothing_sigma)
+        self.mask_binary_threshold = float(mask_binary_threshold)
+        self.move_to_gpu = move_to_gpu
+        self.batch_group_factor = max(1, int(batch_group_factor))
+        self.render_use_gpu = render_use_gpu
+        self.verbose_generation = verbose_generation
+        self.patch_use_gpu = bool(patch_use_gpu)
+        self.supports_multiprocess = (not self.patch_use_gpu) and (not self.render_use_gpu) and (not self.move_to_gpu)
+        # Inference-shape augmentation knobs (clamped to sane ranges below).
+        self.thinslab_prob = float(np.clip(thinslab_prob, 0.0, 1.0))
+        self.thinslab_min_z = max(1, int(thinslab_min_z))
+        self.thinslab_max_z = max(self.thinslab_min_z, int(thinslab_max_z))
+        self.empty_patch_prob = float(np.clip(empty_patch_prob, 0.0, 1.0))
+        # Per-TRK sampling weight, raised on successful rounds and decayed on
+        # rounds that yield no complete batch (see __iter__).
+        self._trk_scores = np.ones(len(self.trk_paths), dtype=np.float32)
+
+        # Lazy import to avoid circular dependency at module level
+        self._create_3d_fn = None
+        self.failed_batches = 0  # Track batches skipped due to empty patches
+        self.target_dimensions = self._compute_target_dimensions()
+        self.last_extract_time_s = 0.0
+        self.last_render_time_s = 0.0
+        self.last_generated_batches = 0
+
+    def _compute_target_dimensions(self):
+        try:
+            nii_img = nib.load(self.input_nifti, mmap=True)
+            original_shape = np.array(nii_img.shape[:3], dtype=np.float64)
+            original_voxel_sizes = np.array(nii_img.header.get_zooms()[:3], dtype=np.float64)
+            target_dimensions = np.round((original_shape * original_voxel_sizes) / float(self.voxel_size)).astype(int)
+            target_dimensions = np.maximum(target_dimensions, 32)
+            return tuple(int(v) for v in target_dimensions)
+        except Exception as exc:
+            if self.verbose_generation:
+                print(f"Could not precompute target dimensions from NIfTI header: {exc}")
+            return None
+
+    def _apply_inference_shape_augs(self, vol: np.ndarray, mask: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Thin-slab / empty-patch augmentation (shared with SyntheticDataset3D)."""
+        return _apply_inference_shape_augs(
+            vol, mask,
+            thinslab_prob=self.thinslab_prob,
+            thinslab_min_z=self.thinslab_min_z,
+            thinslab_max_z=self.thinslab_max_z,
+            empty_patch_prob=self.empty_patch_prob,
+        )
+
+    def _get_create_3d_fn(self):
+        if self._create_3d_fn is None:
+            try:
+                from rendering.volume_renderer import create_3d_volume_with_streamlines
+            except ImportError:
+                import sys as _sys
+                _sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+                from rendering.volume_renderer import create_3d_volume_with_streamlines
+            self._create_3d_fn = create_3d_volume_with_streamlines
+        return self._create_3d_fn
+
+    @contextlib.contextmanager
+    def _generation_output_context(self):
+        if self.verbose_generation:
+            yield
+            return
+        with open(os.devnull, "w") as devnull:
+            with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+                yield
+
+    @staticmethod
+    def _iter_patch_pairs(patches_dir: str):
+        nii_files = sorted(
+            [
+                f for f in os.listdir(patches_dir)
+                if (f.endswith(".nii.gz") or f.endswith(".nii"))
+                and "_3d" not in f
+                and "_mask" not in f
+                and "_white" not in f
+            ]
+        )
+        for nii_f in nii_files:
+            nii_path = os.path.join(patches_dir, nii_f)
+            if nii_f.endswith(".nii.gz"):
+                trk_f = nii_f[:-7] + ".trk"
+            elif nii_f.endswith(".nii"):
+                trk_f = nii_f[:-4] + ".trk"
+            else:
+                continue
+            trk_path = os.path.join(patches_dir, trk_f)
+            if os.path.exists(trk_path):
+                yield nii_path, trk_path
+
+    def _sample_trk_index(self):
+        if len(self.trk_paths) == 1:
+            return 0
+        weights = np.clip(self._trk_scores, 0.05, None).astype(np.float64)
+        probs = weights / weights.sum()
+        return int(np.random.choice(len(self.trk_paths), p=probs))
+
+    def __iter__(self) -> Iterator[Tuple[torch.Tensor, torch.Tensor]]:
+        worker_info = torch.utils.data.get_worker_info()
+        worker_seed = self.seed
+        target_batches = int(self.batches_per_epoch)
+        dist_rank = 0
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            dist_rank = int(torch.distributed.get_rank())
+        worker_id = 0
+        if worker_info is not None:
+            worker_id = int(worker_info.id)
+            worker_seed = (worker_seed + worker_info.id) % (2**32 - 1)
+            num_workers = max(1, int(worker_info.num_workers))
+            base = target_batches // num_workers
+            rem = target_batches % num_workers
+            target_batches = base + (1 if worker_info.id < rem else 0)
+        worker_seed = (int(worker_seed) + dist_rank * 1000003) % (2**32 - 1)
+        should_log = self.verbose_generation or (dist_rank == 0 and worker_id == 0)
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+
+        create_3d = self._get_create_3d_fn()
+        fast_tmp = "/dev/shm" if os.path.exists("/dev/shm") else None
+        batches_emitted = 0
+        generation_idx = 0
+        zero_batch_rounds = 0
+
+        while batches_emitted < target_batches:
+            generation_start = time.perf_counter()
+            planned_batches = min(self.batch_group_factor, target_batches - batches_emitted)
+            patches_to_request = max(self.batch_size, planned_batches * self.batch_size)
+            temp_dir = tempfile.mkdtemp(
+                prefix=f"syntract3d_r{dist_rank}_w{worker_id}_",
+                dir=fast_tmp if fast_tmp else None,
+            )
+            patches_dir = os.path.join(temp_dir, "patches")
+            os.makedirs(patches_dir, exist_ok=True)
+
+            try:
+                trk_idx = self._sample_trk_index()
+                trk_file = str(self.trk_paths[trk_idx])
+                adaptive_min_streamlines = max(1, int(self.min_streamlines_per_patch) - (zero_batch_rounds // 5))
+
+                step1_start = time.perf_counter()
+                with self._generation_output_context():
+                    process_patches_inmemory(
+                        input_nifti=self.input_nifti,
+                        trk_file=trk_file,
+                        num_patches=patches_to_request,
+                        patch_size=self.patch_size,
+                        min_streamlines_per_patch=adaptive_min_streamlines,
+                        min_bundle_size=self.min_bundle_size,
+                        voxel_size=self.voxel_size,
+                        new_dim=self.target_dimensions,
+                        white_mask_file=self.white_mask_file,
+                        patches_output_dir=patches_dir,
+                        skip_2d_viz=True,  # skip 2D rendering — only need NIfTI+TRK pairs for 3D pipeline
+                        temp_dir_base=fast_tmp,
+                        patch_use_gpu=self.patch_use_gpu,
+                        streamline_margin_fraction=self.streamline_margin_fraction,
+                        random_state=worker_seed + generation_idx,
+                    )
+                step1_time = time.perf_counter() - step1_start
+
+                volumes_buffer = []
+                masks_buffer = []
+                step3_start = time.perf_counter()
+                for nii_path, trk_path in self._iter_patch_pairs(patches_dir):
+                    if nii_path.endswith(".nii.gz"):
+                        nii_ext = ".nii.gz"
+                    else:
+                        nii_ext = ".nii"
+                    patch_base = nii_path[:-len(nii_ext)]
+                    out_path = f"{patch_base}_3d{nii_ext}"
+                    patch_white_mask = f"{patch_base}_white_mask{nii_ext}"
+                    white_mask_path = patch_white_mask if os.path.exists(patch_white_mask) else self.white_mask_file
+
+                    rendered = create_3d(
+                        nifti_file=nii_path,
+                        trk_file=trk_path,
+                        output_file=out_path,
+                        white_mask_path=white_mask_path,
+                        save_mask=True,
+                        use_cornucopia_3d=self.use_cornucopia_3d,
+                        cornucopia_allowed_presets=self.cornucopia_allowed_presets,
+                        tissue_threshold=self.tissue_threshold,
+                        enable_cell_blobs=self.enable_cell_blobs,
+                        cell_blob_count=self.cell_blob_count,
+                        cell_blob_intensity=self.cell_blob_intensity,
+                        cell_blob_radius_range=self.cell_blob_radius_range,
+                        fiber_intensity_min=self.fiber_intensity_min,
+                        fiber_intensity_max=self.fiber_intensity_max,
+                        fiber_max_boost=self.fiber_max_boost,
+                        fiber_opacity=self.fiber_opacity,
+                        fiber_smoothing_sigma=self.fiber_smoothing_sigma,
+                        fiber_antialias=self.fiber_antialias,
+                        min_streamlines_rendered=self.min_streamlines_rendered,
+                        fiber_brightness_variation=self.fiber_brightness_variation,
+                        fiber_segment_brightness_variation=self.fiber_segment_brightness_variation,
+                        fiber_render_mode=self.fiber_render_mode,
+                        fiber_density_gamma=self.fiber_density_gamma,
+                        fiber_min_visibility=self.fiber_min_visibility,
+                        fiber_target_intensity=self.fiber_target_intensity,
+                        background_max_intensity=self.background_max_intensity,
+                        enable_tissue_artifacts=self.enable_tissue_artifacts,
+                        enable_granular_noise=self.enable_granular_noise,
+                        enable_speckle_noise=self.enable_speckle_noise,
+                        enable_dash_noise=self.enable_dash_noise,
+                        enable_horizontal_banding=self.enable_horizontal_banding,
+                        artifact_strength=self.artifact_strength,
+                        granular_noise_strength=self.granular_noise_strength,
+                        speckle_noise_strength=self.speckle_noise_strength,
+                        speckle_noise_density=self.speckle_noise_density,
+                        speckle_noise_sigma=self.speckle_noise_sigma,
+                        speckle_square_size=self.speckle_square_size,
+                        dash_noise_strength=self.dash_noise_strength,
+                        dash_noise_density=self.dash_noise_density,
+                        dash_length_sigma=self.dash_length_sigma,
+                        dash_cross_sigma=self.dash_cross_sigma,
+                        banding_strength=self.banding_strength,
+                        banding_axis=self.banding_axis,
+                        random_state=worker_seed + generation_idx * 1009 + len(volumes_buffer),
+                        # Continuous binary tube mask: Gaussian-connect the accumulated
+                        # centerline then threshold for ~2-3 voxel tube width (set via
+                        # --mask_smoothing_sigma ~1.0 and --mask_binary_threshold ~0.2).
+                        mask_smoothing_sigma=self.mask_smoothing_sigma,
+                        mask_binary_threshold=self.mask_binary_threshold,
+                        use_gpu=self.render_use_gpu,
+                        verbose=self.verbose_generation,
+                        save_outputs=False,
+                        return_arrays=True,
+                    )
+
+                    if rendered is not None:
+                        vol, mask = rendered
+                        if vol is None or mask is None:
+                            continue
+
+                        # Match the OME-Zarr inference normalization (1-99 percentile)
+                        # and preserve soft partial-volume masks (no hard binarize).
+                        v_lo, v_hi = np.percentile(vol, [1.0, 99.0])
+                        if v_hi > v_lo:
+                            vol = np.clip((vol - v_lo) / (v_hi - v_lo), 0.0, 1.0)
+                        else:
+                            vol = np.zeros_like(vol, dtype=np.float32)
+                        mask = np.clip(mask, 0.0, 1.0).astype(np.float32)
+
+                        # Inference-shape augmentations.  These close two gaps
+                        # between training and inference:
+                        #   (1) thin-slab: training patches are full 128^3 of
+                        #       tissue; inference inputs have a 60-slice slab
+                        #       zero-padded to 128, so the model must learn to
+                        #       suppress predictions where the input is zero.
+                        #   (2) empty patches: white matter is sparse, so the
+                        #       model needs an "empty in -> empty out" prior.
+                        vol, mask = self._apply_inference_shape_augs(vol, mask)
+
+                        mask_density = mask.sum() / max(mask.size, 1)
+                        if self.verbose_generation and mask_density < 0.01:
+                            print(f"Sparse mask coverage: {100 * mask_density:.3f}%")
+
+                        volumes_buffer.append(vol[np.newaxis])
+                        masks_buffer.append(mask[np.newaxis])
+                step3_time = time.perf_counter() - step3_start
+                self.last_extract_time_s = float(step1_time)
+                self.last_render_time_s = float(step3_time)
+
+                full_batches = len(volumes_buffer) // self.batch_size
+                batches_this_round = min(full_batches, target_batches - batches_emitted)
+                generated_this_round = int(max(0, batches_this_round))
+                self.last_generated_batches = generated_this_round
+                if batches_this_round == 0:
+                    zero_batch_rounds += 1
+                    # If we have any rendered samples, emit a partial batch instead of stalling.
+                    if len(volumes_buffer) > 0:
+                        take = min(len(volumes_buffer), self.batch_size)
+                        images_t = torch.from_numpy(np.stack(volumes_buffer[:take], axis=0)).float()
+                        masks_t = torch.from_numpy(np.stack(masks_buffer[:take], axis=0)).float()
+                        if self.move_to_gpu and torch.cuda.is_available():
+                            device = torch.device("cuda")
+                            images_t = images_t.to(device, non_blocking=True)
+                            masks_t = masks_t.to(device, non_blocking=True)
+                        batches_emitted += 1
+                        generated_this_round = 1
+                        self.last_generated_batches = 1
+                        if should_log:
+                            print(
+                                f"[on_the_fly] Emitting partial batch ({take}/{self.batch_size}) after low-yield generation "
+                                f"(round={zero_batch_rounds}, trk={Path(trk_file).name})."
+                            )
+                        yield images_t, masks_t
+                        continue
+
+                    self._trk_scores[trk_idx] = max(0.05, float(self._trk_scores[trk_idx]) * 0.7)
+                    self.failed_batches += planned_batches
+                    if should_log and (self.verbose_generation or (zero_batch_rounds % 5 == 0)):
+                        print(
+                            f"WARNING: no complete 3D batch generated (trk={Path(trk_file).name}), "
+                            f"round={zero_batch_rounds}, min_streamlines={adaptive_min_streamlines}, skipping."
+                        )
+                    continue
+
+                zero_batch_rounds = 0
+                success_ratio = float(batches_this_round) / float(max(1, planned_batches))
+                self._trk_scores[trk_idx] = min(4.0, float(self._trk_scores[trk_idx]) * (1.0 + 0.25 * success_ratio))
+
+                for local_batch_idx in range(batches_this_round):
+                    start = local_batch_idx * self.batch_size
+                    end = start + self.batch_size
+                    images_t = torch.from_numpy(np.stack(volumes_buffer[start:end], axis=0)).float()
+                    masks_t = torch.from_numpy(np.stack(masks_buffer[start:end], axis=0)).float()
+                    if self.move_to_gpu and torch.cuda.is_available():
+                        device = torch.device("cuda")
+                        images_t = images_t.to(device, non_blocking=True)
+                        masks_t = masks_t.to(device, non_blocking=True)
+
+                    batches_emitted += 1
+                    if self.verbose_generation:
+                        generation_time = time.perf_counter() - generation_start
+                        print(
+                            f"3D batch {batches_emitted}/{target_batches} ready "
+                            f"(group_factor={self.batch_group_factor}, extract={step1_time:.2f}s, "
+                            f"render={step3_time:.2f}s, total={generation_time:.2f}s)"
+                        )
+                    yield images_t, masks_t
+
+                # Reuse leftovers as one partial batch instead of discarding them.
+                leftovers_start = batches_this_round * self.batch_size
+                leftovers = len(volumes_buffer) - leftovers_start
+                if leftovers > 0 and batches_emitted < target_batches:
+                    take = min(leftovers, self.batch_size)
+                    images_t = torch.from_numpy(
+                        np.stack(volumes_buffer[leftovers_start:leftovers_start + take], axis=0)
+                    ).float()
+                    masks_t = torch.from_numpy(
+                        np.stack(masks_buffer[leftovers_start:leftovers_start + take], axis=0)
+                    ).float()
+                    if self.move_to_gpu and torch.cuda.is_available():
+                        device = torch.device("cuda")
+                        images_t = images_t.to(device, non_blocking=True)
+                        masks_t = masks_t.to(device, non_blocking=True)
+                    batches_emitted += 1
+                    generated_this_round += 1
+                    self.last_generated_batches = generated_this_round
+                    if should_log:
+                        print(
+                            f"[on_the_fly] Reusing leftovers as partial batch ({take}/{self.batch_size}) "
+                            f"(trk={Path(trk_file).name})."
+                        )
+                    yield images_t, masks_t
+
+                dropped_batches = planned_batches - generated_this_round
+                if dropped_batches > 0:
+                    self.failed_batches += dropped_batches
+                    if self.verbose_generation:
+                        print(f"WARNING: dropped {dropped_batches} planned batches due to incomplete patch groups.")
+
+            finally:
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                generation_idx += 1
+                if generation_idx % 4 == 0:
+                    gc.collect()
+
+        if self.failed_batches > 0 and dist_rank == 0 and (worker_info is None or worker_info.id == 0):
+            effective_batches = max(0, target_batches - self.failed_batches)
+            print(f"\n⚠️ Epoch summary: {self.failed_batches}/{target_batches} batches had no patches. "
+                  f"Effective batches: {effective_batches}")
+            self.failed_batches = 0  # Reset for next epoch
+
+    def __len__(self) -> int:
+        return int(self.batches_per_epoch)

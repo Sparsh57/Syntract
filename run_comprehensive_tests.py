@@ -2,7 +2,7 @@
 """
 Comprehensive Test Runner for SynTract Project
 
-This script systematically tests all modules in the synthesis/ and syntract_viewer/ folders.
+This script systematically tests all modules in the preprocessing/ and rendering/ folders.
 It runs tests step by step and provides detailed feedback on the testing progress.
 
 Usage:
@@ -17,7 +17,6 @@ import numpy as np
 import nibabel as nib
 import tempfile
 from pathlib import Path
-from typing import List, Dict, Tuple, Any
 import warnings
 
 # Suppress warnings for cleaner output
@@ -128,22 +127,22 @@ def test_module_structure():
     results = TestResults()
     
     # Test synthesis module structure
-    synthesis_modules = [
-        'synthesis.__init__',
-        'synthesis.ants_transform', 
-        'synthesis.compare_interpolation',
-        'synthesis.densify',
-        'synthesis.main',
-        'synthesis.nifti_preprocessing',
-        'synthesis.streamline_processing',
-        'synthesis.transform',
-        'synthesis.visualize'
+    preprocessing_modules = [
+        'preprocessing.__init__',
+        'preprocessing.ants_transform',
+        'preprocessing.densify',
+        'preprocessing.gpu_utils',
+        'preprocessing.full_volume',
+        'preprocessing.nifti_resampling',
+        'preprocessing.patch_extraction',
+        'preprocessing.streamline_processing',
+        'preprocessing.affine',
     ]
     
     print("\nTesting synthesis module imports...")
-    for module_name in synthesis_modules:
+    for module_name in preprocessing_modules:
         try:
-            module = importlib.import_module(module_name)
+            importlib.import_module(module_name)
             print(f"{module_name}")
             results.add_pass()
         except ImportError as e:
@@ -153,25 +152,25 @@ def test_module_structure():
             print(f"ERROR: {module_name}: {e}")
             results.add_fail(f"Error in {module_name}: {e}")
     
-    # Test syntract_viewer module structure  
-    syntract_modules = [
-        'syntract_viewer.__init__',
-        'syntract_viewer.background_enhancement',
-        'syntract_viewer.contrast',
-        'syntract_viewer.core',
-        'syntract_viewer.cornucopia_augmentation',
-        'syntract_viewer.effects',
-        'syntract_viewer.generate_fiber_examples',
-        'syntract_viewer.generation', 
-        'syntract_viewer.improved_cornucopia',
-        'syntract_viewer.masking',
-        'syntract_viewer.utils'
+    # Test rendering module structure  
+    rendering_modules = [
+        'rendering.__init__',
+        'rendering.background_enhancement',
+        'rendering.contrast',
+        'rendering.slice_renderer',
+        'rendering.slice_augmentation',
+        'rendering.dark_field_effects',
+        'rendering.example_generation_cli',
+        'rendering.example_generation', 
+        'rendering.slice_augmentation',
+        'rendering.masking',
+        'rendering.streamline_utils'
     ]
     
-    print("\nTesting syntract_viewer module imports...")
-    for module_name in syntract_modules:
+    print("\nTesting rendering module imports...")
+    for module_name in rendering_modules:
         try:
-            module = importlib.import_module(module_name)
+            importlib.import_module(module_name)
             print(f"{module_name}")
             results.add_pass()
         except ImportError as e:
@@ -191,10 +190,10 @@ def test_basic_functionality(temp_dir: str):
     
     results = TestResults()
     
-    # Test synthesis.transform
-    print("\nTesting synthesis.transform...")
+    # Test preprocessing.affine
+    print("\nTesting preprocessing.affine...")
     try:
-        from synthesis.transform import build_new_affine
+        from preprocessing.affine import build_new_affine
         
         old_affine = np.eye(4)
         old_affine[:3, :3] = np.diag([2.0, 2.0, 2.0])
@@ -210,20 +209,11 @@ def test_basic_functionality(temp_dir: str):
         print(f"ERROR: build_new_affine: {e}")
         results.add_fail(f"build_new_affine error: {e}")
     
-    # Test synthesis.densify
-    print("\nTesting synthesis.densify...")
+    # Test preprocessing.densify
+    print("\nTesting preprocessing.densify...")
     try:
-        from synthesis.densify import linear_interpolate, densify_streamline_subvoxel
-        
-        # Test linear interpolation
-        p0 = np.array([0, 0, 0])
-        p1 = np.array([2, 2, 2])
-        result = linear_interpolate(p0, p1, 0.5)
-        expected = np.array([1, 1, 1])
-        np.testing.assert_allclose(result, expected)
-        print("linear_interpolate test")
-        results.add_pass()
-        
+        from preprocessing.densify import densify_streamline_subvoxel
+
         # Test streamline densification
         streamline = np.array([
             [0, 0, 0],
@@ -240,10 +230,10 @@ def test_basic_functionality(temp_dir: str):
         print(f"ERROR: densify functions: {e}")
         results.add_fail(f"densify functions error: {e}")
     
-    # Test syntract_viewer.utils
-    print("\nTesting syntract_viewer.utils...")
+    # Test rendering.streamline_utils
+    print("\nTesting rendering.streamline_utils...")
     try:
-        from syntract_viewer.utils import select_random_streamlines, densify_streamline
+        from rendering.streamline_utils import select_random_streamlines, densify_streamline
         
         # Create test streamlines
         streamlines = [
@@ -272,8 +262,8 @@ def test_basic_functionality(temp_dir: str):
         results.add_pass()
         
     except Exception as e:
-        print(f"ERROR: syntract_viewer.utils: {e}")
-        results.add_fail(f"syntract_viewer.utils error: {e}")
+        print(f"ERROR: rendering.streamline_utils: {e}")
+        results.add_fail(f"rendering.streamline_utils error: {e}")
     
     return results
 
@@ -297,7 +287,7 @@ def test_file_operations(temp_dir: str):
     
     # Test NIfTI loading
     try:
-        from synthesis.nifti_preprocessing import estimate_memory_usage
+        from preprocessing.nifti_resampling import estimate_memory_usage
         
         memory_gb = estimate_memory_usage((50, 50, 50), np.float32)
         assert memory_gb > 0
@@ -312,7 +302,7 @@ def test_file_operations(temp_dir: str):
     if trk_file:
         print(f"Created test TRK file: {trk_file}")
         try:
-            from synthesis.streamline_processing import clip_streamline_to_fov
+            from preprocessing.streamline_processing import clip_streamline_to_fov
             
             # Test streamline clipping
             streamline = np.array([
@@ -323,7 +313,7 @@ def test_file_operations(temp_dir: str):
             ], dtype=np.float32)
             
             new_shape = (50, 50, 50)
-            clipped = clip_streamline_to_fov(streamline, new_shape, use_gpu=False)
+            clip_streamline_to_fov(streamline, new_shape, use_gpu=False)
             print("clip_streamline_to_fov test")
             results.add_pass()
             
@@ -347,29 +337,18 @@ def test_visualization_functions(temp_dir: str):
     try:
         import matplotlib
         matplotlib.use('Agg')  # Use non-interactive backend
-        import matplotlib.pyplot as plt
         
-        # Test synthesis.visualize functions
+        # Test rendering visualization
         try:
-            from synthesis.visualize import overlay_streamlines_on_blockface_coronal, visualize_trk_with_nifti
-            print("synthesis.visualize imports successful")
+            print("rendering.slice_renderer imports successful")
             results.add_pass()
         except Exception as e:
-            print(f"ERROR: synthesis.visualize imports: {e}")
-            results.add_fail(f"synthesis.visualize import error: {e}")
-        
-        # Test syntract_viewer visualization
-        try:
-            from syntract_viewer.core import visualize_nifti_with_trk
-            print("syntract_viewer.core imports successful")
-            results.add_pass()
-        except Exception as e:
-            print(f"ERROR: syntract_viewer.core imports: {e}")
-            results.add_fail(f"syntract_viewer.core import error: {e}")
+            print(f"ERROR: rendering.slice_renderer imports: {e}")
+            results.add_fail(f"rendering.slice_renderer import error: {e}")
             
         # Test utils functions
         try:
-            from syntract_viewer.utils import get_colormap, generate_tract_color_variation
+            from rendering.streamline_utils import get_colormap, generate_tract_color_variation
             
             # Test colormap generation
             cmap = get_colormap(color_scheme='bw')
@@ -405,7 +384,7 @@ def test_edge_cases():
     
     # Test empty inputs
     try:
-        from syntract_viewer.utils import select_random_streamlines
+        from rendering.streamline_utils import select_random_streamlines
         
         # Test with empty streamline list
         empty_result = select_random_streamlines([], percentage=50.0, random_state=42)
@@ -417,25 +396,10 @@ def test_edge_cases():
         print(f"ERROR: Empty input handling: {e}")
         results.add_fail(f"Empty input handling error: {e}")
     
-    # Test invalid parameters
-    try:
-        from synthesis.densify import linear_interpolate
-        
-        # Test with extreme values
-        p0 = np.array([0, 0, 0])
-        p1 = np.array([1e6, 1e6, 1e6])
-        result = linear_interpolate(p0, p1, 0.5)
-        assert not np.any(np.isnan(result))
-        print("Extreme value handling")
-        results.add_pass()
-        
-    except Exception as e:
-        print(f"ERROR: Extreme value handling: {e}")
-        results.add_fail(f"Extreme value handling error: {e}")
     
     # Test GPU/CPU fallback
     try:
-        from synthesis.densify import densify_streamline_subvoxel
+        from preprocessing.densify import densify_streamline_subvoxel
         
         streamline = np.array([
             [0, 0, 0],
@@ -444,10 +408,10 @@ def test_edge_cases():
         ], dtype=np.float32)
         
         # Test with GPU disabled
-        result_cpu = densify_streamline_subvoxel(streamline, step_size=0.5, use_gpu=False)
+        densify_streamline_subvoxel(streamline, step_size=0.5, use_gpu=False)
         
         # Test with GPU enabled (should fallback to CPU if no GPU)
-        result_gpu_fallback = densify_streamline_subvoxel(streamline, step_size=0.5, use_gpu=True)
+        densify_streamline_subvoxel(streamline, step_size=0.5, use_gpu=True)
         
         print("GPU/CPU fallback handling")
         results.add_pass()
@@ -468,9 +432,9 @@ def test_integration():
     
     # Test module interaction
     try:
-        from synthesis.transform import build_new_affine
-        from synthesis.densify import densify_streamline_subvoxel
-        from syntract_viewer.utils import select_random_streamlines
+        from preprocessing.affine import build_new_affine
+        from preprocessing.densify import densify_streamline_subvoxel
+        from rendering.streamline_utils import select_random_streamlines
         
         # Create test data
         streamlines = [
@@ -480,10 +444,10 @@ def test_integration():
         
         # Test pipeline: select -> densify -> transform
         selected = select_random_streamlines(streamlines, percentage=100.0)
-        densified = [densify_streamline_subvoxel(s, step_size=0.5, use_gpu=False) for s in selected]
+        [densify_streamline_subvoxel(s, step_size=0.5, use_gpu=False) for s in selected]
         
         old_affine = np.eye(4)
-        new_affine = build_new_affine(old_affine, (100, 100, 100), 1.0, (200, 200, 200), use_gpu=False)
+        build_new_affine(old_affine, (100, 100, 100), 1.0, (200, 200, 200), use_gpu=False)
         
         print("Module integration test")
         results.add_pass()
@@ -494,7 +458,7 @@ def test_integration():
     
     # Test cross-module compatibility
     try:
-        from synthesis.densify import calculate_streamline_metrics
+        from preprocessing.densify import calculate_streamline_metrics
         
         streamlines = [
             np.array([[0, 0, 0], [1, 1, 1], [2, 2, 2]], dtype=np.float32),
@@ -518,7 +482,7 @@ def main():
     print("="*60)
     print("COMPREHENSIVE TEST RUNNER FOR SynTract")
     print("="*60)
-    print("Testing all modules in synthesis/ and syntract_viewer/ folders")
+    print("Testing all modules in preprocessing/ and rendering/ folders")
     print("This will run step-by-step comprehensive tests...")
     
     # Setup

@@ -18,17 +18,16 @@ import os
 import sys
 import argparse
 import glob
-from pathlib import Path
 import nibabel as nib
 import numpy as np
 
 # Import ANTs transform functions
 try:
-    from synthesis.ants_transform_updated import process_with_ants
+    from preprocessing.ants_transform import process_with_ants
 except ImportError:
     # Fallback to path manipulation for development
-    sys.path.append(os.path.join(os.path.dirname(__file__), 'synthesis'))
-    from ants_transform_updated import process_with_ants
+    sys.path.append(os.path.join(os.path.dirname(__file__), 'preprocessing'))
+    from ants_transform import process_with_ants
 
 
 def validate_ants_files(ants_warp_path, ants_iwarp_path, ants_aff_path):

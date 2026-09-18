@@ -1,7 +1,6 @@
 import numpy as np
-import pytest
 
-from syntract_viewer.synthetic_image_augmentations import apply_poisson_shot_noise
+from rendering.volume_artifact_augmentation import apply_poisson_shot_noise
 
 
 def _half_dark_half_bright(n=64):
@@ -55,7 +54,7 @@ def test_poisson_reproducible_with_seed():
     np.testing.assert_array_equal(a, b)
 
 
-from syntract_viewer.synthetic_image_augmentations import apply_image_only_augmentations
+from rendering.volume_artifact_augmentation import apply_image_only_augmentations
 
 
 def test_dispatcher_poisson_disabled_is_identity():

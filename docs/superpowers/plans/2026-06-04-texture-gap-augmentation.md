@@ -60,14 +60,14 @@ git commit -m "Add texture-gap experiment run log with baselines"
 ## Task 2: Make the combined-variant precompute script (3 knobs changed)
 
 **Files:**
-- Modify (LOCAL cluster file, do NOT git add): `synthetic-training/precompute_patches.sh`
+- Modify (LOCAL cluster file, do NOT git add): `training/precompute_patches.sh`
 
 - [ ] **Step 1: Copy the precompute script to a variant**
 
 On the cluster:
 
 ```bash
-cd /orcd/home/002/sparsh/syntract-3d/synthetic-training
+cd /orcd/home/002/sparsh/syntract-3d/training
 cp precompute_patches.sh precompute_patches_flatbg.sh
 ```
 
@@ -118,7 +118,7 @@ No change required — just confirm the variant copy still has these two lines a
 On the cluster (A100 or H200; small job):
 
 ```bash
-cd /orcd/home/002/sparsh/syntract-3d/synthetic-training
+cd /orcd/home/002/sparsh/syntract-3d/training
 OUTPUT_DIR=./precomputed_patches_flatbg_probe PATCHES_PER_TRK=20 bash precompute_patches_flatbg.sh
 ```
 
@@ -129,7 +129,7 @@ Confirm: `find ./precomputed_patches_flatbg_probe -name '*_3d.nii.gz' | wc -l` r
 - [ ] **Step 2: Run the domain-stats comparison vs real**
 
 ```bash
-cd /orcd/home/002/sparsh/syntract-3d/synthetic-training
+cd /orcd/home/002/sparsh/syntract-3d/training
 python compare_domain_stats.py \
   --synth_dir ./precomputed_patches_flatbg_probe \
   --real_dir <DIR OF REAL LSM PATCHES used by prior compare_domain_stats runs>
@@ -185,7 +185,7 @@ hold the values that passed the gate. Append to the run log:
 - [ ] **Step 1: Run the full precompute (NOT the probe override)**
 
 ```bash
-cd /orcd/home/002/sparsh/syntract-3d/synthetic-training
+cd /orcd/home/002/sparsh/syntract-3d/training
 sbatch precompute_patches_flatbg.sh
 ```
 
@@ -194,7 +194,7 @@ sbatch precompute_patches_flatbg.sh
 - [ ] **Step 2: CONFIRM a healthy patch count before training**
 
 ```bash
-find /orcd/home/002/sparsh/syntract-3d/synthetic-training/precomputed_patches_flatbg -name '*_3d.nii.gz' | wc -l
+find /orcd/home/002/sparsh/syntract-3d/training/precomputed_patches_flatbg -name '*_3d.nii.gz' | wc -l
 ```
 
 Expected: comparable to the baseline `precomputed_patches/` count (the train_cached guard refuses < 100).
@@ -206,12 +206,12 @@ Record the count in the run log.
 ## Task 5: Phase 2 — Retrain on the combined-variant patches
 
 **Files:**
-- Modify (LOCAL cluster file, do NOT git add): `synthetic-training/train_cached.sh`
+- Modify (LOCAL cluster file, do NOT git add): `training/train_cached.sh`
 
 - [ ] **Step 1: Copy train_cached.sh to a variant pointing at the new patches + fresh checkpoint dir**
 
 ```bash
-cd /orcd/home/002/sparsh/syntract-3d/synthetic-training
+cd /orcd/home/002/sparsh/syntract-3d/training
 cp train_cached.sh train_cached_flatbg.sh
 ```
 
@@ -225,7 +225,7 @@ In `train_cached_flatbg.sh`:
 - [ ] **Step 2: Launch the retrain**
 
 ```bash
-cd /orcd/home/002/sparsh/syntract-3d/synthetic-training
+cd /orcd/home/002/sparsh/syntract-3d/training
 sbatch train_cached_flatbg.sh
 ```
 

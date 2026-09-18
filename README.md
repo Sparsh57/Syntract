@@ -1,453 +1,230 @@
-# SynTract: MRI Synthesis & Tractography Visualization
+# SynTract
 
-A streamlined Python pipeline for MRI processing, tractography synthesis, and dark field microscopy-style visualization. Features unified CLI, ANTs integration, and patch-first optimization for dramatic performance improvements in neuroimaging research.
+Synthetic training data and a 3D U-Net for segmenting tracer-labelled fibers in
+light-sheet microscopy (LSM) volumes. No manual voxel labels are needed: fibers
+are synthesised by rendering MRI tractography streamlines into blockface-style
+tissue, with realistic microscopy noise, cell-body distractors, and soft
+partial-volume masks, then a 3D U-Net is trained on those patches and applied to
+real OME-Zarr volumes with sliding-window inference.
 
-## Features
+```
+registered TRK + blockface NIfTI
+        │  preprocessing/   patch-first extraction (streamline-anchored, physical-scale FOV)
+        ▼
+128³ tissue patch + clipped streamlines
+        │  rendering/       3D fiber rendering, soft masks, noise / artifact augmentation
+        ▼
+(volume, mask) training pairs  ── precompute to disk or generate on the fly
+        │  training/        PyTorch Lightning 3D U-Net (bf16, Dice+BCE / clDice)
+        ▼
+checkpoint  ──►  sliding_window_inference.py / predict_real_region.py on OME-Zarr
+```
 
-- **Patch Processing**: 80-95% performance improvement with patch extraction (default mode)
-- **Unified Pipeline**: Single command processing from raw NIfTI/TRK to visualizations
-- **ANTs Integration**: Spatial transformations and registration workflows
-- **Auto-Dimension Calculation**: Intelligent target sizing based on input characteristics
-- **Zero-Tolerance Spatial Accuracy**: Perfect bounds enforcement with enhanced curvature preservation
-- **Memory-Optimized**: Efficient processing for large datasets with minimal memory usage
-- **Intelligent Batch Processing**: Auto-optimization based on streamline density and file characteristics
-- **Cornucopia**: Intelligent preset selection for realistic background textures
-- **Batch Processing**: Multiple TRK files with shared NIfTI and memory optimization
-- **Dark Field Visualization**: Publication-ready medical imaging with enhanced contrast
+## Repository layout
+
+| Path | Purpose |
+|---|---|
+| `preprocessing/` | NIfTI + TRK resampling, ANTs transforms, patch-first patch extraction (`patch_extraction.py`), full-volume path (`full_volume.py`) |
+| `rendering/` | 3D volume rendering with streamlines (`volume_renderer.py`), noise and artifact augmentations, 2D slice rendering and masks |
+| `training/` | 3D U-Net (`unet3d.py`), losses, datasets and datamodules, `train_3d.py`, `precompute_patches_3d.py`, inference and sanity-check scripts, SLURM examples |
+| `syntract.py` | Single NIfTI + TRK pipeline CLI (2D/3D patches and visualisations) |
+| `batch_processing.py` | Batch over many TRK files; also the in-memory `process_patches_inmemory` API used by training |
+| `sliding_window_inference.py` | Tile a checkpoint over a large volume or OME-Zarr region |
+| `predict_real_region.py` | Run a checkpoint on patches around chosen coordinates of a real OME-Zarr volume |
+| `thicken_trk.py` | Turn a sparse TRK into a dense, gently curved bundle for sub-micron synthesis |
+| `batch_ants_trk_registration.py` | Apply ANTs warps to a directory of TRK files |
+| `fiber_extract_3d.py` | Classical (no learning) fiber extraction baseline |
+| `tests/` | pytest suite |
+| `docs/` | API reference (`DOCUMENTATION.md`), design notes and ADRs |
 
 ## Installation
+
+Python 3.10 or newer. A CUDA GPU is required for training and for any 128³
+inference; the preprocessing and rendering code falls back to CPU automatically.
 
 ```bash
 git clone https://github.com/Sparsh57/Syntract.git
 cd Syntract
-pip install -r requirements.txt
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt        # exact pins used for the paper experiments
+# optional GPU acceleration of preprocessing/rendering (CUDA 12):
+pip install cupy-cuda12x numba
 ```
 
-## Quick Start
+`pip install -e .` installs the packages plus the `syntract`, `syntract-batch`
+and `syntract-full-volume` console scripts.
 
-### Basic Usage (Patch-First Processing - Default)
+## Data
+
+The repository does not ship data. You need:
+
+- a reference **blockface NIfTI** volume (`.nii.gz`),
+- **TRK streamlines** registered to that volume (see `batch_ants_trk_registration.py`
+  for applying ANTs warps, and `thicken_trk.py` for densifying a sparse bundle),
+- optionally a **white-matter mask** NIfTI,
+- for inference, an **OME-Zarr** light-sheet volume with a multiscale pyramid.
+
+## Quick start: the 3D pipeline
+
+### 1. Densify the tractography
+
+At 1 µm voxels a single tractography streamline is straight and sparse. Build a
+dense, wavy bundle once:
+
 ```bash
-# Default: Fast patch-first processing with auto-calculated dimensions
-python syntract.py --input brain.nii.gz --trk fibers.trk --output result
-
-# Customized patch processing
-python syntract.py --input brain.nii.gz --trk fibers.trk --output result \
-  --total_patches 100 --patch_size 800 1 800
+python thicken_trk.py --input registered_trk/aligned.trk --output registered_trk/dense/aligned_dense.trk \
+    --copies 50 --radius_mm 0.025 --seed 42
+# curvature only, no thickening:
+python thicken_trk.py --input in.trk --output out.trk --copies 1 --wave_amplitude_um 5
 ```
 
-### Traditional Full-Volume Synthesis (Optional)
+### 2. Preview one training patch
+
 ```bash
-# Disable patch processing for traditional synthesis (slower, more memory)
-python syntract.py --input brain.nii.gz --trk fibers.trk --output result \
-  --disable_patch_processing --new_dim 116 140 96
+python visualize_one_patch.py --nifti brain.nii.gz --trk registered_trk/dense/aligned_dense.trk --seed 42
 ```
 
-### With ANTs Transformation
+writes `patch_preview.png` with sagittal / coronal / axial image slices and the
+matching mask.
+
+### 3. Precompute patches (recommended)
+
+On-the-fly synthesis at 1 µm starves the GPU, so render the training set once:
+
 ```bash
-python syntract.py --input brain.nii.gz --trk fibers.trk --use_ants \
-  --ants_warp warp.nii.gz --ants_iwarp iwarp.nii.gz --ants_aff affine.mat
+python training/precompute_patches_3d.py \
+    --trk_dir registered_trk/dense --input_nifti brain.nii.gz \
+    --output_dir training/precomputed_patches --patches_per_trk 1800 \
+    --patch_size 128 128 128 --voxel_size 0.001 --min_streamlines_per_patch 2 \
+    --use_cornucopia_3d --cornucopia_presets ultra_heavy_speckle extreme_noise granular_realistic \
+    --tissue_threshold 0.0 --enable_cell_blobs --cell_blob_count 200
+find training/precomputed_patches -name '*_3d.nii.gz' | wc -l   # confirm a healthy count
 ```
 
-### White Matter Filtering
+`training/precompute_patches.sh` is the full SLURM job with every render knob
+used for the paper.
+
+### 4. Train
+
 ```bash
-# Filter streamlines to only white matter regions using a white matter mask
-python syntract.py --input brain.nii.gz --trk fibers.trk \
-  --white_matter_only --wm_mask_file white_matter_mask.nii.gz \
-  --use_high_density_masks
+python training/train_3d.py --cached_patches --patch_dir training/precomputed_patches \
+    --trk_dir registered_trk/dense --input_nifti brain.nii.gz \
+    --checkpoint_dir checkpoints/ --epochs 150 --batch_size 4 --num_workers 12 \
+    --patch_size 128 128 128 --voxel_size 0.001 --loss BCE --pos_weight 5.0 --no_wandb
 ```
 
-### Advanced Patch Processing
+Notes:
+
+- `--on_the_fly` (the default) generates patches during training instead; every
+  render flag of `precompute_patches_3d.py` is also accepted here.
+- Precision is auto-selected: `bf16-mixed` on Ampere/Hopper GPUs. Do not force
+  `16-mixed`; fp16 overflows in the forward pass and NaN-poisons the weights.
+- `--val_fraction 0.15` holds out a disjoint synthetic validation split.
+- `--real_proxy_zarr /path/to/volume.ome.zarr` logs an unlabelled transfer proxy
+  (predicted-positive fraction and fiber continuity on fixed real regions) each
+  validation epoch.
+- Multi-GPU: `training/train_cached.sh` and `training/train_multigpu.sh` are
+  `torchrun` SLURM examples; edit the partition lines for your cluster.
+
+### 5. Sanity-check a checkpoint
+
 ```bash
-# High-throughput: many small patches
-python syntract.py --input brain.nii.gz --trk fibers.trk \
-  --total_patches 200 --patch_size 400 1 400 --patch_batch_size 50
-
-# Quality mode: fewer large patches
-python syntract.py --input brain.nii.gz --trk fibers.trk \
-  --total_patches 50 --patch_size 1024 1 1024
+# dice ≈ 0.98 on a known synthetic patch means the inference path is correct
+python training/sanity_check_synthetic.py --checkpoint checkpoints/best_3d.ckpt --voxel_size 0.001
+# thin-slab (zero-padded Z) sliding-window path
+python training/sanity_check_thinslab.py --checkpoint checkpoints/best_3d.ckpt
 ```
 
-### 3D Volume Output
+### 6. Inference on real light-sheet data
+
 ```bash
-# Generate 3D NIfTI volumes with streamlines rendered on tissue
-python syntract.py --input brain.nii.gz --trk fibers.trk \
-  --3d_output --white_mask wm_mask.nii.gz --total_patches 10 --patch_size 1024 40 1024
+# a region of an OME-Zarr, Gaussian-blended sliding window, outputs .npy (+ optional NIfTI)
+python sliding_window_inference.py --zarr /path/to/volume.ome.zarr \
+    --region_center_zyx 200 13000 16400 --region_size_zyx 256 512 512 \
+    --checkpoint checkpoints/best_3d.ckpt --output_prefix results/region1 --stride 64 --save_nifti
+
+# patches around hand-picked coordinates, with debug PNGs
+python predict_real_region.py --zarr_path /path/to/volume.ome.zarr \
+    --model_checkpoint checkpoints/best_3d.ckpt --center_coords 19 12000 20000 \
+    --patch_size 128 128 128 --normalize percentile --output_dir results/region_a
 ```
 
-### Batch Processing
+`explore_zarr_pick_region.py` shows a Z-MIP of a coarse pyramid level so you can
+click a region centre; `view_sliding_results.py` and `view_neuroglancer.py`
+browse the (memory-mapped) outputs. `compare_multiregion.sh` sweeps a fixed 3×3
+grid of regions to tell a universal domain gap from a location-specific one, and
+`training/compare_domain_stats.py` quantifies synthetic-vs-real intensity statistics.
+
+## Design decisions that matter for reproducibility
+
+- **Train and inference normalisation are identical**: 1–99 percentile of the
+  full patch, mapped to [0, 1]. Never replace this with min-max.
+- **Patch FOV is anchored in physical space** (`patch_size × voxel_size`), and
+  patch centres are sampled on streamline points, so sub-millimetre patches
+  still contain fibers.
+- **Masks are soft** (trilinear partial-volume weights) by default; a binary
+  tube is available with `--mask_smoothing_sigma 1.0 --mask_binary_threshold 0.2`.
+- **Cell-body blobs** are added to the image only, never the mask, so the model
+  learns fiber-versus-cell.
+- **Inference-shape augmentation** (random thin Z slabs and empty patches)
+  matches the zero-padded thin-slab inputs seen at inference.
+
+The exact configuration behind the reported model is
+`training/precompute_patches.sh` followed by `training/train_cached.sh`.
+
+## 2D synthetic visualisations
+
+The original 2D pipeline is still available for generating dark-field style
+slice images with masks:
+
 ```bash
-python cumulative.py  # Edit paths in script
+python syntract.py --input brain.nii.gz --trk fibers.trk --output result           # patch-first, default
+python syntract.py ... --use_ants --ants_warp warp.nii.gz --ants_iwarp iwarp.nii.gz --ants_aff affine.mat
+python syntract.py ... --3d_output --white_mask wm_mask.nii.gz --total_patches 10 --patch_size 1024 40 1024
+python syntract.py ... --disable_patch_processing --new_dim 116 140 96             # full-volume path (slow)
+python batch_processing.py --nifti brain.nii.gz --trk-dir ./trk_files/ --total-patches 50
 ```
 
-## Parameters
+Key defaults (`syntract.py`; `batch_processing.py` uses the same values with
+dashes): `--voxel_size 0.05`, `--total_patches 50`, `--patch_size 600 1 600`,
+`--min_streamlines_per_patch 20`, `--mask_thickness 1`,
+`--density_threshold 0.6`, `--min_bundle_size 2000`, high-density masks on.
+Outputs are `patches/{prefix}_{NNNN}.nii.gz` / `.trk`, `{viz_prefix}_{n}_*.png`
+and `*_mask_slice{n}.png`. Full parameter reference: `docs/DOCUMENTATION.md`.
 
-### Essential Arguments
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `--input` | str | Input NIfTI file path (required) |
-| `--trk` | str | Input TRK file path (required) |
-| `--output` | str | Output base name (default: "output") |
-
-### Synthesis Parameters
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `--new_dim` | int×3 | Auto-calculated | Target dimensions (X Y Z) - auto-calculated if not specified |
-| `--voxel_size` | float | 0.05 | Target voxel size in mm |
-| `--skip_synthesis` | flag | | Skip synthesis and use input files directly |
-
-### ANTs Transformation
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `--use_ants` | flag | Enable ANTs transformation |
-| `--ants_warp` | str | ANTs warp field file |
-| `--ants_iwarp` | str | ANTs inverse warp field file |
-| `--ants_aff` | str | ANTs affine transformation file |
-
-### Patch Processing (Default Mode)
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `--disable_patch_processing` | flag | | Disable patch processing and use traditional synthesis |
-| `--patch_output_dir` | str | "patches" | Directory for patch outputs |
-| `--total_patches` | int | 50 | Total number of patches to extract |
-| `--patch_size` | int×3 | [600, 1, 600] | Patch dimensions (width, height, depth) |
-| `--min_streamlines_per_patch` | int | 20 | Minimum streamlines required per patch |
-| `--patch_batch_size` | int | 50 | Batch size for memory management |
-| `--random_state` | int | | Random seed for reproducible extraction |
-| `--patch_prefix` | str | "patch" | Prefix for patch files |
-
-### Visualization
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `--n_examples` | int | 10 | Number of visualization examples |
-| `--viz_prefix` | str | "synthetic_" | Prefix for visualization files |
-| `--enable_orange_blobs` | flag | | Enable orange blob injection site artifacts |
-| `--orange_blob_probability` | float | 0.3 | Probability of applying orange blobs (0.0-1.0) |
-| `--3d_output` | flag | | Generate 3D NIfTI volumes with rendered streamlines |
-
-### Mask & Bundle Parameters
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `--save_masks` | flag | True | Save binary masks alongside visualizations |
-| `--use_high_density_masks` | flag | True | Use high-density mask generation |
-| `--mask_thickness` | int | 1 | Thickness of generated masks |
-| `--density_threshold` | float | 0.15 | Fiber density threshold for masking |
-| `--min_bundle_size` | int | 20 | Minimum size for bundle detection |
-| `--label_bundles` | flag | False | Label individual fiber bundles |
-
-### White Matter Filtering
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `--white_matter_only` | flag | False | Enable white matter filtering for streamlines |
-| `--wm_mask_file` | str | None | Path to white matter mask NIfTI file |
-
-### Slice Extraction
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `--slice_count` | int | Number of coronal slices to extract |
-| `--slice_output_dir` | str | Directory for slice outputs |
-| `--auto_batch_process` | flag | Automatically process all extracted slices |
-
-## Batch Processing (cumulative.py)
-
-Process multiple TRK files with a shared NIfTI file efficiently. Features intelligent memory optimization and automatic processing strategy adaptation.
-
-### In-Memory Optimization Features
-
-The `process_batch` function includes several intelligent optimizations:
-
-- **Automatic Streamline Analysis**: Analyzes each TRK file to determine optimal processing strategy
-- **Dynamic Patch Allocation**: Automatically adjusts patch count based on file size and streamline density
-- **Memory-Aware Processing**: Optimizes memory usage for large files (>100,000 streamlines)
-- **Auto-Dimension Calculation**: Calculates target dimensions based on input NIfTI characteristics
-- **Smart Output Sizing**: Automatically determines output image size from patch dimensions
-
-### Usage
-
-#### Command Line Interface
-```bash
-# Basic batch processing with auto-optimization
-python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/
-
-# With custom parameters
-python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \
-  --total-patches 50 --n-examples 200 --voxel-size 0.05
-
-# For thin slice data (optimized settings)
-python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \
-  --patch-size 256 8 256 --total-patches 30 --n-examples 200
-
-# With 3D volume output and white matter filtering
-python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \
-  --3d-output --white-mask wm_mask.nii.gz
-```
-
-#### Python API
-```python
-from cumulative import process_batch
-
-# Simple batch processing with automatic optimization
-results = process_batch(
-    nifti_file='brain.nii.gz',
-    trk_directory='./trk_files/',
-    patches=30,                    # Total patches across all files
-    n_examples=200                 # Total visualizations to generate
-)
-
-# Advanced configuration
-results = process_batch(
-    nifti_file='brain.nii.gz',
-    trk_directory='./trk_files/',
-    output_dir='results',
-    patches=50,
-    patch_size=[600, 1, 600],      # Auto-determines 600x600 output images
-    min_streamlines_per_patch=20,
-    voxel_size=0.05,
-    new_dim=None,                  # Auto-calculated from input
-    n_examples=200,
-    enable_orange_blobs=True,
-    cleanup_intermediate=True      # Saves disk space
-)
-```
-### Batch ANTs Registration Function
-```python
-from batch_ants_trk_registration import batch_ants_registration
-
-results = batch_ants_registration(
-    input_folder="trk_files/",
-    output_folder="registered_trk/", 
-    ants_warp_path="warp.nii.gz",
-    ants_iwarp_path="iwarp.nii.gz",
-    ants_aff_path="affine.mat",
-    reference_mri_path="brain.nii.gz"
-)
-```
-
-#### In-Memory Processing API
-```python
-from cumulative import process_patches_inmemory
-
-# Generate patches and visualizations in-memory (no file I/O)
-images, masks = process_patches_inmemory(
-    input_nifti='brain.nii.gz',
-    trk_file='fibers.trk',         # Single file or directory
-    num_patches=50,
-    patch_size=[512, 1, 512],      # 512x512 output images
-    enable_orange_blobs=True,      # Enable injection site simulation
-    orange_blob_probability=0.3,   # 30% chance per patch
-    random_state=42                # For reproducible results
-)
-
-# Use results directly with matplotlib
-import matplotlib.pyplot as plt
-plt.figure(figsize=(15, 5))
-for i in range(min(3, len(images))):
-    plt.subplot(1, 3, i+1)
-    plt.imshow(images[i])
-    plt.axis('off')
-plt.show()
-```
-```
-
-### Key Batch Parameters
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `nifti_file` | str | | Common NIfTI file for all TRK files (required) |
-| `trk_directory` | str | | Directory containing TRK files (required) |
-| `output_dir` | str | "results" | Output directory |
-| `patches` | int | 30 | Total patches to extract across all files |
-| `patch_size` | list | [600, 1, 600] | Patch dimensions (auto-calculated if None) |
-| `n_examples` | int | 10 | Number of visualization examples to generate |
-| `voxel_size` | float | 0.05 | Target voxel size in mm |
-| `new_dim` | tuple | None | Target dimensions (auto-calculated if None) |
-
-### Automatic Processing Strategy
-
-The batch processor automatically optimizes based on file characteristics:
-
-- **Large files (>100k streamlines)**: Increases patch count to distribute processing load
-- **Sparse files (<10 streamlines)**: Uses minimal patches to avoid empty regions  
-- **Standard files**: Uses balanced patch distribution for optimal coverage
-- **Memory constraints**: Automatically adjusts cleanup intervals
-
-### Return Structure
-
-The `process_batch` function returns a comprehensive results dictionary:
-
-```python
-{
-    'successful': [                # List of successfully processed files
-        {
-            'file': 'fiber1.trk',
-            'time': 45.2,           # Processing time in seconds
-            'patches': 5,           # Patches allocated to this file
-            'patches_extracted': 5   # Actually extracted patches
-        }
-    ],
-    'failed': [                    # List of failed files with error info
-        {
-            'file': 'fiber2.trk',
-            'error': 'Error message',
-            'time': 12.1
-        }
-    ],
-    'total_time': 128.5            # Total processing time
-}
-```
-
-## Output Structure
-
-### Patch Processing (Default)
-```
-patches/
-├── patch_0001.nii.gz     # Patch NIfTI files
-├── patch_0001.trk        # Patch TRK files
-├── patch_0001_visualization.png  # Visualizations
-├── patch_0001_visualization_mask_slice0.png  # Masks
-└── patch_extraction_summary.json  # Processing summary
-```
-
-### Traditional Processing
-```
-output_name.nii.gz         # Processed NIfTI
-output_name.trk            # Processed TRK
-visualizations/            # Generated images (if visualization enabled)
-```
-
-### Batch Processing (cumulative.py)
-```
-results/                       # Main output directory
-├── processed/                 # Intermediate processed files
-│   ├── processed_fiber1.nii
-│   └── processed_fiber1.trk
-├── patches/                   # Patches organized by TRK file
-│   ├── fiber1/               # Individual TRK file patches
-│   │   ├── fiber1_patch_0001_visualization.png
-│   │   ├── fiber1_patch_0001_visualization_mask_slice0.png
-│   │   └── ...
-│   └── fiber2/
-│       ├── fiber2_patch_0001_visualization.png
-│       └── ...
-└── summary.json              # Batch processing results summary
-```
-
-## Python API
-
-### Basic Processing
-```python
-from syntract import process_syntract
-
-result = process_syntract(
-    input_nifti="brain.nii.gz",
-    input_trk="fibers.trk",
-    output_base="processed_data",
-    new_dim=[400, 50, 400],
-    voxel_size=0.05
-)
-```
-
-### Batch Processing
-```python
-from cumulative import process_batch
-
-# Intelligent batch processing with auto-optimization
-results = process_batch(
-    nifti_file="shared_brain.nii.gz",
-    trk_directory="trk_files_directory",
-    output_dir="results",
-    patches=50,                    # Total patches across all files
-    patch_size=[600, 1, 600],      # Determines 600x600 output images
-    n_examples=200,                # Total visualizations to generate
-    voxel_size=0.05,
-    new_dim=None,                  # Auto-calculated
-    enable_orange_blobs=True,
-    cleanup_intermediate=True      # Saves disk space
-)
-```
-
-### Complete Function Signature
-
-The `process_syntract` function accepts all these parameters:
+Python API:
 
 ```python
 from syntract import process_syntract
+from batch_processing import process_batch, process_patches_inmemory
 
-result = process_syntract(
-    input_nifti,                    # Input NIfTI file path (required)
-    input_trk,                      # Input TRK file path (required) 
-    output_base,                    # Output base name (required)
-    new_dim,                        # Target dimensions [X, Y, Z] - auto-calculated if None
-    voxel_size=0.05,                # Target voxel size in mm
-    
-    # ANTs transformation
-    use_ants=False,                 # Enable ANTs transformation
-    ants_warp_path=None,           # ANTs warp field file
-    ants_iwarp_path=None,          # ANTs inverse warp field file 
-    ants_aff_path=None,            # ANTs affine transformation file
-    
-    # Slice extraction
-    slice_count=None,              # Number of coronal slices to extract
-    enable_slice_extraction=False, # Enable slice extraction mode
-    slice_output_dir=None,         # Directory for slice outputs
-    auto_batch_process=False,      # Auto-process all extracted slices
-    
-    # Patch extraction (Default Mode)
-    disable_patch_processing=False, # Disable patch processing (use traditional synthesis)
-    total_patches=50,              # Total number of patches to extract
-    patch_size=[600, 1, 600],      # Patch dimensions [width, height, depth]
-    min_streamlines_per_patch=20,  # Minimum streamlines per patch
-    patch_output_dir="patches",    # Directory for patch outputs
-    patch_batch_size=50,           # Batch size for memory management
-    patch_prefix="patch",          # Prefix for patch files
-    cleanup_intermediate=True,     # Remove intermediate files to save space
-    
-    # Visualization
-    n_examples=10,                 # Number of visualization examples
-    viz_prefix="synthetic_",       # Prefix for visualization files
-    enable_orange_blobs=False,     # Enable orange blob artifacts
-    orange_blob_probability=0.3,   # Probability of orange blobs (0.0-1.0)
-    
-    # Mask & Bundle parameters
-    save_masks=True,               # Save binary masks alongside visualizations
-    use_high_density_masks=True,   # Use high-density mask generation
-    mask_thickness=1,              # Thickness of generated masks
-    density_threshold=0.15,        # Fiber density threshold for masking
-    min_bundle_size=20,            # Minimum size for bundle detection
-    label_bundles=False,           # Label individual fiber bundles
-    
-    # White matter filtering
-    white_matter_only=False,       # Enable white matter filtering
-    wm_mask_file=None              # Path to white matter mask NIfTI file
-)
+result = process_syntract(input_nifti="brain.nii.gz", input_trk="fibers.trk",
+                          output_base="out", new_dim=None, voxel_size=0.05)
+images, masks = process_patches_inmemory(input_nifti="brain.nii.gz", trk_file="fibers.trk",
+                                         num_patches=8, patch_size=[512, 1, 512], random_state=42)
 ```
 
-## Dependencies
+## Classical baseline
 
-- Core: `numpy`, `nibabel`, `matplotlib`, `scikit-image`, `scipy`, `dipy`
-- Optional: `cupy`, `cornucopia-pytorch`, `ants`
+`fiber_extract_3d.py` extracts fibers without learning (denoise, structure-tensor
+lineness, threshold, component filtering) for comparison:
 
-## Memory Optimization for Large Datasets
-
-For extracting 500+ patches from large volumes (>5GB), we've implemented several memory optimizations:
-
-### Key Features
-- **Memory-Mapped Loading**: Uses `mmap=True` to avoid loading entire volumes into RAM
-- **Batch Processing**: Processes patches in batches with garbage collection between batches
-- **Volume Caching**: Pre-loads volumes once and reuses for all patches (eliminates redundant I/O)
-- **Checkpoint System**: Saves progress every N patches to allow recovery from OOM kills
-
-### Usage
 ```bash
-python3 syntract.py \
-  --input large_volume.nii.gz \
-  --trk fibers.trk \
-  --skip_synthesis \              # Skip if files already processed
-  --enable_patch_extraction \
-  --total_patches 500 \
-  --patch_batch_size 50 \        # Adjust based on available memory
-  --patch_size 600 1 600
+python fiber_extract_3d.py --input region.nii.gz --out_dir fiber3d_out --voxel_size 1.16 1.16 1.0
 ```
 
+## Tests
+
+```bash
+pip install pytest
+pytest                          # unit suite (tests needing real data skip when it is absent)
+python run_comprehensive_tests.py
+```
+
+## Citation
+
+See `CITATION.cff`. A paper reference will be added on publication.
 
 ## License
 
-MIT License - see LICENSE file for details.
+MIT, see `LICENSE`.

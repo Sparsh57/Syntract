@@ -38,7 +38,7 @@ Add the **missing physics** and improve the **labels**, while protecting learnab
 
 ### Part 1 — Image texture (close the speckle gap)
 
-- **A1. New `apply_poisson_shot_noise()`** in [syntract_viewer/synthetic_image_augmentations.py](../../../syntract_viewer/synthetic_image_augmentations.py).
+- **A1. New `apply_poisson_shot_noise()`** in [rendering/volume_artifact_augmentation.py](../../../rendering/volume_artifact_augmentation.py).
   - Formula: `noisy = rng.poisson(np.clip(vol, 0, None) * gain) / gain`, on the unit-normalized volume.
   - **`gain`** is the only knob: low gain (~40) = heavy shot noise, high gain (~150) = nearly clean. Variance = mean, so brighter voxels are noisier — matching real LSM.
   - **Image only.** Never applied to the mask. Applied after fiber compositing, like the other image augs.
@@ -74,10 +74,10 @@ The raw mask is a trilinear splat of the streamline centerline (~1 vox). Current
 
 ## Files touched
 
-- `syntract_viewer/synthetic_image_augmentations.py` — new `apply_poisson_shot_noise()`.
-- `syntract_viewer/volume_renderer.py` and/or `synthetic-training/precompute_patches_3d.py` — wire the new aug into the render path with a CLI flag (`--enable_poisson_noise`, `--poisson_gain`), mirroring the existing `--enable_granular_noise` plumbing.
-- `synthetic-training/precompute_patches.sh` — new config (Poisson on, banding re-enabled, granular 1.5, `--soft_mask`, `mask_smoothing_sigma 0.5`, new `OUTPUT_DIR`).
-- `synthetic-training/train_cached.sh` — point `PATCH_DIR` at the new patches; fresh checkpoint dir.
+- `rendering/volume_artifact_augmentation.py` — new `apply_poisson_shot_noise()`.
+- `rendering/volume_renderer.py` and/or `training/precompute_patches_3d.py` — wire the new aug into the render path with a CLI flag (`--enable_poisson_noise`, `--poisson_gain`), mirroring the existing `--enable_granular_noise` plumbing.
+- `training/precompute_patches.sh` — new config (Poisson on, banding re-enabled, granular 1.5, `--soft_mask`, `mask_smoothing_sigma 0.5`, new `OUTPUT_DIR`).
+- `training/train_cached.sh` — point `PATCH_DIR` at the new patches; fresh checkpoint dir.
 - `docs/superpowers/plans/texture-gap-runlog.md` — append a new variant section (Poisson + soft masks).
 
 ## Non-goals / guardrails
