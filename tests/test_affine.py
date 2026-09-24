@@ -1,5 +1,5 @@
 import numpy as np
-from synthesis.transform import build_new_affine
+from preprocessing.affine import build_new_affine
 
 def test_build_new_affine():
     old_affine = np.eye(4)

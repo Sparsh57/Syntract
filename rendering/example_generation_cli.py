@@ -18,9 +18,9 @@ from pathlib import Path
 import tempfile
 
 try:
-    from .generation import generate_varied_examples, generate_enhanced_varied_examples
+    from .example_generation import generate_varied_examples, generate_enhanced_varied_examples
 except ImportError:
-    from generation import generate_varied_examples, generate_enhanced_varied_examples
+    from example_generation import generate_varied_examples, generate_enhanced_varied_examples
 
 try:
     from .contrast import CORNUCOPIA_INTEGRATION_AVAILABLE

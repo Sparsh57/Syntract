@@ -6,26 +6,26 @@ featuring dark field microscopy-style visualization and advanced augmentation ca
 """
 
 try:
-    from .core import (
+    from .slice_renderer import (
         visualize_nifti_with_trk,
         visualize_nifti_with_trk_coronal,
         visualize_multiple_views
     )
 except ImportError:
-    from core import (
+    from slice_renderer import (
         visualize_nifti_with_trk,
         visualize_nifti_with_trk_coronal,
         visualize_multiple_views
     )
 
 try:
-    from .generation import (
+    from .example_generation import (
         generate_varied_examples,
         generate_enhanced_varied_examples,
         generate_enhanced_varied_examples_with_preserved_background
     )
 except ImportError:
-    from generation import (
+    from example_generation import (
         generate_varied_examples,
         generate_enhanced_varied_examples,
         generate_enhanced_varied_examples_with_preserved_background
@@ -56,25 +56,25 @@ except ImportError:
     )
 
 try:
-    from .effects import (
+    from .dark_field_effects import (
         apply_balanced_dark_field_effect,
         apply_blockface_preserving_dark_field_effect
     )
 except ImportError:
-    from effects import (
+    from dark_field_effects import (
         apply_balanced_dark_field_effect,
         apply_blockface_preserving_dark_field_effect
     )
 
 try:
-    from .utils import (
+    from .streamline_utils import (
         select_random_streamlines,
         densify_streamline,
         generate_tract_color_variation,
         get_colormap
     )
 except ImportError:
-    from utils import (
+    from streamline_utils import (
         select_random_streamlines,
         densify_streamline,
         generate_tract_color_variation,
@@ -95,7 +95,7 @@ except ImportError:
 
 # Try to import Cornucopia functionality (improved version)
 try:
-    from .improved_cornucopia import (
+    from .slice_augmentation import (
         ImprovedCornucopiaAugmenter,
         create_optical_presets,
         augment_fiber_slice

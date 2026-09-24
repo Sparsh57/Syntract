@@ -9,11 +9,11 @@ from scipy import ndimage
 
 # Import Cornucopia integration with fallback
 try:
-    from .improved_cornucopia import augment_fiber_slice
+    from .slice_augmentation import augment_fiber_slice
     CORNUCOPIA_INTEGRATION_AVAILABLE = True
 except ImportError:
     try:
-        from improved_cornucopia import augment_fiber_slice
+        from slice_augmentation import augment_fiber_slice
         CORNUCOPIA_INTEGRATION_AVAILABLE = True
     except ImportError:
         CORNUCOPIA_INTEGRATION_AVAILABLE = False

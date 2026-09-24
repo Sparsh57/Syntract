@@ -39,7 +39,7 @@ def build_new_affine(old_affine, old_shape, new_voxel_size, new_shape, patch_cen
     """
     # Use centralized GPU utilities
     try:
-        from synthesis.gpu_utils import get_array_module
+        from preprocessing.gpu_utils import get_array_module
     except ImportError:
         try:
             from .gpu_utils import get_array_module

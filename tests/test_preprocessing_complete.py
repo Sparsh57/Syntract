@@ -27,13 +27,13 @@ sys.path.insert(0, project_root)
 
 # Try to import synthesis modules - handle import errors gracefully
 try:
-    from synthesis.transform import build_new_affine
+    from preprocessing.affine import build_new_affine
     TRANSFORM_AVAILABLE = True
 except ImportError:
     TRANSFORM_AVAILABLE = False
 
 try:
-    from synthesis.densify import (
+    from preprocessing.densify import (
         densify_streamline_subvoxel, 
         densify_streamlines_parallel,
         calculate_streamline_metrics,
@@ -45,13 +45,13 @@ except ImportError:
     DENSIFY_AVAILABLE = False
 
 try:
-    from synthesis.nifti_preprocessing import resample_nifti, estimate_memory_usage
+    from preprocessing.nifti_resampling import resample_nifti, estimate_memory_usage
     NIFTI_PREPROCESSING_AVAILABLE = True
 except ImportError:
     NIFTI_PREPROCESSING_AVAILABLE = False
 
 try:
-    from synthesis.streamline_processing import (
+    from preprocessing.streamline_processing import (
         clip_streamline_to_fov,
         interpolate_to_fov, 
         transform_streamline,
@@ -397,7 +397,7 @@ class TestIntegration:
     def test_main_module_import(self):
         """Test that main module can be imported"""
         try:
-            from synthesis.main import process_and_save
+            from preprocessing.full_volume import process_and_save
             success = True
         except ImportError:
             success = False
@@ -409,7 +409,7 @@ class TestIntegration:
 # Utility test functions
 def test_module_structure():
     """Test that synthesis module structure is correct"""
-    synthesis_path = os.path.join(project_root, 'synthesis')
+    synthesis_path = os.path.join(project_root, 'preprocessing')
     
     # Check if synthesis directory exists
     assert os.path.exists(synthesis_path)
@@ -421,10 +421,10 @@ def test_module_structure():
         'ants_transform.py',
         'compare_interpolation.py',
         'densify.py',
-        'main.py',
-        'nifti_preprocessing.py',
+        'full_volume.py',
+        'nifti_resampling.py',
         'streamline_processing.py',
-        'transform.py',
+        'affine.py',
         'visualize.py'
     ]
     

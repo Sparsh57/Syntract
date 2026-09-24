@@ -12,18 +12,18 @@ import random
 from pathlib import Path
 
 try:
-    from .core import visualize_nifti_with_trk, visualize_nifti_with_trk_coronal, visualize_multiple_views
+    from .slice_renderer import visualize_nifti_with_trk, visualize_nifti_with_trk_coronal, visualize_multiple_views
     from .contrast import apply_enhanced_contrast_and_augmentation, CORNUCOPIA_INTEGRATION_AVAILABLE
     from .masking import create_aggressive_brain_mask, create_fiber_mask
-    from .effects import apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
-    from .utils import select_random_streamlines, densify_streamline, generate_tract_color_variation, get_colormap
+    from .dark_field_effects import apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
+    from .streamline_utils import select_random_streamlines, densify_streamline, generate_tract_color_variation, get_colormap
     from .orange_blob_generator import apply_orange_artifacts
 except ImportError:
-    from core import visualize_nifti_with_trk, visualize_nifti_with_trk_coronal, visualize_multiple_views
+    from slice_renderer import visualize_nifti_with_trk, visualize_nifti_with_trk_coronal, visualize_multiple_views
     from contrast import apply_enhanced_contrast_and_augmentation, CORNUCOPIA_INTEGRATION_AVAILABLE
     from masking import create_aggressive_brain_mask, create_fiber_mask
-    from effects import apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
-    from utils import select_random_streamlines, densify_streamline, generate_tract_color_variation, get_colormap
+    from dark_field_effects import apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
+    from streamline_utils import select_random_streamlines, densify_streamline, generate_tract_color_variation, get_colormap
     from orange_blob_generator import apply_orange_artifacts
 
 
@@ -933,9 +933,9 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
     output_file = os.path.join(output_dir, f"{prefix}{example_idx+1:03d}.png")
     # Import resize utility
     try:
-        from .utils import save_image_1024
+        from .streamline_utils import save_image_1024
     except ImportError:
-        from utils import save_image_1024
+        from streamline_utils import save_image_1024
     save_image_1024(output_file, fig, is_mask=False, target_size=output_image_size)
     print(f"Generated example {example_idx+1}: {output_file} ({output_image_size[0]}x{output_image_size[1]})")
     
@@ -958,9 +958,9 @@ def _create_enhanced_visualization(enhanced_slice, selected_streamlines, slice_m
         label_bundles = kwargs.get('label_bundles', False)
         if label_bundles and 'labeled_mask' in locals():
             try:
-                from .utils import visualize_labeled_bundles
+                from .streamline_utils import visualize_labeled_bundles
             except ImportError:
-                from utils import visualize_labeled_bundles
+                from streamline_utils import visualize_labeled_bundles
             labeled_filename = f"{mask_dir}/{mask_basename}_labeled_bundles_slice{slice_idx}.png"
             visualize_labeled_bundles(labeled_mask, labeled_filename)
             print(f"Saved labeled bundles for slice {slice_idx} to {labeled_filename}")
@@ -1124,7 +1124,7 @@ def _apply_high_density_masks_unified(output_file, high_density_masks, high_dens
     """
     mask_dir = os.path.dirname(output_file)
     if not mask_dir:
-        mask_dir = "../synthesis"
+        mask_dir = "../preprocessing"
     mask_basename = os.path.splitext(os.path.basename(output_file))[0]
     
     if view_mode == 'multiview':
@@ -1132,12 +1132,12 @@ def _apply_high_density_masks_unified(output_file, high_density_masks, high_dens
         for view, mask in high_density_masks.items():
             if mask is not None:
                 mask_filename = f"{mask_dir}/{mask_basename}_mask_{view}.png"
-                from .utils import save_image_1024
+                from .streamline_utils import save_image_1024
                 save_image_1024(mask_filename, mask, is_mask=True, target_size=output_image_size)
                 print(f"Applied high-density mask for {view} view: {mask_filename} ({output_image_size[0]}x{output_image_size[1]})")
                 
                 if label_bundles and view in high_density_labeled_masks:
-                    from .utils import visualize_labeled_bundles
+                    from .streamline_utils import visualize_labeled_bundles
                     labeled_filename = f"{mask_dir}/{mask_basename}_labeled_bundles_{view}.png"
                     visualize_labeled_bundles(high_density_labeled_masks[view], labeled_filename)
                     print(f"Applied high-density labeled bundles for {view} view: {labeled_filename}")
@@ -1156,12 +1156,12 @@ def _apply_high_density_masks_unified(output_file, high_density_masks, high_dens
         
         if slice_idx in high_density_masks:
             mask_filename = f"{mask_dir}/{mask_basename}_mask_slice{slice_idx}.png"
-            from .utils import save_image_1024
+            from .streamline_utils import save_image_1024
             save_image_1024(mask_filename, high_density_masks[slice_idx], is_mask=True, target_size=output_image_size)
             print(f"Applied high-density mask for slice {slice_idx}: {mask_filename} ({output_image_size[0]}x{output_image_size[1]})")
             
             if label_bundles and slice_idx in high_density_labeled_masks:
-                from .utils import visualize_labeled_bundles
+                from .streamline_utils import visualize_labeled_bundles
                 labeled_filename = f"{mask_dir}/{mask_basename}_labeled_bundles_slice{slice_idx}.png"
                 visualize_labeled_bundles(high_density_labeled_masks[slice_idx], labeled_filename)
                 print(f"Applied high-density labeled bundles for slice {slice_idx}: {labeled_filename}")

@@ -277,7 +277,7 @@ def apply_ants_transform_to_streamlines(path_iwarp, path_aff, path_trk, output_p
         else:
             # For streamlines completely outside bounds, use minimal context clipping
             try:
-                from synthesis.streamline_processing import clip_streamline_to_fov
+                from preprocessing.streamline_processing import clip_streamline_to_fov
             except ImportError:
                 try:
                     from .streamline_processing import clip_streamline_to_fov

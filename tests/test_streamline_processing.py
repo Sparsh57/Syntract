@@ -1,6 +1,6 @@
 import numpy as np
-from synthesis.streamline_processing import clip_streamline_to_fov, transform_and_densify_streamlines
-from synthesis.densify import densify_streamline_subvoxel
+from preprocessing.streamline_processing import clip_streamline_to_fov, transform_and_densify_streamlines
+from preprocessing.densify import densify_streamline_subvoxel
 
 
 def test_clip_streamline_fully_inside():

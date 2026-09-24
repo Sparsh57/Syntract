@@ -10,13 +10,13 @@ from pathlib import Path
 
 # Import synthesis functions
 try:
-    from synthesis.main import process_and_save
+    from preprocessing.full_volume import process_and_save
     SYNTHESIS_AVAILABLE = True
 except ImportError:
     try:
         import sys
-        sys.path.append(os.path.join(os.path.dirname(__file__), 'synthesis'))
-        from main import process_and_save
+        sys.path.append(os.path.join(os.path.dirname(__file__), 'preprocessing'))
+        from full_volume import process_and_save
         SYNTHESIS_AVAILABLE = True
     except ImportError:
         SYNTHESIS_AVAILABLE = False
@@ -24,13 +24,13 @@ except ImportError:
 
 # Import patch-first optimization (separate from main synthesis)
 try:
-    from synthesis.patch_first_processing import process_patch_first_extraction
+    from preprocessing.patch_extraction import process_patch_first_extraction
     PATCH_FIRST_AVAILABLE = True
 except ImportError:
     try:
         import sys
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'synthesis'))
-        from patch_first_processing import process_patch_first_extraction
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'preprocessing'))
+        from patch_extraction import process_patch_first_extraction
         PATCH_FIRST_AVAILABLE = True
     except ImportError:
         PATCH_FIRST_AVAILABLE = False
@@ -38,13 +38,13 @@ except ImportError:
 
 # Import syntract viewer functions  
 try:
-    from syntract_viewer.generate_fiber_examples import generate_examples_original_mode
+    from rendering.example_generation_cli import generate_examples_original_mode
     SYNTRACT_AVAILABLE = True
 except ImportError:
     try:
         import sys
-        sys.path.append(os.path.join(os.path.dirname(__file__), 'syntract_viewer'))
-        from generate_fiber_examples import generate_examples_original_mode
+        sys.path.append(os.path.join(os.path.dirname(__file__), 'rendering'))
+        from example_generation_cli import generate_examples_original_mode
         SYNTRACT_AVAILABLE = True
     except ImportError:
         SYNTRACT_AVAILABLE = False
@@ -229,7 +229,7 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
                 print(f"\nGenerating visualizations for {patch_result['patches_extracted']} patches...")
                 
                 try:
-                    from syntract_viewer.patch_extraction import _generate_patch_visualization
+                    from rendering.patch_visualization import _generate_patch_visualization
                     
                     for patch_detail in patch_result['patch_details']:
                         patch_id = patch_detail['patch_id']
@@ -315,7 +315,7 @@ def process_syntract(input_nifti, input_trk, output_base, new_dim, voxel_size,
         else:
             # Run base synthesis first to create files at target dimensions
             print("\nRunning base synthesis...")
-            from synthesis.main import process_and_save
+            from preprocessing.full_volume import process_and_save
             
             synthesis_result = process_and_save(
                 original_nifti_path=input_nifti,

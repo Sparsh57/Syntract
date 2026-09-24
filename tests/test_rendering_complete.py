@@ -30,7 +30,7 @@ sys.path.insert(0, project_root)
 
 # Try to import syntract_viewer modules - handle import errors gracefully
 try:
-    from syntract_viewer.utils import (
+    from rendering.streamline_utils import (
         select_random_streamlines,
         densify_streamline,
         generate_tract_color_variation,
@@ -42,7 +42,7 @@ except ImportError:
     UTILS_AVAILABLE = False
 
 try:
-    from syntract_viewer.masking import (
+    from rendering.masking import (
         create_fiber_mask,
         create_smart_brain_mask,
         create_aggressive_brain_mask,
@@ -53,7 +53,7 @@ except ImportError:
     MASKING_AVAILABLE = False
 
 try:
-    from syntract_viewer.contrast import (
+    from rendering.contrast import (
         apply_contrast_enhancement,
         apply_enhanced_contrast_and_augmentation,
         preprocess_quantized_data,
@@ -64,7 +64,7 @@ except ImportError:
     CONTRAST_AVAILABLE = False
 
 try:
-    from syntract_viewer.effects import (
+    from rendering.dark_field_effects import (
             apply_balanced_dark_field_effect,
     apply_blockface_preserving_dark_field_effect
     )
@@ -73,7 +73,7 @@ except ImportError:
     EFFECTS_AVAILABLE = False
 
 try:
-    from syntract_viewer.background_enhancement import (
+    from rendering.background_enhancement import (
         enhance_background_smoothness,
         apply_smart_sharpening,
         enhance_slice_background,
@@ -84,7 +84,7 @@ except ImportError:
     BACKGROUND_ENHANCEMENT_AVAILABLE = False
 
 try:
-    from syntract_viewer.core import (
+    from rendering.slice_renderer import (
         visualize_nifti_with_trk,
         visualize_nifti_with_trk_coronal,
         visualize_multiple_views
@@ -94,7 +94,7 @@ except ImportError:
     CORE_AVAILABLE = False
 
 try:
-    from syntract_viewer.generation import (
+    from rendering.example_generation import (
         generate_varied_examples,
         generate_enhanced_varied_examples
     )
@@ -773,7 +773,7 @@ class TestIntegration:
 # Utility test functions
 def test_module_structure():
     """Test that syntract_viewer module structure is correct"""
-    syntract_viewer_path = os.path.join(project_root, 'syntract_viewer')
+    syntract_viewer_path = os.path.join(project_root, 'rendering')
     
     # Check if syntract_viewer directory exists
     assert os.path.exists(syntract_viewer_path)
@@ -784,14 +784,14 @@ def test_module_structure():
         '__init__.py',
         'background_enhancement.py',
         'contrast.py',
-        'core.py',
+        'slice_renderer.py',
         'cornucopia_augmentation.py',
-        'effects.py',
-        'generate_fiber_examples.py',
-        'generation.py',
-        'improved_cornucopia.py',
+        'dark_field_effects.py',
+        'example_generation_cli.py',
+        'example_generation.py',
+        'slice_augmentation.py',
         'masking.py',
-        'utils.py'
+        'streamline_utils.py'
     ]
     
     for filename in expected_files:
