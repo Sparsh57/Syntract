@@ -15,6 +15,61 @@ import traceback
 # Suppress RBF warnings for cleaner output - we know what we're doing
 warnings.filterwarnings('ignore', category=RuntimeWarning, module='scipy.interpolate')
 
+
+def linear_interpolate(p0, p1, t):
+    """
+    Linearly interpolate between two points.
+
+    Parameters
+    ----------
+    p0, p1 : array-like
+        Start and end points.
+    t : float
+        Interpolation parameter in [0, 1].
+
+    Returns
+    -------
+    np.ndarray
+        Interpolated point, p0 + t * (p1 - p0).
+    """
+    p0 = np.asarray(p0)
+    p1 = np.asarray(p1)
+    return p0 + t * (p1 - p0)
+
+
+def hermite_interpolate(p0, p1, m0, m1, t):
+    """
+    Cubic Hermite interpolation between two points given their tangents.
+
+    Parameters
+    ----------
+    p0, p1 : array-like
+        Start and end points.
+    m0, m1 : array-like
+        Tangent vectors at the start and end points.
+    t : float
+        Interpolation parameter in [0, 1].
+
+    Returns
+    -------
+    np.ndarray
+        Interpolated point along the Hermite curve.
+    """
+    p0 = np.asarray(p0)
+    p1 = np.asarray(p1)
+    m0 = np.asarray(m0)
+    m1 = np.asarray(m1)
+
+    t2 = t * t
+    t3 = t2 * t
+    h00 = 2 * t3 - 3 * t2 + 1
+    h10 = t3 - 2 * t2 + t
+    h01 = -2 * t3 + 3 * t2
+    h11 = t3 - t2
+
+    return h00 * p0 + h10 * m0 + h01 * p1 + h11 * m1
+
+
 def calculate_optimal_step_size(streamline):
     """
     Calculate optimal step size based on original streamline characteristics.
@@ -814,24 +869,29 @@ def densify_streamline_subvoxel(streamline, step_size, use_gpu=True, interp_meth
                     tangents[i] = raw_tangent
             
             # Handle endpoints with aggressive scaling
+            # A 2-point streamline is a single straight segment with no curvature to
+            # preserve; the aggressive 2x boost below is tuned for bends in longer
+            # streamlines and otherwise makes the Hermite spline overshoot the line.
+            is_single_segment = len(streamline_device) == 2
+
             # Start point
             if len(segment_lengths_for_tangents) > 0:
                 start_tangent = streamline_device[1] - streamline_device[0]
                 start_norm = xp.linalg.norm(start_tangent)
                 if start_norm > 1e-10:
-                    start_scale_factor = 2.0  # Aggressive scaling
+                    start_scale_factor = 1.0 if is_single_segment else 2.0  # Aggressive scaling
                     tangents[0] = (start_tangent / start_norm) * segment_lengths_for_tangents[0] * start_scale_factor
                 else:
                     tangents[0] = start_tangent
             else:
                 tangents[0] = streamline_device[1] - streamline_device[0]
-            
-            # End point  
+
+            # End point
             if len(segment_lengths_for_tangents) > 0:
                 end_tangent = streamline_device[-1] - streamline_device[-2]
                 end_norm = xp.linalg.norm(end_tangent)
                 if end_norm > 1e-10:
-                    end_scale_factor = 2.0  # Aggressive scaling
+                    end_scale_factor = 1.0 if is_single_segment else 2.0  # Aggressive scaling
                     tangents[-1] = (end_tangent / end_norm) * segment_lengths_for_tangents[-1] * end_scale_factor
                 else:
                     tangents[-1] = end_tangent

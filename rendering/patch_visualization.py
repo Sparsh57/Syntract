@@ -27,9 +27,9 @@ from pathlib import Path
 from typing import List, Tuple, Dict, Optional
 
 try:
-    from .core import visualize_nifti_with_trk_coronal
+    from .slice_renderer import visualize_nifti_with_trk_coronal
 except ImportError:
-    from core import visualize_nifti_with_trk_coronal
+    from slice_renderer import visualize_nifti_with_trk_coronal
 
 # Note: This module no longer imports patch_extract due to deprecation
 # All patch extraction should now use the patch-first optimization in syntract.py
@@ -141,12 +141,12 @@ def _generate_patch_visualization(nifti_path, trk_path, output_dir, prefix, save
         # Apply orange blobs post-processing if enabled
         if enable_orange_blobs and os.path.exists(output_path):
             try:
-                from .generation import apply_orange_blobs_to_saved_image
+                from .example_generation import apply_orange_blobs_to_saved_image
                 apply_orange_blobs_to_saved_image(output_path, random_state=None)
                 print(f"Applied custom orange blob to {prefix}")
             except ImportError:
                 try:
-                    from generation import apply_orange_blobs_to_saved_image
+                    from example_generation import apply_orange_blobs_to_saved_image
                     apply_orange_blobs_to_saved_image(output_path, random_state=None)
                     print(f"Applied custom orange blob to {prefix}")
                 except ImportError as e:

@@ -29,13 +29,13 @@ import gc
 from pathlib import Path
 
 try:
-    from .ants_transform_updated import process_with_ants
-    from .nifti_preprocessing import resample_nifti
+    from .ants_transform import process_with_ants
+    from .nifti_resampling import resample_nifti
     from .streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
     from .gpu_utils import try_gpu_import, get_gpu_support
 except ImportError:
-    from ants_transform_updated import process_with_ants
-    from nifti_preprocessing import resample_nifti
+    from ants_transform import process_with_ants
+    from nifti_resampling import resample_nifti
     from streamline_processing import transform_and_densify_streamlines, clip_streamline_to_fov
     from gpu_utils import try_gpu_import, get_gpu_support
 
@@ -240,9 +240,9 @@ def synthesize_patch_region(original_mri_path: str,
     
     # Resample patch to target resolution using existing infrastructure
     try:
-        from .nifti_preprocessing import resample_nifti_patch
+        from .nifti_resampling import resample_nifti_patch
     except ImportError:
-        from nifti_preprocessing import resample_nifti_patch
+        from nifti_resampling import resample_nifti_patch
     
     # Build target affine for patch
     target_affine = patch_affine.copy()
@@ -638,11 +638,11 @@ def process_patch_first_extraction(
         
         # Import transform function for building target affine
         try:
-            from .transform import build_new_affine
+            from .affine import build_new_affine
         except ImportError:
             import sys
             sys.path.append(os.path.dirname(__file__))
-            from transform import build_new_affine
+            from affine import build_new_affine
         
         # Build target affine and shape for proper validation
         target_affine = build_new_affine(

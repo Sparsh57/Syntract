@@ -37,4 +37,4 @@ markers = [
 minversion = "6.0"
 
 [tool.setuptools]
-packages = ["synthesis", "syntract_viewer"] 
+packages = ["preprocessing", "rendering"] 

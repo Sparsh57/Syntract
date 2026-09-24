@@ -19,9 +19,9 @@ plt.ioff()  # Turn off interactive mode to prevent figure retention
 
 try:
     from .contrast import apply_contrast_enhancement, apply_comprehensive_slice_processing
-    from .effects import apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
+    from .dark_field_effects import apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
     from .masking import create_fiber_mask
-    from .utils import (
+    from .streamline_utils import (
         densify_streamline,
         generate_tract_color_variation,
         get_colormap,
@@ -29,9 +29,9 @@ try:
     )
 except ImportError:
     from contrast import apply_contrast_enhancement, apply_comprehensive_slice_processing
-    from effects import apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
+    from dark_field_effects import apply_balanced_dark_field_effect, apply_blockface_preserving_dark_field_effect
     from masking import create_fiber_mask
-    from utils import (
+    from streamline_utils import (
         densify_streamline,
         generate_tract_color_variation,
         get_colormap,
@@ -115,7 +115,7 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
                              close_gaps=False, closing_footprint_size=5, label_bundles=False,
                              min_bundle_size=20, contrast_method='clahe', contrast_params=None,
                              background_enhancement=None, cornucopia_augmentation=None,
-                             truly_random=False):
+                             truly_random=False, debug=False):
     """
     Visualize multiple axial slices of a nifti file with tractography overlaid.
 
@@ -320,7 +320,7 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
     # Save or display
     if output_file:
         # Import resize utility
-        from .utils import save_image_1024
+        from .streamline_utils import save_image_1024
         save_image_1024(output_file, fig, is_mask=False)
         print(f"Figure saved to {output_file} (1024x1024)")
 
@@ -655,7 +655,7 @@ def visualize_nifti_with_trk_coronal(nifti_file, trk_file, output_file=None, n_s
     # Save or display
     if output_file:
         # Import resize utility
-        from .utils import save_image_1024
+        from .streamline_utils import save_image_1024
         save_image_1024(output_file, fig, is_mask=False, target_size=output_image_size)
         print(f"Figure saved to {output_file} ({output_image_size[0]}x{output_image_size[1]})")
 
@@ -893,7 +893,7 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
     # Save or display
     if output_file:
         # Import resize utility
-        from .utils import save_image_1024
+        from .streamline_utils import save_image_1024
         save_image_1024(output_file, fig, is_mask=False)
         print(f"Figure saved to {output_file} (1024x1024)")
         
@@ -901,14 +901,14 @@ def visualize_multiple_views(nifti_file, trk_file, output_file=None, cmap='gray'
         if save_masks and has_streamlines:
             mask_dir = os.path.dirname(output_file)
             if not mask_dir:
-                mask_dir = "../synthesis"
+                mask_dir = "../preprocessing"
             mask_basename = os.path.splitext(os.path.basename(output_file))[0]
             
             for view, mask in fiber_masks.items():
                 if mask is not None:
                     mask_filename = f"{mask_dir}/{mask_basename}_mask_{view}.png"
                     # Import resize utility
-                    from .utils import save_image_1024
+                    from .streamline_utils import save_image_1024
                     save_image_1024(mask_filename, mask, is_mask=True)
                     print(f"Saved {view} mask to {mask_filename} (1024x1024)")
         
@@ -926,19 +926,19 @@ def _save_masks(output_file, fiber_masks, labeled_masks, slice_positions, label_
     """Save masks to files."""
     mask_dir = os.path.dirname(output_file)
     if not mask_dir:
-        mask_dir = "../synthesis"
+        mask_dir = "../preprocessing"
     mask_basename = os.path.splitext(os.path.basename(output_file))[0]
     
     for i, mask in enumerate(fiber_masks):
         slice_id = slice_positions[i]
         mask_filename = f"{mask_dir}/{mask_basename}_mask_slice{slice_id}.png"
         # Import resize utility
-        from .utils import save_image_1024
+        from .streamline_utils import save_image_1024
         save_image_1024(mask_filename, mask, is_mask=True, target_size=output_image_size)
         print(f"Saved mask for slice {slice_id} to {mask_filename} ({output_image_size[0]}x{output_image_size[1]})")
         
         if label_bundles and labeled_masks:
-            from .utils import visualize_labeled_bundles
+            from .streamline_utils import visualize_labeled_bundles
             labeled_mask = labeled_masks[i]
             labeled_filename = f"{mask_dir}/{mask_basename}_labeled_bundles_slice{slice_id}.png"
             visualize_labeled_bundles(labeled_mask, labeled_filename)
@@ -1229,7 +1229,7 @@ def _generate_and_apply_high_density_mask_coronal(nifti_file, trk_file, output_f
     mask_basename = os.path.splitext(os.path.basename(output_file))[0]
     mask_filename = f"{mask_dir}/{mask_basename}_high_density_mask_slice{slice_idx}.png"
     
-    from .utils import save_image_1024
+    from .streamline_utils import save_image_1024
     save_image_1024(mask_filename, high_density_mask, is_mask=True, target_size=output_image_size)
     if debug:
         print(f"Applied high-density mask for coronal slice {slice_idx}: {mask_filename} ({output_image_size[0]}x{output_image_size[1]})")

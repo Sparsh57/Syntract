@@ -1,6 +1,6 @@
 import os
 import pytest
-from synthesis.main import process_and_save
+from preprocessing.full_volume import process_and_save
 
 def test_process_pipeline(tmpdir):
     # Setup test inputs

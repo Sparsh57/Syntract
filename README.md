@@ -69,7 +69,7 @@ python syntract.py --input brain.nii.gz --trk fibers.trk \
 
 ### Batch Processing
 ```bash
-python cumulative.py  # Edit paths in script
+python batch_processing.py  # Edit paths in script
 ```
 
 ## Parameters
@@ -139,7 +139,7 @@ python cumulative.py  # Edit paths in script
 | `--slice_output_dir` | str | Directory for slice outputs |
 | `--auto_batch_process` | flag | Automatically process all extracted slices |
 
-## Batch Processing (cumulative.py)
+## Batch Processing (batch_processing.py)
 
 Process multiple TRK files with a shared NIfTI file efficiently. Features intelligent memory optimization and automatic processing strategy adaptation.
 
@@ -158,20 +158,20 @@ The `process_batch` function includes several intelligent optimizations:
 #### Command Line Interface
 ```bash
 # Basic batch processing with auto-optimization
-python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/
+python batch_processing.py --nifti brain.nii.gz --trk-dir ./trk_files/
 
 # With custom parameters
-python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \
+python batch_processing.py --nifti brain.nii.gz --trk-dir ./trk_files/ \
   --total-patches 50 --n-examples 200 --voxel-size 0.05
 
 # For thin slice data (optimized settings)
-python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \
+python batch_processing.py --nifti brain.nii.gz --trk-dir ./trk_files/ \
   --patch-size 256 8 256 --total-patches 30 --n-examples 200
 ```
 
 #### Python API
 ```python
-from cumulative import process_batch
+from batch_processing import process_batch
 
 # Simple batch processing with automatic optimization
 results = process_batch(
@@ -212,7 +212,7 @@ results = batch_ants_registration(
 
 #### In-Memory Processing API
 ```python
-from cumulative import process_patches_inmemory
+from batch_processing import process_patches_inmemory
 
 # Generate patches and visualizations in-memory (no file I/O)
 images, masks = process_patches_inmemory(
@@ -301,7 +301,7 @@ output_name.trk            # Processed TRK
 visualizations/            # Generated images (if visualization enabled)
 ```
 
-### Batch Processing (cumulative.py)
+### Batch Processing (batch_processing.py)
 ```
 results/                       # Main output directory
 ├── processed/                 # Intermediate processed files
@@ -335,7 +335,7 @@ result = process_syntract(
 
 ### Batch Processing
 ```python
-from cumulative import process_batch
+from batch_processing import process_batch
 
 # Intelligent batch processing with auto-optimization
 results = process_batch(

@@ -13,7 +13,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 # Read version from __init__.py
 def get_version():
     """Get version from __init__.py file."""
-    version_file = os.path.join("syntract_viewer", "__init__.py")
+    version_file = os.path.join("rendering", "__init__.py")
     with open(version_file, "r", encoding="utf-8") as f:
         for line in f:
             if line.startswith("__version__"):
@@ -123,22 +123,22 @@ setup(
     entry_points={
         "console_scripts": [
             # Primary visualization and dataset generation tools
-            "generate-fiber-examples=syntract_viewer.generate_fiber_examples:main",
-            "syntract-visualize=syntract_viewer.core:main",
-            "syntract=syntract_viewer.generate_fiber_examples:main",
+            "generate-fiber-examples=rendering.example_generation_cli:main",
+            "syntract-visualize=rendering.slice_renderer:main",
+            "syntract=rendering.example_generation_cli:main",
             # High-performance processing pipeline
-            "mri-synthesis=synthesis.main:main",
-            "syntract-process=synthesis.main:main",
-            "compare-interpolation=synthesis.compare_interpolation:main",
+            "mri-synthesis=preprocessing.full_volume:main",
+            "syntract-process=preprocessing.full_volume:main",
+            "compare-interpolation=preprocessing.compare_interpolation:main",
         ],
     },
     package_data={
-        "syntract_viewer": [
+        "rendering": [
             "*.py",
             "data/*.json",
             "examples/*.py",
         ],
-        "synthesis": [
+        "preprocessing": [
             "*.py",
             "data/*.json",
             "examples/*.py",

@@ -6,10 +6,10 @@ Process multiple TRK files with a common NIfTI file efficiently.
 Automatically optimizes processing and provides clean output.
 
 Usage:
-    python cumulative.py --nifti brain.nii.gz --trk-dir /path/to/trk/files
+    python batch_processing.py --nifti brain.nii.gz --trk-dir /path/to/trk/files
     
     # Or from Python:
-    from cumulative import process_batch
+    from batch_processing import process_batch
     results = process_batch('brain.nii.gz', '/path/to/trk/files')
 """
 
@@ -84,7 +84,7 @@ def process_batch(nifti_file, trk_directory, output_dir="results", patches=30,
         
     Example:
     --------
-    >>> from cumulative import process_batch
+    >>> from batch_processing import process_batch
     >>> results = process_batch('brain.nii.gz', './trk_files/', patches=50)
     >>> print(f"Processed {len(results['successful'])} files successfully")
     """
@@ -579,7 +579,7 @@ def _load_and_resize_mask(mask_path, target_size=(1024, 1024)):
     mask_img = Image.open(mask_path).convert('L')
     mask_array = np.array(mask_img)
     
-    from syntract_viewer.utils import resize_image_to_size
+    from rendering.streamline_utils import resize_image_to_size
     if mask_array.shape[:2] != target_size:
         mask_array = resize_image_to_size(mask_array, target_size, is_mask=True)
     
@@ -800,7 +800,7 @@ def process_patches_inmemory(
     try:
         # Step 2: Extract Patches Using Patch-First Optimization
         print("\nExtracting patches using patch-first optimization...")
-        from synthesis.patch_first_processing import process_patch_first_extraction
+        from preprocessing.patch_extraction import process_patch_first_extraction
         
         # Set up random number generator for reproducible TRK selection
         if random_state is not None:
@@ -1100,7 +1100,7 @@ def process_patches_inmemory(
                         print(f"  Available keys: {list(patch_detail.get('files', {}).keys())}")
                 
                 try:
-                    from syntract_viewer.core import visualize_nifti_with_trk_coronal
+                    from rendering.slice_renderer import visualize_nifti_with_trk_coronal
                     import random as rnd
                     import time
                     
@@ -1329,7 +1329,7 @@ def process_patches_inmemory(
                     temp_viz_file = os.path.join(temp_dir, f"temp_viz_{patch_id}.png")
                     
                     # Generate high-density mask using the existing function
-                    from syntract_viewer.core import _generate_and_apply_high_density_mask_coronal
+                    from rendering.slice_renderer import _generate_and_apply_high_density_mask_coronal
                     
                     # Get slice index (for coronal view, typically the middle slice)
                     import nibabel as nib
@@ -1380,7 +1380,7 @@ def process_patches_inmemory(
                             print(f"     Mask shape: {mask_array.shape}")
                             print(f"     Forcing mask resize to match image...")
                             
-                            from syntract_viewer.utils import resize_image_to_size
+                            from rendering.streamline_utils import resize_image_to_size
                             mask_array = resize_image_to_size(mask_array, image_array.shape[:2], is_mask=True)
                             print(f"     Mask after resize: {mask_array.shape}")
                         
@@ -1503,27 +1503,27 @@ def main():
         epilog="""
 Examples:
   # Basic usage
-  python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/
+  python batch_processing.py --nifti brain.nii.gz --trk-dir ./trk_files/
   
   # With better patch distribution for 200 visualizations  
-  python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \\
+  python batch_processing.py --nifti brain.nii.gz --trk-dir ./trk_files/ \\
     --total-patches 50 --n-examples 200 --enable-orange-blobs
   
   # For thin slice data (Y dimension ~1) - recommended settings
   # Output images will be 256x256 pixels (from patch size)
-  python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \\
+  python batch_processing.py --nifti brain.nii.gz --trk-dir ./trk_files/ \\
     --total-patches 30 --patch-size 256 8 256 --n-examples 200 --voxel-size 0.05
   
   # With larger output images (800x800)
-  python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \\
+  python batch_processing.py --nifti brain.nii.gz --trk-dir ./trk_files/ \\
     --patch-size 800 1 800 --n-examples 200
   
   # With ANTs transformation
-  python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \\
+  python batch_processing.py --nifti brain.nii.gz --trk-dir ./trk_files/ \\
     --use-ants --ants-warp warp.nii.gz --ants-iwarp iwarp.nii.gz --ants-aff affine.mat
   
   # With custom dimensions and voxel size
-  python cumulative.py --nifti brain.nii.gz --trk-dir ./trk_files/ \\
+  python batch_processing.py --nifti brain.nii.gz --trk-dir ./trk_files/ \\
     --new-dim 800 20 800 --voxel-size 0.05
         """
     )
