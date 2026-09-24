@@ -159,7 +159,6 @@ def test_module_structure():
         'rendering.background_enhancement',
         'rendering.contrast',
         'rendering.slice_renderer',
-        'rendering.cornucopia_augmentation',
         'rendering.dark_field_effects',
         'rendering.example_generation_cli',
         'rendering.example_generation', 

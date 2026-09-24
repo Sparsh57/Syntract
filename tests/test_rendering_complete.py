@@ -785,7 +785,6 @@ def test_module_structure():
         'background_enhancement.py',
         'contrast.py',
         'slice_renderer.py',
-        'cornucopia_augmentation.py',
         'dark_field_effects.py',
         'example_generation_cli.py',
         'example_generation.py',

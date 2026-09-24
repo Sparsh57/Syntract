@@ -115,7 +115,7 @@ def visualize_nifti_with_trk(nifti_file, trk_file, output_file=None, n_slices=1,
                              close_gaps=False, closing_footprint_size=5, label_bundles=False,
                              min_bundle_size=20, contrast_method='clahe', contrast_params=None,
                              background_enhancement=None, cornucopia_augmentation=None,
-                             truly_random=False):
+                             truly_random=False, debug=False):
     """
     Visualize multiple axial slices of a nifti file with tractography overlaid.
 
